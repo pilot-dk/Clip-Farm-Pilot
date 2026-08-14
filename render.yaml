@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: clippilot-web
+    name: clippilot-web-pilot-dk
     runtime: docker
     plan: free
     autoDeploy: true
