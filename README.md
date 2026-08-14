@@ -1,12 +1,14 @@
-# ClipPilot MVP — Studio GUI
+# Clip Farm Pilot MVP — Studio GUI
 
-ClipPilot turns livestream recordings into export-ready social clips.
+Clip Farm Pilot turns livestream recordings into export-ready social clips.
+
+Official website: [clipfarmpilot.com](https://clipfarmpilot.com)
 
 This updated build includes a simple, polished browser editor connected directly to the existing FastAPI and FFmpeg processing engine. It is a functional local app, not a visual mockup.
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-ClipPilot v1.1 is an installable Progressive Web App (PWA). The same editor now works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.2 is an installable Progressive Web App (PWA). The same editor now works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -16,44 +18,44 @@ The web release adds:
 - Temporary cloud storage behavior, including permanent cleanup of finished VOD working copies.
 - A Docker image, Render Blueprint, and GitHub Actions checks for a GitHub-based deployment.
 
-GitHub Pages alone cannot run ClipPilot because Pages is static while ClipPilot needs Python and FFmpeg. Keep the source code on GitHub and connect that repository to a container host such as Render.
+GitHub Pages alone cannot run Clip Farm Pilot because Pages is static while Clip Farm Pilot needs Python and FFmpeg. Keep the source code on GitHub and connect that repository to a container host such as Render.
 
 ### Free GitHub + Render deployment
 
 1. Create a new public or private GitHub repository and upload this project.
 2. In Render, choose **New → Blueprint** and connect the repository. Render will detect `render.yaml`.
-3. When prompted for `CLIPPILOT_WEB_PASSWORD`, enter a long password that only you know.
+3. When prompted for `CLIPFARMPILOT_WEB_PASSWORD`, enter a long password that only you know.
 4. Wait for the deployment to finish, then open the `onrender.com` address on your phone or iPad.
-5. On iPhone/iPad, tap **Install app** in ClipPilot, then use **Share → Add to Home Screen**. On Android/Chrome, press **Install app** and accept the prompt.
+5. On iPhone/iPad, tap **Install app** in Clip Farm Pilot, then use **Share → Add to Home Screen**. On Android/Chrome, press **Install app** and accept the prompt.
 
 Render's free web service is suitable for testing this personal MVP, but it sleeps when idle, has limited processing power, and does not retain working files across restarts. The first visit after it sleeps may take about a minute, and long 1080p VOD exports may need a paid CPU worker later. Always save completed clips to your device before leaving them on a free instance.
 
 For local container testing:
 
 ```bash
-docker build -t clippilot-web .
+docker build -t clipfarmpilot-web .
 docker run --rm -p 8000:8000 \
-  -e CLIPPILOT_WEB_PASSWORD='choose-a-private-password' \
-  -e CLIPPILOT_SESSION_SECRET='replace-with-a-long-random-value' \
-  clippilot-web
+  -e CLIPFARMPILOT_WEB_PASSWORD='choose-a-private-password' \
+  -e CLIPFARMPILOT_SESSION_SECRET='replace-with-a-long-random-value' \
+  clipfarmpilot-web
 ```
 
 Then open `http://localhost:8000`. Copy `.env.example` when configuring another Docker host.
 
 ## Open the Mac app — no Terminal required
 
-The packaged **ClipPilot.app** is built for Apple Silicon Macs (M1, M2, M3, M4, and newer):
+The packaged **Clip Farm Pilot.app** is built for Apple Silicon Macs (M1, M2, M3, M4, and newer):
 
-1. Unzip `ClipPilot-macOS-v1.1.0-Apple-Silicon.zip`.
-2. Drag **ClipPilot.app** into your Applications folder.
-3. Right-click **ClipPilot.app** and choose **Open** the first time.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.2.0-Apple-Silicon.zip`.
+2. Drag **Clip Farm Pilot.app** into your Applications folder.
+3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
 This development build is ad-hoc signed but not Apple-notarized, so macOS may require the right-click **Open** step. The app contains its own Python runtime, FFmpeg engine, and JavaScript runtime. Homebrew and Terminal setup are not required.
 
-ClipPilot saves imported videos and exports under:
+Clip Farm Pilot saves imported videos and exports under:
 
 ```text
-~/Library/Application Support/ClipPilot
+~/Library/Application Support/Clip Farm Pilot
 ```
 
 ## Studio GUI
@@ -94,36 +96,36 @@ After exporting a clip, scroll to **Publish directly**:
 3. Review the generated title, add a caption/hashtags, and choose a visibility level.
 4. Press **Publish selected accounts**.
 
-The upload uses the already-rendered MP4 in ClipPilot’s export storage, so saving a duplicate copy first is not required. Account tokens are stored locally in `social-accounts.json` inside ClipPilot’s Application Support folder with owner-only file permissions; passwords are never collected.
+The upload uses the already-rendered MP4 in Clip Farm Pilot’s export storage, so saving a duplicate copy first is not required. Account tokens are stored locally in `social-accounts.json` inside Clip Farm Pilot’s Application Support folder with owner-only file permissions; passwords are never collected.
 
-Social networks require the app owner to register ClipPilot before third-party accounts can connect. Until the corresponding credentials are provided, that platform is labelled **Developer setup required** and links to the official setup documentation instead of pretending to connect.
+Social networks require the app owner to register Clip Farm Pilot before third-party accounts can connect. Until the corresponding credentials are provided, that platform is labelled **Developer setup required** and links to the official setup documentation instead of pretending to connect.
 
 The development build reads these values:
 
 ```text
-CLIPPILOT_YOUTUBE_CLIENT_ID
-CLIPPILOT_YOUTUBE_CLIENT_SECRET
+CLIPFARMPILOT_YOUTUBE_CLIENT_ID
+CLIPFARMPILOT_YOUTUBE_CLIENT_SECRET
 
-CLIPPILOT_INSTAGRAM_CLIENT_ID
-CLIPPILOT_INSTAGRAM_CLIENT_SECRET
+CLIPFARMPILOT_INSTAGRAM_CLIENT_ID
+CLIPFARMPILOT_INSTAGRAM_CLIENT_SECRET
 
-CLIPPILOT_TIKTOK_CLIENT_KEY
-CLIPPILOT_TIKTOK_CLIENT_SECRET
+CLIPFARMPILOT_TIKTOK_CLIENT_KEY
+CLIPFARMPILOT_TIKTOK_CLIENT_SECRET
 ```
 
-Optional `CLIPPILOT_OAUTH_REDIRECT_BASE` can point all OAuth callbacks at a fixed production callback service. YouTube uploads support public, unlisted, and private visibility. Instagram publishing requires a professional Creator or Business account. TikTok requires Content Posting API approval; posts made through an unaudited TikTok client are limited to private visibility by TikTok.
+Optional `CLIPFARMPILOT_OAUTH_REDIRECT_BASE` can point all OAuth callbacks at a fixed production callback service. YouTube uploads support public, unlisted, and private visibility. Instagram publishing requires a professional Creator or Business account. TikTok requires Content Posting API approval; posts made through an unaudited TikTok client are limited to private visibility by TikTok.
 
-For a public release, keep Meta and TikTok client secrets on a small ClipPilot web service rather than embedding them in the Mac app. The included local integration is suitable for development and testing with accounts authorized in each provider’s developer dashboard.
+For a public release, keep Meta and TikTok client secrets on a small Clip Farm Pilot web service rather than embedding them in the Mac app. The included local integration is suitable for development and testing with accounts authorized in each provider’s developer dashboard.
 
 ## Automatic viral filenames
 
-The **Viral clip filename** switch is enabled by default. After rendering, ClipPilot analyzes the finished clip and suggests a short title such as:
+The **Viral clip filename** switch is enabled by default. After rendering, Clip Farm Pilot analyzes the finished clip and suggests a short title such as:
 
 ```text
 FC 26 Weekend League — Wait for the Ending.mp4
 ```
 
-The generated title appears in the editor and becomes the default filename in the macOS **Save As** window. You can edit that filename in the Save window before saving, or turn the switch off to use ClipPilot’s standard filename.
+The generated title appears in the editor and becomes the default filename in the macOS **Save As** window. You can edit that filename in the Save window before saving, or turn the switch off to use Clip Farm Pilot’s standard filename.
 
 This offline MVP uses the source/VOD title, creator-entered square caption, and changes in audio intensity. It does not yet transcribe speech or understand the exact game event, and no title can guarantee virality. Transcript-aware title generation is a natural next production upgrade.
 
@@ -131,7 +133,7 @@ This offline MVP uses the source/VOD title, creator-entered square caption, and 
 
 The **Moment effects** panel lets you emphasize one payoff moment without changing templates. Choose one sound effect, one visual effect, or both, then set the trigger as seconds after the selected clip begins. You can type the time or move the preview to the moment and press **Use playhead**.
 
-The included **Impact boom** is generated by ClipPilot from original synthesized audio rather than copying or bundling the recognizable Vine sound file. All effects are applied locally during export and work with landscape, portrait, square-caption, and gaming-overlay renders.
+The included **Impact boom** is generated by Clip Farm Pilot from original synthesized audio rather than copying or bundling the recognizable Vine sound file. All effects are applied locally during export and work with landscape, portrait, square-caption, and gaming-overlay renders.
 
 ## Import a YouTube or Twitch VOD
 
@@ -140,12 +142,12 @@ The included **Impact boom** is generated by ClipPilot from original synthesized
 3. Press **Import** and wait for the progress bar to finish.
 4. Preview the cached video, run **Auto-Find Clips**, and export normally.
 
-ClipPilot downloads a local working copy because audio analysis and FFmpeg rendering need direct media access. Private, subscriber-only, deleted, region-blocked, age-restricted, or DRM-protected videos may not import without an authenticated integration. Only import videos you own or have permission to download and reuse.
+Clip Farm Pilot downloads a local working copy because audio analysis and FFmpeg rendering need direct media access. Private, subscriber-only, deleted, region-blocked, age-restricted, or DRM-protected videos may not import without an authenticated integration. Only import videos you own or have permission to download and reuse.
 
 ## Remove a cached VOD when you are done
 
 1. Press **Imported videos** in the top toolbar.
-2. Use **Show in Finder** to reveal ClipPilot’s local source copy. URL imports also include a link back to the original YouTube or Twitch page.
+2. Use **Show in Finder** to reveal Clip Farm Pilot’s local source copy. URL imports also include a link back to the original YouTube or Twitch page.
 3. Press **Move to Trash** and confirm when you no longer need the full VOD.
 
 The source copy goes to the macOS Trash, so it can still be recovered until the Trash is emptied. Finished MP4 exports saved through **Export Clip** remain wherever you saved them and are not touched.
@@ -195,7 +197,7 @@ Open:
 http://localhost:8000
 ```
 
-Upload a livestream and ClipPilot will let you preview, analyze, frame, and export it.
+Upload a livestream and Clip Farm Pilot will let you preview, analyze, frame, and export it.
 
 The browser version supports VOD links too. Its Python dependencies now include `yt-dlp` and a standalone FFmpeg build.
 
@@ -229,7 +231,7 @@ Use Expo Go while prototyping. For an App Store / Google Play release, deploy th
 
 ## How the gaming layout works
 
-The livestream is assumed to already contain a webcam in one corner. ClipPilot:
+The livestream is assumed to already contain a webcam in one corner. Clip Farm Pilot:
 
 1. Crops that webcam area from the original stream.
 2. Enlarges it across the top of a 1080×1920 vertical canvas.
@@ -252,13 +254,13 @@ The included backend and updated GUI were tested locally with an uploaded video,
 The included build script creates an ad-hoc-signed `.app` bundle:
 
 ```bash
-export CLIPPILOT_NODE_BINARY=/absolute/path/to/an/arm64/node
+export CLIPFARMPILOT_NODE_BINARY=/absolute/path/to/an/arm64/node
 ./build_macos.sh
 ```
 
-The result is written to `dist/ClipPilot.app`. To ship through the Mac App Store or avoid first-open Gatekeeper warnings for wider distribution, use an Apple Developer signing identity and notarization workflow.
+The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App Store or avoid first-open Gatekeeper warnings for wider distribution, use an Apple Developer signing identity and notarization workflow.
 
-## Recommended v0.2 — what makes ClipPilot truly competitive
+## Recommended v0.2 — what makes Clip Farm Pilot truly competitive
 
 1. **Transcript intelligence** — transcribe the stream and score moments containing a strong setup, surprise, conflict, joke, rage/reaction, achievement, or payoff.
 2. **Automatic face-cam detection** — detect the webcam rectangle rather than asking the user to choose a corner.

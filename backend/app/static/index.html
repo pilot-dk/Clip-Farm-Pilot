@@ -4,13 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0c10" />
-  <meta name="application-name" content="ClipPilot" />
+  <meta name="application-name" content="Clip Farm Pilot" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="ClipPilot" />
+  <meta name="apple-mobile-web-app-title" content="Clip Farm Pilot" />
+  <link rel="canonical" href="https://clipfarmpilot.com/" />
   <link rel="manifest" href="/assets/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icon-192.png" />
-  <title>ClipPilot Studio</title>
+  <title>Clip Farm Pilot Studio</title>
   <style>
     :root {
       color-scheme: dark;
@@ -917,15 +918,15 @@
         <div class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 12 8-12 8V4Z"/></svg>
         </div>
-        ClipPilot
+        Clip Farm Pilot
       </div>
       <h1 id="authTitle">Welcome back</h1>
       <p>Enter your private web-app password to open the clip studio.</p>
       <form class="auth-form" id="authForm">
-        <label for="authPassword">ClipPilot password</label>
+        <label for="authPassword">Clip Farm Pilot password</label>
         <input class="auth-input" id="authPassword" name="password" type="password" autocomplete="current-password" required />
         <div class="auth-error" id="authError" role="alert"></div>
-        <button class="button primary" id="authButton" type="submit">Unlock ClipPilot</button>
+        <button class="button primary" id="authButton" type="submit">Unlock Clip Farm Pilot</button>
       </form>
     </section>
   </div>
@@ -935,7 +936,7 @@
         <div class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 12 8-12 8V4Z"/></svg>
         </div>
-        <div class="brand">ClipPilot <span class="mvp-badge">MVP</span></div>
+        <div class="brand">Clip Farm Pilot <span class="mvp-badge">MVP</span></div>
       </div>
       <div class="top-actions">
         <button class="button ghost install-button" type="button" id="installAppButton" hidden>
@@ -1040,7 +1041,7 @@
               <div class="source-panel" id="vodSourcePanel" role="tabpanel">
                 <div class="vod-box">
                   <strong>Import a public VOD</strong>
-                  <p>Paste a YouTube or Twitch video link. ClipPilot will cache it locally.</p>
+                  <p>Paste a YouTube or Twitch video link. Clip Farm Pilot will cache it locally.</p>
                   <div class="vod-row">
                     <input class="vod-input" id="vodUrl" type="url" placeholder="https://youtube.com/watch?v=…" autocomplete="off" />
                     <button class="button primary" id="importVodButton" type="button">Import</button>
@@ -1049,7 +1050,7 @@
               </div>
               <div class="upload-progress" id="uploadProgress">
                 <div class="progress-track"><div class="progress-bar" id="uploadBar"></div></div>
-                <div class="progress-text"><span id="uploadLabel">Uploading to ClipPilot</span><span id="uploadPercent">0%</span></div>
+                <div class="progress-text"><span id="uploadLabel">Uploading to Clip Farm Pilot</span><span id="uploadPercent">0%</span></div>
               </div>
             </div>
 
@@ -1177,7 +1178,7 @@
                     <input id="visualStrength" type="range" min="25" max="150" value="100" step="5" aria-label="Visual effect strength" />
                   </div>
                 </div>
-                <small class="field-hint">Place the effect on one payoff moment. The impact boom is an original ClipPilot sound.</small>
+                <small class="field-hint">Place the effect on one payoff moment. The impact boom is an original Clip Farm Pilot sound.</small>
               </div>
             </div>
 
@@ -1274,7 +1275,7 @@
       <header class="library-head">
         <div>
           <h2 id="libraryTitle">Imported videos</h2>
-          <p>Find ClipPilot’s local source copies and clear them when clipping is finished.</p>
+          <p>Find Clip Farm Pilot’s local source copies and clear them when clipping is finished.</p>
         </div>
         <button class="library-close" id="closeLibraryButton" type="button" aria-label="Close imported videos">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
@@ -1282,7 +1283,7 @@
       </header>
       <div class="library-body">
         <div class="library-location">
-          <strong>ClipPilot source storage</strong>
+          <strong>Clip Farm Pilot source storage</strong>
           <code id="libraryStoragePath">Loading…</code>
           URL imports and file uploads are working copies. Moving one to Trash never removes exported clips.
         </div>
@@ -1396,11 +1397,11 @@
           body: JSON.stringify({ password: $("authPassword").value }),
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(apiError(data, "ClipPilot could not be unlocked."));
+        if (!response.ok) throw new Error(apiError(data, "Clip Farm Pilot could not be unlocked."));
         hideAuthGate();
         startApp();
       } catch (error) {
-        showAuthGate(error.message || "ClipPilot could not be unlocked.");
+        showAuthGate(error.message || "Clip Farm Pilot could not be unlocked.");
       } finally {
         setBusy(button, false);
       }
@@ -1410,14 +1411,14 @@
       try {
         const response = await browserFetch("/api/auth/status", { cache: "no-store" });
         const data = await response.json();
-        if (!response.ok) throw new Error(apiError(data, "ClipPilot is not available."));
+        if (!response.ok) throw new Error(apiError(data, "Clip Farm Pilot is not available."));
         if (data.required && !data.authenticated) showAuthGate();
         else {
           hideAuthGate();
           startApp();
         }
       } catch (error) {
-        showAuthGate("The ClipPilot server is not reachable. Try again in a moment.");
+        showAuthGate("The Clip Farm Pilot server is not reachable. Try again in a moment.");
       }
     }
 
@@ -1481,7 +1482,7 @@
         if (!response.ok) throw new Error(apiError(data, "The imported video list could not be loaded."));
         state.libraryItems = data.items || [];
         state.deletionMode = data.deletion_mode || "trash";
-        $("libraryStoragePath").textContent = data.storage_path || "ClipPilot storage";
+        $("libraryStoragePath").textContent = data.storage_path || "Clip Farm Pilot storage";
         $("libraryFootnote").textContent = data.deletion_note || "Files are moved to Trash so they can be recovered.";
         renderVideoLibrary();
       } catch (error) {
@@ -1520,7 +1521,7 @@
       const permanent = state.deletionMode === "permanent";
       const action = permanent ? "permanently delete" : "move";
       const destination = permanent ? "from this web server" : "to Trash";
-      const confirmed = window.confirm(`${action[0].toUpperCase() + action.slice(1)} “${item.title}” ${destination}?\n\nThis removes ClipPilot’s working source video. Exported clips are kept.`);
+      const confirmed = window.confirm(`${action[0].toUpperCase() + action.slice(1)} “${item.title}” ${destination}?\n\nThis removes Clip Farm Pilot’s working source video. Exported clips are kept.`);
       if (!confirmed) return;
       setBusy(button, true, permanent ? "Deleting…" : "Moving…");
       try {
@@ -1784,7 +1785,7 @@
       $("uploadPercent").textContent = "100%";
       enableEditor(true);
       requestAnimationFrame(updateFacePreview);
-      setStatus("success", "Video ready", "Choose a range manually or let ClipPilot find the strongest moments.");
+      setStatus("success", "Video ready", "Choose a range manually or let Clip Farm Pilot find the strongest moments.");
     }
 
     async function selectFile(file) {
@@ -1826,7 +1827,7 @@
             if (xhr.status >= 200 && xhr.status < 300) resolve(body);
             else reject(new Error(apiError(body, "Upload failed.")));
           };
-          xhr.onerror = () => reject(new Error("Could not connect to ClipPilot."));
+          xhr.onerror = () => reject(new Error("Could not connect to Clip Farm Pilot."));
           xhr.send(form);
         });
 
@@ -1917,7 +1918,7 @@
       if (!account) return;
 
       if (account.connected) {
-        if (!window.confirm(`Disconnect ${account.display_name || account.name} from ClipPilot?`)) return;
+        if (!window.confirm(`Disconnect ${account.display_name || account.name} from Clip Farm Pilot?`)) return;
         button.disabled = true;
         button.textContent = "Disconnecting…";
         try {
@@ -1950,7 +1951,7 @@
           throw new Error(data.message);
         }
         await openExternalUrl(data.auth_url);
-        setStatus("working", `Connect ${account.name}`, "Finish signing in in your browser. ClipPilot will detect the connection automatically.");
+        setStatus("working", `Connect ${account.name}`, "Finish signing in in your browser. Clip Farm Pilot will detect the connection automatically.");
 
         for (let attempt = 0; attempt < 80; attempt += 1) {
           await delay(1500);
@@ -2182,7 +2183,7 @@
         $("publishResults").classList.remove("visible");
         updatePublishControls();
         $("downloadLink").href = data.download_url;
-        $("downloadLink").download = data.suggested_filename || `ClipPilot-${state.ratio.replace(":", "x")}-${data.export_id.slice(0, 8)}.mp4`;
+        $("downloadLink").download = data.suggested_filename || `Clip Farm Pilot-${state.ratio.replace(":", "x")}-${data.export_id.slice(0, 8)}.mp4`;
         $("downloadLink").classList.add("visible");
         if ($("viralTitleToggle").checked && state.generatedTitle) {
           $("viralTitleText").textContent = $("downloadLink").download;
@@ -2209,7 +2210,7 @@
       link.classList.add("saving");
       setStatus("working", "Choose where to save", "Opening the macOS Save As window…");
       try {
-        const result = await window.pywebview.api.save_export(state.exportId, link.download || "ClipPilot-clip.mp4");
+        const result = await window.pywebview.api.save_export(state.exportId, link.download || "Clip Farm Pilot-clip.mp4");
         if (result?.status === "saved") {
           setStatus("success", "Clip saved", `Saved to ${result.path}`);
           toast("Your clip was saved successfully.");
@@ -2287,14 +2288,14 @@
         return;
       }
       if (iosDevice) {
-        window.alert("To install ClipPilot on this device, tap Safari’s Share button, then choose Add to Home Screen.");
+        window.alert("To install Clip Farm Pilot on this device, tap Safari’s Share button, then choose Add to Home Screen.");
       }
     }
 
     if (iosDevice && !standaloneApp) $("installAppButton").hidden = false;
     window.addEventListener("appinstalled", () => {
       $("installAppButton").hidden = true;
-      toast("ClipPilot was added to your home screen.");
+      toast("Clip Farm Pilot was added to your home screen.");
     });
 
     $("fileInput").addEventListener("change", (event) => selectFile(event.target.files[0]));
@@ -2340,7 +2341,7 @@
     $("viralTitleToggle").addEventListener("change", (event) => {
       if (!event.target.checked) {
         $("viralTitleResult").classList.remove("visible");
-        toast("Viral filename disabled. ClipPilot will use a standard filename.");
+        toast("Viral filename disabled. Clip Farm Pilot will use a standard filename.");
       }
     });
 

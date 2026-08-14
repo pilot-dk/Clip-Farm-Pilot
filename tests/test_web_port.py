@@ -40,11 +40,11 @@ class WebPortTests(unittest.TestCase):
         expires = 4_102_444_800
         with patch.object(main, "WEB_PASSWORD", "private"), patch.object(main, "SESSION_SECRET", "test-secret"):
             token = f"{expires}.{main._session_signature(expires)}"
-            request = Request({"type": "http", "method": "GET", "path": "/api/library/videos", "headers": [(b"cookie", f"clippilot_session={token}".encode())]})
+            request = Request({"type": "http", "method": "GET", "path": "/api/library/videos", "headers": [(b"cookie", f"clipfarmpilot_session={token}".encode())]})
             self.assertTrue(main._authenticated(request))
 
     def test_cloud_mode_permanently_deletes_working_source(self):
-        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"CLIPPILOT_DELETE_PERMANENT": "1"}):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"CLIPFARMPILOT_DELETE_PERMANENT": "1"}):
             root = Path(temporary)
             uploads = root / "uploads"
             uploads.mkdir()

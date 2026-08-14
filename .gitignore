@@ -14,8 +14,8 @@ mobile/.expo/
 build/
 dist/
 outputs/
-ClipPilot.spec
-build_assets/ClipPilot.iconset/
+*.spec
+build_assets/*.iconset/
 build_assets/*.icns
 .DS_Store
 .env

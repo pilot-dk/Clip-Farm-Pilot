@@ -22,12 +22,13 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
+from .brand import APP_NAME, APP_SLUG, APP_VERSION, env
 from .social import SocialPublishError, SocialPublisher
 from .video import analyze_viral_candidates, export_clip, generate_viral_title, probe_video
 from .vod import CachedVideoLibrary, VodImportManager
 
 BASE = Path(__file__).resolve().parents[1]
-STORAGE = Path(os.environ.get("CLIPPILOT_STORAGE_DIR", BASE / "storage")).expanduser()
+STORAGE = Path(env("STORAGE_DIR", BASE / "storage")).expanduser()
 UPLOADS = STORAGE / "uploads"
 EXPORTS = STORAGE / "exports"
 STATIC = Path(__file__).resolve().parent / "static"
@@ -36,13 +37,13 @@ EXPORTS.mkdir(parents=True, exist_ok=True)
 VIDEO_LIBRARY = CachedVideoLibrary(UPLOADS)
 VOD_IMPORTS = VodImportManager(UPLOADS, VIDEO_LIBRARY)
 SOCIAL = SocialPublisher(STORAGE, EXPORTS)
-WEB_PASSWORD = os.environ.get("CLIPPILOT_WEB_PASSWORD", "")
-SESSION_SECRET = os.environ.get("CLIPPILOT_SESSION_SECRET") or secrets.token_urlsafe(32)
-SESSION_COOKIE = "clippilot_session"
+WEB_PASSWORD = str(env("WEB_PASSWORD", ""))
+SESSION_SECRET = str(env("SESSION_SECRET") or secrets.token_urlsafe(32))
+SESSION_COOKIE = f"{APP_SLUG}_session"
 SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 30
 
-app = FastAPI(title="ClipPilot API", version="1.1.0")
-CORS_ORIGINS = [value.strip() for value in os.environ.get("CLIPPILOT_CORS_ORIGINS", "").split(",") if value.strip()]
+app = FastAPI(title=f"{APP_NAME} API", version=APP_VERSION)
+CORS_ORIGINS = [value.strip() for value in str(env("CORS_ORIGINS", "")).split(",") if value.strip()]
 if CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -96,7 +97,7 @@ class LoginRequest(BaseModel):
 
 
 def _session_signature(expires: int) -> str:
-    message = f"clippilot:{expires}".encode("utf-8")
+    message = f"{APP_SLUG}:{expires}".encode("utf-8")
     return hmac.new(SESSION_SECRET.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
@@ -121,7 +122,7 @@ def _secure_request(request: Request) -> bool:
 async def protect_api(request: Request, call_next):
     public_api_paths = {"/api/health", "/api/auth/status", "/api/auth/login", "/api/auth/logout"}
     if request.url.path.startswith("/api/") and request.url.path not in public_api_paths and not _authenticated(request):
-        return JSONResponse({"detail": "Unlock ClipPilot to continue."}, status_code=401)
+        return JSONResponse({"detail": "Unlock Clip Farm Pilot to continue."}, status_code=401)
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
@@ -148,7 +149,7 @@ def _caption_overlay_from_data_url(value: str) -> Path | None:
             image.verify()
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("The square-caption image could not be read.") from exc
-    temporary = tempfile.NamedTemporaryFile(prefix="clippilot-browser-caption-", suffix=".png", delete=False)
+    temporary = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-browser-caption-", suffix=".png", delete=False)
     try:
         temporary.write(raw)
         return Path(temporary.name)
@@ -165,7 +166,7 @@ def get_video(video_id: str) -> Path:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "name": "ClipPilot", "version": app.version}
+    return {"ok": True, "name": APP_NAME, "version": app.version}
 
 
 @app.get("/api/auth/status")
@@ -251,7 +252,7 @@ def get_video_source(video_id: str):
 
 @app.get("/api/library/videos")
 def list_cached_videos():
-    permanent_deletion = os.environ.get("CLIPPILOT_DELETE_PERMANENT", "").lower() in {"1", "true", "yes"}
+    permanent_deletion = str(env("DELETE_PERMANENT", "")).lower() in {"1", "true", "yes"}
     return {
         "items": VIDEO_LIBRARY.list_items(),
         "storage_path": str(UPLOADS),
@@ -322,7 +323,7 @@ def export(video_id: str, req: ExportRequest):
     finally:
         if caption_overlay is not None:
             caption_overlay.unlink(missing_ok=True)
-    fallback_filename = f"ClipPilot-{req.aspect.replace(':', 'x')}-{export_id[:8]}.mp4"
+    fallback_filename = f"Clip Farm Pilot-{req.aspect.replace(':', 'x')}-{export_id[:8]}.mp4"
     title_result = {
         "title": Path(fallback_filename).stem,
         "filename": fallback_filename,
@@ -382,7 +383,7 @@ def complete_social_connection(
     else:
         try:
             result = SOCIAL.complete_connection(platform, code, state)
-            message = f"{result['display_name']} is connected to ClipPilot."
+            message = f"{result['display_name']} is connected to Clip Farm Pilot."
             success = True
         except Exception as exc:
             message = str(exc) or "The account could not be connected."
@@ -391,13 +392,13 @@ def complete_social_connection(
     heading = "Account connected" if success else "Connection failed"
     return HTMLResponse(f"""<!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">
-<title>ClipPilot — {escape(heading)}</title></head>
+<title>Clip Farm Pilot — {escape(heading)}</title></head>
 <body style=\"margin:0;min-height:100vh;display:grid;place-items:center;background:#090a0d;color:#f4f5f7;font:15px -apple-system,BlinkMacSystemFont,sans-serif\">
 <main style=\"width:min(440px,calc(100% - 40px));padding:32px;border:1px solid #303540;border-radius:18px;background:#111318;text-align:center\">
 <div style=\"width:48px;height:48px;display:grid;place-items:center;margin:0 auto 18px;border-radius:14px;background:{color}22;color:{color};font-size:24px\">{'✓' if success else '!'}</div>
 <h1 style=\"margin:0 0 10px;font-size:22px\">{escape(heading)}</h1>
 <p style=\"margin:0;color:#a2a7b2;line-height:1.55\">{escape(message)}</p>
-<p style=\"margin:20px 0 0;color:#707684;font-size:12px\">You can close this browser tab and return to ClipPilot.</p>
+<p style=\"margin:20px 0 0;color:#707684;font-size:12px\">You can close this browser tab and return to Clip Farm Pilot.</p>
 </main></body></html>""")
 
 

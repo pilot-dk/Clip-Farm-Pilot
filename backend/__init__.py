@@ -1,1 +1,1 @@
-"""ClipPilot backend package."""
+"""Clip Farm Pilot backend package."""

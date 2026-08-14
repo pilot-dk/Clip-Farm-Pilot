@@ -6,9 +6,11 @@ cd "$PROJECT_DIR"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV="$PROJECT_DIR/.build-venv"
-NODE_BINARY="${CLIPPILOT_NODE_BINARY:-}"
-APP_VERSION="${CLIPPILOT_VERSION:-1.1.0}"
-BUILD_NUMBER="${CLIPPILOT_BUILD_NUMBER:-${APP_VERSION//./}}"
+NODE_BINARY="${CLIPFARMPILOT_NODE_BINARY:-}"
+APP_NAME="Clip Farm Pilot"
+APP_VERSION="${CLIPFARMPILOT_VERSION:-1.2.0}"
+BUILD_NUMBER="${CLIPFARMPILOT_BUILD_NUMBER:-${APP_VERSION//./}}"
+APP_BUNDLE="$PROJECT_DIR/dist/$APP_NAME.app"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_DIR/.pyinstaller-cache"
 
 if [[ -z "$NODE_BINARY" ]]; then
@@ -16,7 +18,7 @@ if [[ -z "$NODE_BINARY" ]]; then
 fi
 
 if [[ -z "$NODE_BINARY" || ! -x "$NODE_BINARY" ]]; then
-  echo "Set CLIPPILOT_NODE_BINARY to an arm64 Node.js executable before building."
+  echo "Set CLIPFARMPILOT_NODE_BINARY to an arm64 Node.js executable before building."
   exit 1
 fi
 
@@ -29,9 +31,9 @@ fi
   --clean \
   --windowed \
   --onedir \
-  --name ClipPilot \
-  --icon build_assets/ClipPilot.iconset/icon_512x512@2x.png \
-  --osx-bundle-identifier com.clippilot.desktop \
+  --name "$APP_NAME" \
+  --icon build_assets/ClipFarmPilot.iconset/icon_512x512@2x.png \
+  --osx-bundle-identifier com.clipfarmpilot.desktop \
   --target-architecture arm64 \
   --add-data "backend/app/static:backend/app/static" \
   --add-binary "$NODE_BINARY:bin" \
@@ -46,9 +48,9 @@ fi
   --hidden-import uvicorn.lifespan.on \
   desktop_launcher.py
 
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$PROJECT_DIR/dist/ClipPilot.app/Contents/Info.plist"
-if ! /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$PROJECT_DIR/dist/ClipPilot.app/Contents/Info.plist"; then
-  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$PROJECT_DIR/dist/ClipPilot.app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_BUNDLE/Contents/Info.plist"
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_BUNDLE/Contents/Info.plist"; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$APP_BUNDLE/Contents/Info.plist"
 fi
-codesign --force --deep --sign - "$PROJECT_DIR/dist/ClipPilot.app"
-echo "Built ClipPilot $APP_VERSION at $PROJECT_DIR/dist/ClipPilot.app"
+codesign --force --deep --sign - "$APP_BUNDLE"
+echo "Built $APP_NAME $APP_VERSION at $APP_BUNDLE"

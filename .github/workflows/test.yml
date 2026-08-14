@@ -1,4 +1,4 @@
-name: Test ClipPilot
+name: Test Clip Farm Pilot
 
 on:
   push:
@@ -24,4 +24,4 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
       - name: Build deployment image
-        run: docker build -t clippilot-web:test .
+        run: docker build -t clipfarmpilot-web:test .

@@ -15,8 +15,8 @@ class SocialAccountTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             "os.environ",
             {
-                "CLIPPILOT_YOUTUBE_CLIENT_ID": "youtube-client",
-                "CLIPPILOT_YOUTUBE_CLIENT_SECRET": "youtube-secret",
+                "CLIPFARMPILOT_YOUTUBE_CLIENT_ID": "youtube-client",
+                "CLIPFARMPILOT_YOUTUBE_CLIENT_SECRET": "youtube-secret",
             },
             clear=True,
         ):
@@ -44,7 +44,7 @@ class SocialAccountTests(unittest.TestCase):
     def test_publish_uses_existing_export_and_connected_account(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             "os.environ",
-            {"CLIPPILOT_YOUTUBE_ACCESS_TOKEN": "test-token"},
+            {"CLIPFARMPILOT_YOUTUBE_ACCESS_TOKEN": "test-token"},
             clear=True,
         ):
             root = Path(temporary)

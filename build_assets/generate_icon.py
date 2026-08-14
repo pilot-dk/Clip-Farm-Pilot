@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parent
-ICONSET = ROOT / "ClipPilot.iconset"
+ICONSET = ROOT / "ClipFarmPilot.iconset"
 ICONSET.mkdir(parents=True, exist_ok=True)
 
 

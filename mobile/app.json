@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "ClipPilot",
-    "slug": "clippilot",
-    "version": "0.1.0",
+    "name": "Clip Farm Pilot",
+    "slug": "clipfarmpilot",
+    "version": "1.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "ClipPilot needs access to your videos so it can create clips."
+        "NSPhotoLibraryUsageDescription": "Clip Farm Pilot needs access to your videos so it can create clips."
       }
     },
     "android": {

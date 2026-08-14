@@ -17,6 +17,8 @@ from typing import Literal
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from .brand import APP_SLUG, env
+
 Aspect = Literal["16:9", "9:16", "1:1"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 SoundEffect = Literal["none", "impact-boom", "whoosh", "record-scratch"]
@@ -41,7 +43,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
 
 
 def ffmpeg_executable() -> str:
-    configured = os.environ.get("CLIPPILOT_FFMPEG_EXE")
+    configured = env("FFMPEG_EXE")
     if configured and Path(configured).exists():
         return configured
 
@@ -58,7 +60,7 @@ def ffmpeg_executable() -> str:
 
 
 def probe_video(path: Path) -> VideoInfo:
-    configured_probe = os.environ.get("CLIPPILOT_FFPROBE_EXE")
+    configured_probe = env("FFPROBE_EXE")
     ffprobe = configured_probe if configured_probe and Path(configured_probe).exists() else shutil.which("ffprobe")
     if ffprobe:
         result = _run([
@@ -202,7 +204,7 @@ def _classify_clip_energy(rms: np.ndarray) -> tuple[str, str]:
     return "surprise", "The Moment I Didn’t See Coming"
 
 
-def safe_export_filename(title: str, fallback: str = "ClipPilot Viral Moment") -> str:
+def safe_export_filename(title: str, fallback: str = "Clip Farm Pilot Viral Moment") -> str:
     """Create a portable MP4 filename while keeping readable Unicode and emoji."""
     stem = unicodedata.normalize("NFKC", str(title or ""))
     stem = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', " ", stem)
@@ -651,7 +653,7 @@ def _apply_effects(
 
     try:
         if sound_effect != "none":
-            sound_file = tempfile.NamedTemporaryFile(prefix="clippilot-sfx-", suffix=".wav", delete=False)
+            sound_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-sfx-", suffix=".wav", delete=False)
             sound_path = Path(sound_file.name)
             sound_file.close()
             temporary_paths.append(sound_path)
@@ -660,7 +662,7 @@ def _apply_effects(
             inputs += ["-i", str(sound_path)]
 
         if visual_effect in {"lens-flare", "white-flash"}:
-            overlay_file = tempfile.NamedTemporaryFile(prefix="clippilot-vfx-", suffix=".png", delete=False)
+            overlay_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-vfx-", suffix=".png", delete=False)
             overlay_path = Path(overlay_file.name)
             overlay_file.close()
             temporary_paths.append(overlay_path)
@@ -760,7 +762,7 @@ def export_clip(
     base_temporary: Path | None = None
     render_target = output
     if has_effects:
-        base_file = tempfile.NamedTemporaryFile(prefix="clippilot-base-", suffix=".mp4", delete=False)
+        base_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-base-", suffix=".mp4", delete=False)
         base_temporary = Path(base_file.name)
         base_file.close()
         render_target = base_temporary
@@ -809,7 +811,7 @@ def export_clip(
             width, height = ASPECT_SIZES[aspect]
             owns_overlay = caption_overlay_path is None
             if owns_overlay:
-                overlay_file = tempfile.NamedTemporaryFile(prefix="clippilot-caption-", suffix=".png", delete=False)
+                overlay_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-caption-", suffix=".png", delete=False)
                 overlay_path = Path(overlay_file.name)
                 overlay_file.close()
             else:

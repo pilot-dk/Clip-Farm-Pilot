@@ -1,16 +1,16 @@
 services:
   - type: web
-    name: clippilot-web-pilot-dk
+    name: clipfarmpilot-web-pilot-dk
     runtime: docker
     plan: free
     autoDeploy: true
     healthCheckPath: /api/health
     envVars:
-      - key: CLIPPILOT_WEB_PASSWORD
+      - key: CLIPFARMPILOT_WEB_PASSWORD
         sync: false
-      - key: CLIPPILOT_SESSION_SECRET
+      - key: CLIPFARMPILOT_SESSION_SECRET
         generateValue: true
-      - key: CLIPPILOT_STORAGE_DIR
-        value: /tmp/clippilot
-      - key: CLIPPILOT_DELETE_PERMANENT
+      - key: CLIPFARMPILOT_STORAGE_DIR
+        value: /tmp/clipfarmpilot
+      - key: CLIPFARMPILOT_DELETE_PERMANENT
         value: "1"

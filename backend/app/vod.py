@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+from .brand import APP_NAME, env
 from .video import ffmpeg_executable, probe_video
 
 
@@ -30,7 +31,7 @@ def validate_vod_url(raw_url: str) -> str:
     hostname = (parsed.hostname or "").lower().rstrip(".")
     supported = any(hostname == domain or hostname.endswith(f".{domain}") for domain in SUPPORTED_DOMAINS)
     if parsed.scheme not in {"http", "https"} or not supported or parsed.username or parsed.password:
-        raise ValueError("ClipPilot currently imports public YouTube and Twitch links.")
+        raise ValueError("Clip Farm Pilot currently imports public YouTube and Twitch links.")
     return url
 
 
@@ -52,12 +53,12 @@ class _QuietLogger:
 
 
 class CachedVideoLibrary:
-    """Persistent catalog for ClipPilot's local working video copies."""
+    """Persistent catalog for Clip Farm Pilot's local working video copies."""
 
     def __init__(self, uploads: Path, metadata_path: Path | None = None, trash_dir: Path | None = None):
         self.uploads = uploads.resolve()
         self.metadata_path = metadata_path or self.uploads.parent / "video_library.json"
-        self.trash_dir = trash_dir or Path(os.environ.get("CLIPPILOT_TRASH_DIR", Path.home() / ".Trash")).expanduser()
+        self.trash_dir = trash_dir or Path(env("TRASH_DIR", Path.home() / ".Trash")).expanduser()
         self._records: dict[str, dict] = {}
         self._lock = threading.RLock()
         self._load()
@@ -184,7 +185,7 @@ class CachedVideoLibrary:
             if not record or source is None:
                 raise KeyError(video_id)
 
-            permanent_deletion = os.environ.get("CLIPPILOT_DELETE_PERMANENT", "").lower() in {"1", "true", "yes"}
+            permanent_deletion = str(env("DELETE_PERMANENT", "")).lower() in {"1", "true", "yes"}
             if permanent_deletion:
                 source.unlink()
                 disposition = "deleted"
@@ -192,10 +193,10 @@ class CachedVideoLibrary:
                 self.trash_dir.mkdir(parents=True, exist_ok=True)
                 safe_title = re.sub(r"[^A-Za-z0-9 _.-]+", "", str(record.get("title") or "Imported video")).strip()
                 safe_title = safe_title[:60] or "Imported video"
-                destination = self.trash_dir / f"ClipPilot - {safe_title} - {video_id[:8]}{source.suffix.lower()}"
+                destination = self.trash_dir / f"{APP_NAME} - {safe_title} - {video_id[:8]}{source.suffix.lower()}"
                 counter = 2
                 while destination.exists():
-                    destination = self.trash_dir / f"ClipPilot - {safe_title} - {video_id[:8]} ({counter}){source.suffix.lower()}"
+                    destination = self.trash_dir / f"{APP_NAME} - {safe_title} - {video_id[:8]} ({counter}){source.suffix.lower()}"
                     counter += 1
                 shutil.move(str(source), str(destination))
                 disposition = "trash"
@@ -287,7 +288,7 @@ class VodImportManager:
                 "logger": _QuietLogger(remember_error),
                 "ffmpeg_location": ffmpeg_executable(),
             }
-            node_runtime = os.environ.get("CLIPPILOT_NODE_EXE") or shutil.which("node")
+            node_runtime = env("NODE_EXE") or shutil.which("node")
             if node_runtime and Path(node_runtime).exists():
                 options["js_runtimes"] = {"node": {"path": node_runtime}}
             with YoutubeDL(options) as ydl:

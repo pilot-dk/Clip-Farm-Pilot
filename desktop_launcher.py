@@ -14,6 +14,10 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
+from backend.app.brand import APP_NAME, ENV_PREFIX, env
+
+
+DEFAULT_CLIP_FILENAME = f"{APP_NAME}-clip.mp4"
 
 class DesktopApi:
     """Native helpers exposed only inside the packaged desktop window."""
@@ -39,7 +43,7 @@ class DesktopApi:
         self._window = window
         self._save_dialog_type = save_dialog_type
 
-    def save_export(self, export_id: str, suggested_name: str = "ClipPilot-clip.mp4") -> dict:
+    def save_export(self, export_id: str, suggested_name: str = DEFAULT_CLIP_FILENAME) -> dict:
         if not self._ITEM_ID.fullmatch(export_id or ""):
             raise ValueError("That exported clip could not be identified.")
 
@@ -49,7 +53,7 @@ class DesktopApi:
         if self._window is None:
             raise RuntimeError("The Mac save window is not ready.")
 
-        safe_name = Path(suggested_name or "ClipPilot-clip.mp4").name[:120]
+        safe_name = Path(suggested_name or DEFAULT_CLIP_FILENAME).name[:120]
         if not safe_name.lower().endswith(".mp4"):
             safe_name += ".mp4"
         downloads = Path.home() / "Downloads"
@@ -73,7 +77,7 @@ class DesktopApi:
         return {"status": "saved", "path": str(destination)}
 
     def reveal_video(self, video_id: str) -> dict:
-        """Reveal one of ClipPilot's cached source videos in macOS Finder."""
+        """Reveal one of Clip Farm Pilot's cached source videos in macOS Finder."""
         if not self._ITEM_ID.fullmatch(video_id or ""):
             raise ValueError("That imported video could not be identified.")
         if self._uploads_dir is None:
@@ -95,7 +99,7 @@ class DesktopApi:
         """Open only known OAuth or provider-help pages in the default browser."""
         parsed = urlparse(url)
         if parsed.scheme != "https" or parsed.hostname not in self._OAUTH_HOSTS:
-            raise ValueError("ClipPilot blocked an unexpected external link.")
+            raise ValueError("Clip Farm Pilot blocked an unexpected external link.")
         subprocess.run(["open", url], check=True, capture_output=True)
         return {"status": "opened"}
 
@@ -111,22 +115,30 @@ def _available_port() -> int:
 
 
 def _configure_runtime() -> None:
-    storage = Path(os.environ.get(
-        "CLIPPILOT_STORAGE_DIR",
-        Path.home() / "Library" / "Application Support" / "ClipPilot",
-    )).expanduser()
+    configured_storage = env("STORAGE_DIR")
+    if configured_storage:
+        storage = Path(str(configured_storage)).expanduser()
+    else:
+        application_support = Path.home() / "Library" / "Application Support"
+        storage = application_support / APP_NAME
+        legacy_storage = application_support / ("Clip" + "Pilot")
+        if legacy_storage.is_dir() and not storage.exists():
+            try:
+                legacy_storage.rename(storage)
+            except OSError:
+                storage = legacy_storage
     storage.mkdir(parents=True, exist_ok=True)
-    os.environ["CLIPPILOT_STORAGE_DIR"] = str(storage)
+    os.environ[f"{ENV_PREFIX}STORAGE_DIR"] = str(storage)
 
     import imageio_ffmpeg
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg
-    os.environ["CLIPPILOT_FFMPEG_EXE"] = ffmpeg
+    os.environ[f"{ENV_PREFIX}FFMPEG_EXE"] = ffmpeg
 
     bundled_node = _resource_dir() / "bin" / "node"
     if bundled_node.exists():
-        os.environ["CLIPPILOT_NODE_EXE"] = str(bundled_node)
+        os.environ[f"{ENV_PREFIX}NODE_EXE"] = str(bundled_node)
 
 
 def _wait_for_server(url: str, timeout: float = 20.0) -> None:
@@ -138,7 +150,7 @@ def _wait_for_server(url: str, timeout: float = 20.0) -> None:
                     return
         except Exception:
             time.sleep(0.1)
-    raise RuntimeError("ClipPilot could not start its local service.")
+    raise RuntimeError("Clip Farm Pilot could not start its local service.")
 
 
 def _json_request(url: str, path: str, payload: dict | None = None, method: str | None = None) -> dict:
@@ -184,7 +196,7 @@ def _test_vod_pipeline(url: str, vod_url: str) -> list[str]:
                 "caption_text": "W shave ❤️",
                 "caption_font_scale": 1.50,
             })
-            if os.environ.get("CLIPPILOT_TEST_DELETE_LIBRARY") == "1":
+            if env("TEST_DELETE_LIBRARY") == "1":
                 deleted = _json_request(url, f"/api/library/videos/{job['video_id']}", method="DELETE")
                 if deleted.get("disposition") != "trash":
                     raise RuntimeError("The imported VOD was not moved to Trash.")
@@ -202,7 +214,7 @@ def _test_save_bridge(
     exports_dir: Path,
     export_id: str,
     destination_dir: Path,
-    suggested_name: str = "ClipPilot-save-test.mp4",
+    suggested_name: str = f"{APP_NAME}-save-test.mp4",
 ) -> None:
     destination_dir.mkdir(parents=True, exist_ok=True)
 
@@ -236,7 +248,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         or 'id="visualEffect"' not in html
         or 'id="effectTime"' not in html
     ):
-        raise RuntimeError("The bundled ClipPilot interface is missing an expected feature.")
+        raise RuntimeError("The bundled Clip Farm Pilot interface is missing an expected feature.")
 
     video_id = uuid.uuid4().hex
     cached_source = uploads_dir / f"{video_id}{source_path.suffix.lower()}"
@@ -308,7 +320,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         exports_dir / f"{gaming_id}.mp4",
         source_title="FC 26 Weekend League Livestream.mp4",
     )
-    if not title_result["title"] or title_result["filename"].startswith("ClipPilot-"):
+    if not title_result["title"] or title_result["filename"].startswith(f"{APP_NAME}-"):
         raise RuntimeError("The bundled viral filename generator did not produce a content-aware title.")
     library.move_to_trash(video_id)
     expected_exports = [landscape_id, portrait_id, square_id, gaming_id]
@@ -316,7 +328,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         raise RuntimeError("Deleting the bundled test VOD did not preserve its exports.")
     if any(item["video_id"] == video_id for item in library.list_items()):
         raise RuntimeError("The deleted bundled test VOD remains in the video library.")
-    if save_dir := os.environ.get("CLIPPILOT_TEST_SAVE_DIR"):
+    if save_dir := env("TEST_SAVE_DIR"):
         _test_save_bridge(exports_dir, gaming_id, Path(save_dir), title_result["filename"])
 
 
@@ -326,8 +338,8 @@ def main() -> int:
     import uvicorn
     from backend.app.main import EXPORTS, STATIC, UPLOADS, VIDEO_LIBRARY, app
 
-    if direct_source := os.environ.get("CLIPPILOT_TEST_SOURCE"):
-        _test_direct_bundle(Path(direct_source), UPLOADS, EXPORTS, VIDEO_LIBRARY, STATIC)
+    if direct_source := env("TEST_SOURCE"):
+        _test_direct_bundle(Path(str(direct_source)), UPLOADS, EXPORTS, VIDEO_LIBRARY, STATIC)
         return 0
 
     port = _available_port()
@@ -335,24 +347,24 @@ def main() -> int:
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", access_log=False)
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None
-    thread = threading.Thread(target=server.run, name="ClipPilot API", daemon=True)
+    thread = threading.Thread(target=server.run, name=f"{APP_NAME} API", daemon=True)
     thread.start()
 
     try:
         _wait_for_server(url)
-        if os.environ.get("CLIPPILOT_TEST_MODE") == "1":
+        if env("TEST_MODE") == "1":
             export_ids: list[str] = []
-            if test_vod_url := os.environ.get("CLIPPILOT_TEST_VOD_URL"):
-                export_ids = _test_vod_pipeline(url, test_vod_url)
-            if export_ids and (test_save_dir := os.environ.get("CLIPPILOT_TEST_SAVE_DIR")):
-                _test_save_bridge(EXPORTS, export_ids[0], Path(test_save_dir))
+            if test_vod_url := env("TEST_VOD_URL"):
+                export_ids = _test_vod_pipeline(url, str(test_vod_url))
+            if export_ids and (test_save_dir := env("TEST_SAVE_DIR")):
+                _test_save_bridge(EXPORTS, export_ids[0], Path(str(test_save_dir)))
             return 0
 
         import webview
 
         desktop_api = DesktopApi(EXPORTS, UPLOADS)
         window = webview.create_window(
-            "ClipPilot",
+            APP_NAME,
             url,
             js_api=desktop_api,
             width=1360,
@@ -365,7 +377,7 @@ def main() -> int:
             time.sleep(2)
             window.destroy()
 
-        test_window = os.environ.get("CLIPPILOT_TEST_WINDOW") == "1"
+        test_window = env("TEST_WINDOW") == "1"
         webview.start(close_test_window if test_window else None, gui="cocoa", debug=False, private_mode=False)
         return 0
     finally:

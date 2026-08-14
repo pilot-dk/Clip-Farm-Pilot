@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from .brand import env
+
 
 Platform = Literal["youtube", "instagram", "tiktok"]
 
@@ -61,18 +63,18 @@ class SocialPublisher:
     def _credentials(self, platform: Platform) -> dict[str, str]:
         if platform == "youtube":
             return {
-                "client_id": os.environ.get("CLIPPILOT_YOUTUBE_CLIENT_ID", "").strip(),
-                "client_secret": os.environ.get("CLIPPILOT_YOUTUBE_CLIENT_SECRET", "").strip(),
+                "client_id": str(env("YOUTUBE_CLIENT_ID", "")).strip(),
+                "client_secret": str(env("YOUTUBE_CLIENT_SECRET", "")).strip(),
             }
         if platform == "instagram":
             return {
-                "client_id": os.environ.get("CLIPPILOT_INSTAGRAM_CLIENT_ID", "").strip(),
-                "client_secret": os.environ.get("CLIPPILOT_INSTAGRAM_CLIENT_SECRET", "").strip(),
+                "client_id": str(env("INSTAGRAM_CLIENT_ID", "")).strip(),
+                "client_secret": str(env("INSTAGRAM_CLIENT_SECRET", "")).strip(),
             }
         if platform == "tiktok":
             return {
-                "client_id": os.environ.get("CLIPPILOT_TIKTOK_CLIENT_KEY", "").strip(),
-                "client_secret": os.environ.get("CLIPPILOT_TIKTOK_CLIENT_SECRET", "").strip(),
+                "client_id": str(env("TIKTOK_CLIENT_KEY", "")).strip(),
+                "client_secret": str(env("TIKTOK_CLIENT_SECRET", "")).strip(),
             }
         raise SocialPublishError("Unsupported social platform.")
 
@@ -93,19 +95,19 @@ class SocialPublisher:
             os.replace(temporary, self.accounts_path)
 
     def _environment_account(self, platform: Platform) -> dict[str, Any] | None:
-        prefix = f"CLIPPILOT_{platform.upper()}"
-        token = os.environ.get(f"{prefix}_ACCESS_TOKEN", "").strip()
+        platform_prefix = platform.upper()
+        token = str(env(f"{platform_prefix}_ACCESS_TOKEN", "")).strip()
         if not token:
             return None
         account: dict[str, Any] = {
             "access_token": token,
-            "display_name": os.environ.get(f"{prefix}_ACCOUNT_NAME", PLATFORM_DETAILS[platform]["name"]),
+            "display_name": env(f"{platform_prefix}_ACCOUNT_NAME", PLATFORM_DETAILS[platform]["name"]),
             "source": "environment",
         }
         if platform == "instagram":
-            account["user_id"] = os.environ.get("CLIPPILOT_INSTAGRAM_USER_ID", "").strip()
+            account["user_id"] = str(env("INSTAGRAM_USER_ID", "")).strip()
         if platform == "tiktok":
-            account["open_id"] = os.environ.get("CLIPPILOT_TIKTOK_OPEN_ID", "").strip()
+            account["open_id"] = str(env("TIKTOK_OPEN_ID", "")).strip()
         return account
 
     def _account(self, platform: Platform) -> dict[str, Any] | None:
@@ -144,7 +146,7 @@ class SocialPublisher:
                 "docs_url": details["docs_url"],
             }
 
-        configured_base = os.environ.get("CLIPPILOT_OAUTH_REDIRECT_BASE", "").strip().rstrip("/")
+        configured_base = str(env("OAUTH_REDIRECT_BASE", "")).strip().rstrip("/")
         base = configured_base or redirect_base.rstrip("/")
         redirect_uri = f"{base}/api/social/{platform}/callback"
         state = secrets.token_urlsafe(32)
@@ -191,7 +193,7 @@ class SocialPublisher:
     def complete_connection(self, platform: Platform, code: str, state: str) -> dict[str, Any]:
         pending = self._oauth_states.pop(state, None)
         if not pending or pending["platform"] != platform or pending["expires"] < time.time():
-            raise SocialPublishError("This connection request expired. Return to ClipPilot and press Connect again.")
+            raise SocialPublishError("This connection request expired. Return to Clip Farm Pilot and press Connect again.")
 
         credentials = self._credentials(platform)
         redirect_uri = pending["redirect_uri"]
@@ -371,8 +373,8 @@ class SocialPublisher:
         token = self._fresh_token("instagram", account)
         user_id = str(account.get("user_id") or "")
         if not user_id:
-            raise SocialPublishError("Reconnect Instagram so ClipPilot can identify the professional account.")
-        version = os.environ.get("CLIPPILOT_META_API_VERSION", "v24.0")
+            raise SocialPublishError("Reconnect Instagram so Clip Farm Pilot can identify the professional account.")
+        version = str(env("META_API_VERSION", "v24.0"))
         created = self._post_json(
             f"https://graph.instagram.com/{version}/{user_id}/media",
             data={

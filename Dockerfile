@@ -2,8 +2,8 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    CLIPPILOT_STORAGE_DIR=/tmp/clippilot \
-    CLIPPILOT_DELETE_PERMANENT=1
+    CLIPFARMPILOT_STORAGE_DIR=/tmp/clipfarmpilot \
+    CLIPFARMPILOT_DELETE_PERMANENT=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg fontconfig fonts-noto-color-emoji libraqm0 nodejs \
