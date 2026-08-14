@@ -1,0 +1,25 @@
+{
+  "name": "ClipPilot Studio",
+  "short_name": "ClipPilot",
+  "description": "Turn livestream recordings into social-ready clips from any device.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090a0d",
+  "theme_color": "#0b0c10",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

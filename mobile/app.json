@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "ClipPilot",
+    "slug": "clippilot",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "ClipPilot needs access to your videos so it can create clips."
+      }
+    },
+    "android": {
+      "permissions": ["READ_MEDIA_VIDEO"]
+    },
+    "plugins": ["expo-image-picker"]
+  }
+}

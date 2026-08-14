@@ -1,0 +1,16 @@
+.git
+.github
+.build-venv
+.pyinstaller-cache
+backend/.venv
+backend/__pycache__
+backend/app/__pycache__
+backend/storage
+build
+dist
+mobile
+outputs
+tests/__pycache__
+*.pyc
+*.zip
+.DS_Store

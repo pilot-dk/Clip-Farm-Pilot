@@ -1,0 +1,11 @@
+# Third-party components
+
+ClipPilot's desktop build includes third-party open-source components. Their licenses remain with their respective projects.
+
+- FFmpeg executable supplied by `imageio-ffmpeg` — FFmpeg project licensing applies.
+- Node.js runtime — Node.js contributors, MIT license and bundled third-party notices apply.
+- yt-dlp — The Unlicense.
+- PyInstaller — GPL-2.0-or-later with a special exception allowing bundled applications.
+- pywebview — BSD-3-Clause.
+
+Before distributing ClipPilot commercially, review the exact FFmpeg build configuration and all licenses included in the final app bundle.

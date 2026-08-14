@@ -1,0 +1,377 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+import uuid
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+class DesktopApi:
+    """Native helpers exposed only inside the packaged desktop window."""
+
+    _ITEM_ID = re.compile(r"^[0-9a-f]{32}$")
+    _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+    _OAUTH_HOSTS = {
+        "accounts.google.com",
+        "developers.facebook.com",
+        "developers.google.com",
+        "developers.tiktok.com",
+        "www.instagram.com",
+        "www.tiktok.com",
+    }
+
+    def __init__(self, exports_dir: Path, uploads_dir: Path | None = None):
+        self._exports_dir = exports_dir.resolve()
+        self._uploads_dir = uploads_dir.resolve() if uploads_dir else None
+        self._window = None
+        self._save_dialog_type = 30
+
+    def _bind_window(self, window, save_dialog_type: int) -> None:
+        self._window = window
+        self._save_dialog_type = save_dialog_type
+
+    def save_export(self, export_id: str, suggested_name: str = "ClipPilot-clip.mp4") -> dict:
+        if not self._ITEM_ID.fullmatch(export_id or ""):
+            raise ValueError("That exported clip could not be identified.")
+
+        source = (self._exports_dir / f"{export_id}.mp4").resolve()
+        if source.parent != self._exports_dir or not source.is_file():
+            raise FileNotFoundError("The exported clip is no longer available. Please export it again.")
+        if self._window is None:
+            raise RuntimeError("The Mac save window is not ready.")
+
+        safe_name = Path(suggested_name or "ClipPilot-clip.mp4").name[:120]
+        if not safe_name.lower().endswith(".mp4"):
+            safe_name += ".mp4"
+        downloads = Path.home() / "Downloads"
+        initial_directory = str(downloads if downloads.is_dir() else Path.home())
+        selected = self._window.create_file_dialog(
+            self._save_dialog_type,
+            directory=initial_directory,
+            save_filename=safe_name,
+            file_types=("MP4 video (*.mp4)",),
+        )
+        if not selected:
+            return {"status": "cancelled"}
+
+        destination_value = selected[0] if isinstance(selected, (tuple, list)) else selected
+        destination = Path(destination_value).expanduser()
+        if destination.suffix.lower() != ".mp4":
+            destination = destination.with_suffix(".mp4")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.resolve() != source:
+            shutil.copy2(source, destination)
+        return {"status": "saved", "path": str(destination)}
+
+    def reveal_video(self, video_id: str) -> dict:
+        """Reveal one of ClipPilot's cached source videos in macOS Finder."""
+        if not self._ITEM_ID.fullmatch(video_id or ""):
+            raise ValueError("That imported video could not be identified.")
+        if self._uploads_dir is None:
+            raise RuntimeError("The imported video folder is not available.")
+
+        candidates = [
+            path.resolve()
+            for path in self._uploads_dir.glob(f"{video_id}.*")
+            if path.is_file() and path.suffix.lower() in self._VIDEO_SUFFIXES
+        ]
+        candidates = [path for path in candidates if path.parent == self._uploads_dir]
+        if not candidates:
+            raise FileNotFoundError("The imported video is no longer on this Mac.")
+        source = max(candidates, key=lambda path: path.stat().st_size)
+        subprocess.run(["open", "-R", str(source)], check=True, capture_output=True)
+        return {"status": "revealed", "path": str(source)}
+
+    def open_external_url(self, url: str) -> dict:
+        """Open only known OAuth or provider-help pages in the default browser."""
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in self._OAUTH_HOSTS:
+            raise ValueError("ClipPilot blocked an unexpected external link.")
+        subprocess.run(["open", url], check=True, capture_output=True)
+        return {"status": "opened"}
+
+
+def _resource_dir() -> Path:
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+
+def _available_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _configure_runtime() -> None:
+    storage = Path(os.environ.get(
+        "CLIPPILOT_STORAGE_DIR",
+        Path.home() / "Library" / "Application Support" / "ClipPilot",
+    )).expanduser()
+    storage.mkdir(parents=True, exist_ok=True)
+    os.environ["CLIPPILOT_STORAGE_DIR"] = str(storage)
+
+    import imageio_ffmpeg
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg
+    os.environ["CLIPPILOT_FFMPEG_EXE"] = ffmpeg
+
+    bundled_node = _resource_dir() / "bin" / "node"
+    if bundled_node.exists():
+        os.environ["CLIPPILOT_NODE_EXE"] = str(bundled_node)
+
+
+def _wait_for_server(url: str, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=1) as response:
+                if response.status == 200:
+                    return
+        except Exception:
+            time.sleep(0.1)
+    raise RuntimeError("ClipPilot could not start its local service.")
+
+
+def _json_request(url: str, path: str, payload: dict | None = None, method: str | None = None) -> dict:
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = urllib.request.Request(
+        f"{url}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"} if data else {},
+        method=method or ("POST" if data else "GET"),
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read())
+
+
+def _test_vod_pipeline(url: str, vod_url: str) -> list[str]:
+    created = _json_request(url, "/api/imports", {"url": vod_url})
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        job = _json_request(url, f"/api/imports/{created['import_id']}")
+        if job["status"] == "complete":
+            library = _json_request(url, "/api/library/videos")
+            cached = next((item for item in library["items"] if item["video_id"] == job["video_id"]), None)
+            if not cached or cached.get("original_url") != vod_url:
+                raise RuntimeError("The imported VOD was not added to the video library.")
+            _json_request(url, f"/api/videos/{job['video_id']}/analyze", {"target_duration": 8, "limit": 1})
+            clip_end = min(5, float(job["duration"]))
+            gaming_export = _json_request(url, f"/api/videos/{job['video_id']}/export", {
+                "start": 0,
+                "end": clip_end,
+                "aspect": "9:16",
+                "layout": "gaming",
+                "face_corner": "bottom-right",
+                "face_width_fraction": 0.30,
+                "face_height_fraction": 0.34,
+                "face_inset_x_fraction": 0.02,
+                "face_inset_y_fraction": 0.02,
+            })
+            square_export = _json_request(url, f"/api/videos/{job['video_id']}/export", {
+                "start": 0,
+                "end": clip_end,
+                "aspect": "1:1",
+                "layout": "standard",
+                "caption_text": "W shave ❤️",
+                "caption_font_scale": 1.50,
+            })
+            if os.environ.get("CLIPPILOT_TEST_DELETE_LIBRARY") == "1":
+                deleted = _json_request(url, f"/api/library/videos/{job['video_id']}", method="DELETE")
+                if deleted.get("disposition") != "trash":
+                    raise RuntimeError("The imported VOD was not moved to Trash.")
+                remaining = _json_request(url, "/api/library/videos")
+                if any(item["video_id"] == job["video_id"] for item in remaining["items"]):
+                    raise RuntimeError("The deleted VOD still appears in the video library.")
+            return [gaming_export["export_id"], square_export["export_id"]]
+        if job["status"] == "error":
+            raise RuntimeError(job["message"])
+        time.sleep(0.5)
+    raise RuntimeError("The bundled VOD import test timed out.")
+
+
+def _test_save_bridge(
+    exports_dir: Path,
+    export_id: str,
+    destination_dir: Path,
+    suggested_name: str = "ClipPilot-save-test.mp4",
+) -> None:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    class TestWindow:
+        def create_file_dialog(self, *args, **kwargs):
+            return str(destination_dir / kwargs["save_filename"])
+
+    desktop_api = DesktopApi(exports_dir)
+    desktop_api._bind_window(TestWindow(), 30)
+    result = desktop_api.save_export(export_id, suggested_name)
+    destination = Path(result["path"])
+    if result["status"] != "saved" or not destination.is_file():
+        raise RuntimeError("The native save test did not create an MP4.")
+    if destination.read_bytes() != (exports_dir / f"{export_id}.mp4").read_bytes():
+        raise RuntimeError("The saved MP4 does not match the rendered export.")
+
+
+def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path, library, static_dir: Path) -> None:
+    """Socket-free packaged-app test for restricted build environments."""
+    from backend.app.video import export_clip, generate_viral_title, probe_video
+
+    if not source_path.is_file():
+        raise FileNotFoundError("The direct bundle test source is missing.")
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    if (
+        'id="libraryButton"' not in html
+        or 'id="libraryModal"' not in html
+        or 'id="viralTitleToggle"' not in html
+        or 'id="publishButton"' not in html
+        or 'id="soundEffect"' not in html
+        or 'id="visualEffect"' not in html
+        or 'id="effectTime"' not in html
+    ):
+        raise RuntimeError("The bundled ClipPilot interface is missing an expected feature.")
+
+    video_id = uuid.uuid4().hex
+    cached_source = uploads_dir / f"{video_id}{source_path.suffix.lower()}"
+    shutil.copy2(source_path, cached_source)
+    info = probe_video(cached_source)
+    library.register(
+        video_id,
+        "Bundled VOD test",
+        "url",
+        "https://www.youtube.com/watch?v=bundled-test",
+        info.duration,
+        info.width,
+        info.height,
+    )
+    cached = next((item for item in library.list_items() if item["video_id"] == video_id), None)
+    if not cached or cached.get("original_url") != "https://www.youtube.com/watch?v=bundled-test":
+        raise RuntimeError("The bundled video library did not persist the VOD source.")
+
+    clip_end = min(2.5, info.duration)
+    landscape_id = uuid.uuid4().hex
+    portrait_id = uuid.uuid4().hex
+    square_id = uuid.uuid4().hex
+    gaming_id = uuid.uuid4().hex
+    export_clip(
+        source=cached_source,
+        output=exports_dir / f"{landscape_id}.mp4",
+        start=0,
+        end=clip_end,
+        aspect="16:9",
+        sound_effect="record-scratch",
+        visual_effect="white-flash",
+        effect_time=0.6,
+    )
+    export_clip(
+        source=cached_source,
+        output=exports_dir / f"{portrait_id}.mp4",
+        start=0,
+        end=clip_end,
+        aspect="9:16",
+        sound_effect="impact-boom",
+        visual_effect="punch-zoom",
+        effect_time=0.6,
+    )
+    export_clip(
+        source=cached_source,
+        output=exports_dir / f"{square_id}.mp4",
+        start=0,
+        end=clip_end,
+        aspect="1:1",
+        caption_text="W shave ❤️",
+        caption_font_scale=1.50,
+        sound_effect="whoosh",
+        visual_effect="lens-flare",
+        effect_time=0.6,
+    )
+    export_clip(
+        source=cached_source,
+        output=exports_dir / f"{gaming_id}.mp4",
+        start=0,
+        end=clip_end,
+        aspect="9:16",
+        layout="gaming",
+        face_corner="bottom-right",
+        sound_effect="impact-boom",
+        visual_effect="lens-flare",
+        effect_time=0.6,
+    )
+    title_result = generate_viral_title(
+        exports_dir / f"{gaming_id}.mp4",
+        source_title="FC 26 Weekend League Livestream.mp4",
+    )
+    if not title_result["title"] or title_result["filename"].startswith("ClipPilot-"):
+        raise RuntimeError("The bundled viral filename generator did not produce a content-aware title.")
+    library.move_to_trash(video_id)
+    expected_exports = [landscape_id, portrait_id, square_id, gaming_id]
+    if cached_source.exists() or any(not (exports_dir / f"{item}.mp4").is_file() for item in expected_exports):
+        raise RuntimeError("Deleting the bundled test VOD did not preserve its exports.")
+    if any(item["video_id"] == video_id for item in library.list_items()):
+        raise RuntimeError("The deleted bundled test VOD remains in the video library.")
+    if save_dir := os.environ.get("CLIPPILOT_TEST_SAVE_DIR"):
+        _test_save_bridge(exports_dir, gaming_id, Path(save_dir), title_result["filename"])
+
+
+def main() -> int:
+    _configure_runtime()
+
+    import uvicorn
+    from backend.app.main import EXPORTS, STATIC, UPLOADS, VIDEO_LIBRARY, app
+
+    if direct_source := os.environ.get("CLIPPILOT_TEST_SOURCE"):
+        _test_direct_bundle(Path(direct_source), UPLOADS, EXPORTS, VIDEO_LIBRARY, STATIC)
+        return 0
+
+    port = _available_port()
+    url = f"http://127.0.0.1:{port}"
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", access_log=False)
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None
+    thread = threading.Thread(target=server.run, name="ClipPilot API", daemon=True)
+    thread.start()
+
+    try:
+        _wait_for_server(url)
+        if os.environ.get("CLIPPILOT_TEST_MODE") == "1":
+            export_ids: list[str] = []
+            if test_vod_url := os.environ.get("CLIPPILOT_TEST_VOD_URL"):
+                export_ids = _test_vod_pipeline(url, test_vod_url)
+            if export_ids and (test_save_dir := os.environ.get("CLIPPILOT_TEST_SAVE_DIR")):
+                _test_save_bridge(EXPORTS, export_ids[0], Path(test_save_dir))
+            return 0
+
+        import webview
+
+        desktop_api = DesktopApi(EXPORTS, UPLOADS)
+        window = webview.create_window(
+            "ClipPilot",
+            url,
+            js_api=desktop_api,
+            width=1360,
+            height=900,
+            min_size=(980, 650),
+            background_color="#090a0d",
+        )
+        desktop_api._bind_window(window, webview.FileDialog.SAVE)
+        def close_test_window():
+            time.sleep(2)
+            window.destroy()
+
+        test_window = os.environ.get("CLIPPILOT_TEST_WINDOW") == "1"
+        webview.start(close_test_window if test_window else None, gui="cocoa", debug=False, private_mode=False)
+        return 0
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
