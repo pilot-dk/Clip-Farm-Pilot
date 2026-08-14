@@ -1,7 +1,7 @@
 # Clip Farm Pilot — Claude Handoff
 
 Last updated: 2026-08-14  
-Current version: 1.3.0  
+Current version: 1.3.1
 Clip-detection baseline commit: `3c86861` (`Improve VOD clip detection with multi-signal ranking`)
 
 ## Start here
@@ -17,7 +17,7 @@ Important URLs:
 - Owned domain: https://clipfarmpilot.com
 - Render Blueprint service name: `clipfarmpilot-web-pilot-dk`
 
-The hosted health endpoint reported Clip Farm Pilot 1.3.0 at handoff. The new Render service currently has **no web password configured**, so it is publicly accessible. Do not invent, commit, print, or request an existing password. If the owner asks to protect the service, set a new secret value for `CLIPFARMPILOT_WEB_PASSWORD` directly in Render.
+The hosted app deploys from `main` and should report Clip Farm Pilot 1.3.1 after the current deployment completes. The new Render service currently has **no web password configured**, so it is publicly accessible. Do not invent, commit, print, or request an existing password. If the owner asks to protect the service, set a new secret value for `CLIPFARMPILOT_WEB_PASSWORD` directly in Render.
 
 ## Product status
 
@@ -33,7 +33,7 @@ Working features:
 - 9:16 gaming layout with enlarged face cam above gameplay
 - Adjustable source face-cam corner, width, height, and insets
 - Centered square-format captions with adjustable size and color emoji support
-- Impact boom, whoosh, and record-scratch audio effects
+- Bundled Vine Boom plus original impact-boom, whoosh, and record-scratch audio effects
 - Lens flare, punch zoom, and white flash visual effects
 - Content-aware clip filename suggestions
 - Native Mac Save As flow
@@ -113,7 +113,7 @@ Square caption rendering has two paths:
 
 Do not regress the caption overlay dimensions or the emoji tests.
 
-Effects are generated locally. The “Impact boom” is an original synthesized effect; do not replace it with a copyrighted Vine sound recording.
+Impact Boom, Whoosh, and Record Scratch are generated locally. Vine Boom is a separate owner-supplied audio asset at `backend/app/assets/vine-boom.wav`; preserve its separate label and review its redistribution rights before commercial distribution.
 
 ## Storage and data lifecycle
 
@@ -197,21 +197,21 @@ dist/Clip Farm Pilot.app
 The current verified local archive is ignored by Git and lives at:
 
 ```text
-outputs/Clip-Farm-Pilot-macOS-v1.3.0-Apple-Silicon.zip
+outputs/Clip-Farm-Pilot-macOS-v1.3.1-Apple-Silicon.zip
 ```
 
 Its SHA-256 at handoff is:
 
 ```text
-6e1d4678bfe5f4893cf5a96fe77530e4e4d25c8adb06e40f77270a72bb80beda
+7f8a9107135d8307b485d98f043dde125320574266a729e40c906d7c549f71bb
 ```
 
 The app is ad-hoc signed, not Apple-notarized. Users may need to right-click **Open** on first launch. A public polished release eventually needs an Apple Developer ID, hardened runtime, notarization, and preferably universal or separate Intel/Apple Silicon builds.
 
-The 1.3 archive was rebuilt from Flight Deck commit `9a4d196`, verified, and published as the latest GitHub release:
+The 1.3.1 archive includes the owner-supplied Vine Boom effect, was verified, and is published as the latest GitHub release:
 
 ```text
-https://github.com/pilot-dk/Clip-Farm-Pilot/releases/tag/v1.3.0
+https://github.com/pilot-dk/Clip-Farm-Pilot/releases/tag/v1.3.1
 ```
 
 ## Deployment
@@ -230,7 +230,7 @@ GET https://clipfarmpilot-web-pilot-dk.onrender.com/api/health
 Expected response currently includes:
 
 ```json
-{"ok": true, "name": "Clip Farm Pilot", "version": "1.3.0"}
+{"ok": true, "name": "Clip Farm Pilot", "version": "1.3.1"}
 ```
 
 Also verify `/api/auth/status`. At handoff it returns `required: false`, which confirms the hosted service is not password-protected.
@@ -263,4 +263,4 @@ Then run tests, build the Mac app, run the packaged smoke test in `desktop_launc
 
 ## Suggested first task for Claude
 
-Run the 32-test suite, open `backend/app/video.py` and `tests/test_clip_detection.py`, then inspect a few owner-provided VODs and record which proposed clips were genuinely good or bad. Use that labeled feedback to tune or train the next ranking layer. The highest-value engineering upgrade after evaluation is an asynchronous analysis job with progress reporting, followed by optional transcript semantics.
+Run the 33-test suite, open `backend/app/video.py` and `tests/test_clip_detection.py`, then inspect a few owner-provided VODs and record which proposed clips were genuinely good or bad. Use that labeled feedback to tune or train the next ranking layer. The highest-value engineering upgrade after evaluation is an asynchronous analysis job with progress reporting, followed by optional transcript semantics.

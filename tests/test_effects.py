@@ -25,6 +25,18 @@ class EffectAssetTests(unittest.TestCase):
                 self.assertGreater(samples.size, 20_000)
                 self.assertGreater(int(np.max(np.abs(samples))), 1_000)
 
+    def test_vine_boom_sample_is_valid_stereo_audio(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "vine-boom.wav"
+            _render_sound_effect("vine-boom", target)
+            with wave.open(str(target), "rb") as audio:
+                samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype=np.int16)
+                self.assertEqual(audio.getframerate(), 48_000)
+                self.assertEqual(audio.getnchannels(), 2)
+                self.assertGreater(audio.getnframes(), 150_000)
+
+        self.assertGreater(int(np.max(np.abs(samples))), 1_000)
+
     def test_lens_flare_overlay_contains_transparent_and_visible_pixels(self):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "lens-flare.png"

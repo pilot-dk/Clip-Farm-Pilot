@@ -76,7 +76,7 @@ class ExportRequest(BaseModel):
     caption_text: str = Field("", max_length=160)
     caption_font_scale: float = Field(1.0, ge=0.50, le=1.75)
     caption_overlay_data_url: str = Field("", max_length=3_000_000)
-    sound_effect: Literal["none", "impact-boom", "whoosh", "record-scratch"] = "none"
+    sound_effect: Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"] = "none"
     visual_effect: Literal["none", "lens-flare", "punch-zoom", "white-flash"] = "none"
     effect_time: float = Field(1.0, ge=0.0, le=86_400.0)
     sound_volume: float = Field(1.0, ge=0.0, le=2.0)

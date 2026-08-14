@@ -22,8 +22,10 @@ from .brand import APP_SLUG, env
 
 Aspect = Literal["16:9", "9:16", "1:1"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
-SoundEffect = Literal["none", "impact-boom", "whoosh", "record-scratch"]
+SoundEffect = Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"]
 VisualEffect = Literal["none", "lens-flare", "punch-zoom", "white-flash"]
+
+EFFECT_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 ASPECT_SIZES: dict[Aspect, tuple[int, int]] = {
     "16:9": (1920, 1080),
@@ -901,7 +903,14 @@ def _render_square_caption(text: str, destination: Path, font_scale: float = 1.0
 
 
 def _render_sound_effect(effect: SoundEffect, destination: Path) -> None:
-    """Create an original meme-style sound without bundling copyrighted samples."""
+    """Render a bundled sound sample or one of the original synthesized effects."""
+    if effect == "vine-boom":
+        source = EFFECT_ASSETS_DIR / "vine-boom.wav"
+        if not source.is_file():
+            raise RuntimeError("The bundled Vine Boom sound asset is missing.")
+        shutil.copyfile(source, destination)
+        return
+
     sample_rate = 48_000
     lengths = {"impact-boom": 1.25, "whoosh": 0.85, "record-scratch": 0.72}
     duration = lengths.get(effect, 1.0)
@@ -1130,7 +1139,7 @@ def export_clip(
     start = max(0.0, min(start, info.duration))
     end = max(start + 0.1, min(end, info.duration))
     duration = end - start
-    if sound_effect not in {"none", "impact-boom", "whoosh", "record-scratch"}:
+    if sound_effect not in {"none", "impact-boom", "vine-boom", "whoosh", "record-scratch"}:
         raise ValueError("Unknown sound effect.")
     if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
         raise ValueError("Unknown visual effect.")
