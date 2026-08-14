@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unicodedata
 import wave
 from dataclasses import dataclass
@@ -36,6 +37,21 @@ class VideoInfo:
     width: int
     height: int
     duration: float
+
+
+@dataclass
+class AudioAnalysis:
+    """One-second audio features used by the clip-ranking pipeline."""
+
+    rms: np.ndarray
+    peak: np.ndarray
+    burst: np.ndarray
+    texture: np.ndarray
+
+
+_AUDIO_ANALYSIS_CACHE: dict[tuple[str, int, int, int], AudioAnalysis] = {}
+_AUDIO_ANALYSIS_CACHE_LOCK = threading.RLock()
+_AUDIO_ANALYSIS_CACHE_LIMIT = 4
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -89,74 +105,435 @@ def probe_video(path: Path) -> VideoInfo:
     return VideoInfo(width=int(width), height=int(height), duration=duration)
 
 
-def _audio_rms_per_second(path: Path, sample_rate: int = 16000) -> np.ndarray:
-    # Decode audio directly into memory as mono signed 16-bit PCM.
-    process = subprocess.run([
-        ffmpeg_executable(), "-v", "error", "-i", str(path),
+def _read_exactly(stream, byte_count: int) -> bytes:
+    """Read up to byte_count bytes without assuming one pipe read is complete."""
+    chunks: list[bytes] = []
+    remaining = byte_count
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _audio_analysis_per_second(path: Path, sample_rate: int = 8000) -> AudioAnalysis:
+    """Decode a VOD as a stream so multi-hour recordings do not fill RAM.
+
+    Besides loudness, each second records the near-peak level, short reaction
+    bursts, and high-frequency texture. Those signals distinguish a sustained
+    crowd/creator reaction from one isolated click or a uniformly loud soundtrack.
+    """
+    resolved = Path(path).resolve()
+    stat = resolved.stat()
+    cache_key = (str(resolved), int(stat.st_size), int(stat.st_mtime_ns), int(sample_rate))
+    with _AUDIO_ANALYSIS_CACHE_LOCK:
+        cached = _AUDIO_ANALYSIS_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+    command = [
+        ffmpeg_executable(), "-v", "error", "-i", str(resolved),
         "-vn", "-ac", "1", "-ar", str(sample_rate),
         "-f", "s16le", "pipe:1",
-    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    ]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if process.stdout is None:
+        raise RuntimeError("FFmpeg did not provide decoded audio.")
 
-    audio = np.frombuffer(process.stdout, dtype=np.int16).astype(np.float32)
-    if audio.size == 0:
-        return np.zeros(1, dtype=np.float32)
-    audio /= 32768.0
+    rms_values: list[float] = []
+    peak_values: list[float] = []
+    burst_values: list[float] = []
+    texture_values: list[float] = []
+    bytes_per_second = sample_rate * np.dtype(np.int16).itemsize
 
-    whole_seconds = math.ceil(audio.size / sample_rate)
-    padded = np.pad(audio, (0, whole_seconds * sample_rate - audio.size))
-    frames = padded.reshape(whole_seconds, sample_rate)
-    rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-12)
-    return rms
+    try:
+        while True:
+            raw = _read_exactly(process.stdout, bytes_per_second)
+            if not raw:
+                break
+            usable = len(raw) - (len(raw) % 2)
+            samples = np.frombuffer(raw[:usable], dtype=np.int16).astype(np.float32) / 32768.0
+            if samples.size == 0:
+                continue
+
+            rms = float(np.sqrt(np.mean(samples * samples) + 1e-12))
+            peak = float(np.percentile(np.abs(samples), 97))
+            subframes = np.array_split(samples, min(10, max(1, samples.size)))
+            sub_rms = np.asarray([
+                float(np.sqrt(np.mean(frame * frame) + 1e-12))
+                for frame in subframes
+                if frame.size
+            ], dtype=np.float32)
+            burst = float(max(0.0, np.max(sub_rms, initial=0.0) - np.median(sub_rms)))
+            texture = float(np.mean(np.abs(np.diff(samples)))) if samples.size > 1 else 0.0
+
+            rms_values.append(rms)
+            peak_values.append(peak)
+            burst_values.append(burst)
+            texture_values.append(texture)
+            if len(raw) < bytes_per_second:
+                break
+    finally:
+        process.stdout.close()
+        return_code = process.wait()
+
+    if return_code != 0 and not rms_values:
+        raise RuntimeError("The VOD audio track could not be decoded.")
+
+    analysis = AudioAnalysis(
+        rms=np.asarray(rms_values or [0.0], dtype=np.float32),
+        peak=np.asarray(peak_values or [0.0], dtype=np.float32),
+        burst=np.asarray(burst_values or [0.0], dtype=np.float32),
+        texture=np.asarray(texture_values or [0.0], dtype=np.float32),
+    )
+    with _AUDIO_ANALYSIS_CACHE_LOCK:
+        _AUDIO_ANALYSIS_CACHE[cache_key] = analysis
+        while len(_AUDIO_ANALYSIS_CACHE) > _AUDIO_ANALYSIS_CACHE_LIMIT:
+            _AUDIO_ANALYSIS_CACHE.pop(next(iter(_AUDIO_ANALYSIS_CACHE)))
+    return analysis
 
 
-def analyze_viral_candidates(path: Path, target_duration: int = 30, limit: int = 5) -> list[dict]:
-    """Find exciting candidate moments using audio dynamics.
+def _audio_rms_per_second(path: Path, sample_rate: int = 8000) -> np.ndarray:
+    """Compatibility wrapper shared with the viral-title generator."""
+    return _audio_analysis_per_second(path, sample_rate=sample_rate).rms
 
-    This is an intentionally local/offline MVP heuristic. It favors windows with
-    sustained loudness plus sudden excitement spikes. A later version can combine
-    this with transcript semantics, chat velocity, face emotion, and game events.
-    """
-    info = probe_video(path)
-    rms = _audio_rms_per_second(path)
 
-    if rms.size < 2:
-        return [{"start": 0.0, "end": min(float(target_duration), info.duration), "score": 50.0}]
+def _robust_unit(values: np.ndarray, low_percentile: float = 15, high_percentile: float = 95) -> np.ndarray:
+    """Map a noisy signal to 0..1 without letting one outlier dominate it."""
+    samples = np.asarray(values, dtype=np.float32)
+    if samples.size == 0:
+        return np.zeros(0, dtype=np.float32)
+    finite = samples[np.isfinite(samples)]
+    if finite.size == 0:
+        return np.zeros_like(samples)
+    low = float(np.percentile(finite, low_percentile))
+    high = float(np.percentile(finite, high_percentile))
+    if high - low < 1e-7:
+        # Sparse reactions may occupy less than the chosen upper percentile.
+        # Fall back to the real maximum instead of erasing a valid short spike.
+        high = float(np.max(finite, initial=low))
+        if high - low < 1e-7:
+            return np.zeros_like(samples)
+    return np.clip((np.nan_to_num(samples, nan=low) - low) / (high - low), 0, 1)
 
-    # Robust normalization prevents one clipping spike from dominating everything.
-    lo = float(np.percentile(rms, 10))
-    hi = float(np.percentile(rms, 95))
-    norm = np.clip((rms - lo) / max(hi - lo, 1e-6), 0, 1)
-    spikes = np.clip(np.diff(norm, prepend=norm[0]), 0, 1)
 
-    window = max(8, int(target_duration))
-    max_start = max(0, len(norm) - window)
-    scored: list[tuple[float, int]] = []
-    for start in range(max_start + 1):
-        end = min(len(norm), start + window)
-        n = norm[start:end]
-        s = spikes[start:end]
-        # Balance sustained energy, peaks, and sudden changes.
-        score = 0.55 * float(np.mean(n)) + 0.30 * float(np.max(n)) + 0.15 * float(np.mean(np.sort(s)[-min(3, len(s)):]))
-        scored.append((score, start))
+def _moving_average(values: np.ndarray, width: int) -> np.ndarray:
+    if values.size == 0 or width <= 1:
+        return values.astype(np.float32, copy=True)
+    width = min(values.size, max(1, int(width)))
+    kernel = np.ones(width, dtype=np.float32) / width
+    return np.convolve(values, kernel, mode="same").astype(np.float32)
 
-    scored.sort(reverse=True)
-    picks: list[dict] = []
-    for score, start in scored:
-        if any(abs(start - int(p["start"])) < window * 0.8 for p in picks):
+
+def _top_mean(values: np.ndarray, count: int = 3) -> float:
+    if values.size == 0:
+        return 0.0
+    count = min(max(1, count), values.size)
+    return float(np.mean(np.partition(values, values.size - count)[-count:]))
+
+
+def _prepare_audio_signals(audio: AudioAnalysis, duration: float) -> dict[str, np.ndarray]:
+    length = max(1, int(math.ceil(duration)))
+
+    def sized(values: np.ndarray) -> np.ndarray:
+        result = np.zeros(length, dtype=np.float32)
+        copied = min(length, values.size)
+        if copied:
+            result[:copied] = np.nan_to_num(values[:copied], nan=0.0)
+        return result
+
+    raw_rms = sized(audio.rms)
+    energy = _robust_unit(raw_rms, 10, 96)
+    peak = _robust_unit(sized(audio.peak), 15, 97)
+    burst = _robust_unit(sized(audio.burst), 20, 97)
+    texture_ratio = sized(audio.texture) / np.maximum(raw_rms, 1e-4)
+    texture = _robust_unit(np.clip(texture_ratio, 0, 4), 15, 95)
+
+    rise = _robust_unit(np.clip(np.diff(energy, prepend=energy[0]), 0, None), 45, 98)
+    fast_energy = _moving_average(energy, 3)
+    slow_energy = _moving_average(energy, 17)
+    contrast = _robust_unit(np.clip(fast_energy - slow_energy, 0, None), 35, 97)
+    momentum = np.clip(0.55 * fast_energy + 0.25 * peak + 0.20 * burst, 0, 1)
+    salience = np.clip(
+        0.28 * energy
+        + 0.22 * rise
+        + 0.16 * contrast
+        + 0.14 * burst
+        + 0.12 * peak
+        + 0.08 * texture,
+        0,
+        1,
+    )
+    salience = np.clip(0.72 * salience + 0.28 * _moving_average(salience, 3), 0, 1)
+    return {
+        "raw_rms": raw_rms,
+        "energy": energy,
+        "peak": peak,
+        "burst": burst,
+        "texture": texture,
+        "rise": rise,
+        "contrast": contrast,
+        "momentum": momentum,
+        "salience": salience,
+    }
+
+
+def _window_candidate(signals: dict[str, np.ndarray], peak_second: int, duration: float, window: int) -> dict:
+    latest_start = max(0.0, duration - window)
+    # Place the payoff late enough to preserve setup/context and still keep the reaction.
+    start = min(latest_start, max(0.0, float(peak_second) - window * 0.68))
+    end = min(duration, start + window)
+    start_index = int(math.floor(start))
+    end_index = max(start_index + 1, min(len(signals["salience"]), int(math.ceil(end))))
+
+    def segment(name: str) -> np.ndarray:
+        return signals[name][start_index:end_index]
+
+    energy = segment("energy")
+    salience = segment("salience")
+    rise = segment("rise")
+    burst = segment("burst")
+    contrast = segment("contrast")
+    momentum = segment("momentum")
+    peak = segment("peak")
+
+    third = max(1, energy.size // 3)
+    early = float(np.mean(energy[:third]))
+    late = float(np.mean(energy[-third:]))
+    escalation = float(np.clip((late - early + 0.2) / 0.75, 0, 1))
+    reaction = np.clip(0.58 * _top_mean(rise, 2) + 0.42 * _top_mean(burst, 3), 0, 1)
+    sustained = np.clip(0.62 * float(np.mean(momentum)) + 0.38 * _top_mean(peak, 5), 0, 1)
+    contrast_score = np.clip(0.7 * _top_mean(contrast, 4) + 0.3 * _top_mean(salience, 3), 0, 1)
+    dead_air = float(np.mean(energy < 0.06))
+    payoff_position = (peak_second - start) / max(1.0, end - start)
+    payoff_fit = float(math.exp(-((payoff_position - 0.68) / 0.23) ** 2))
+
+    audio_score = (
+        0.27 * _top_mean(salience, 4)
+        + 0.20 * reaction
+        + 0.17 * sustained
+        + 0.14 * contrast_score
+        + 0.12 * escalation
+        + 0.10 * payoff_fit
+    )
+    audio_score -= min(0.18, max(0.0, dead_air - 0.55) * 0.4)
+    audio_score = float(np.clip(audio_score, 0, 1))
+    return {
+        "start": round(float(start), 2),
+        "end": round(float(end), 2),
+        "peak": round(float(peak_second), 2),
+        "audio_score": audio_score,
+        "reaction": float(reaction),
+        "momentum": float(sustained),
+        "contrast": float(contrast_score),
+        "escalation": float(escalation),
+        "dead_air": dead_air,
+        "visual": 0.0,
+        "visual_cuts": 0.0,
+    }
+
+
+def _candidate_overlap(first: dict, second: dict) -> float:
+    overlap = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
+    union = max(first["end"], second["end"]) - min(first["start"], second["start"])
+    return overlap / max(union, 1e-6)
+
+
+def _preliminary_candidates(
+    signals: dict[str, np.ndarray],
+    duration: float,
+    target_duration: int,
+    limit: int,
+) -> list[dict]:
+    window = max(8, min(int(target_duration), max(8, int(math.ceil(duration)))))
+    salience = signals["salience"]
+    if float(np.max(salience, initial=0.0)) < 0.04:
+        # With no useful audio, spread visual probes across the entire VOD rather
+        # than accidentally sampling only its ending.
+        sample_count = min(max(12, limit * 4), max(1, int(math.ceil(duration / window))))
+        local_maxima = [
+            min(salience.size - 1, max(0, int(round(value))))
+            for value in np.linspace(window * 0.68, max(window * 0.68, duration - 1), sample_count)
+        ]
+    else:
+        minimum_salience = max(0.04, float(np.max(salience, initial=0.0)) * 0.12)
+        local_maxima = [
+            index for index in range(salience.size)
+            if salience[index] >= minimum_salience
+            and salience[index] >= salience[max(0, index - 2):min(salience.size, index + 3)].max(initial=0.0)
+        ]
+    if not local_maxima:
+        local_maxima = list(range(salience.size))
+    local_maxima = list(dict.fromkeys(local_maxima))
+    local_maxima.sort(key=lambda index: (float(salience[index]), index), reverse=True)
+
+    pool_size = max(12, limit * 4)
+    selected: list[dict] = []
+    for peak_second in local_maxima:
+        candidate = _window_candidate(signals, peak_second, duration, window)
+        if candidate["end"] - candidate["start"] < min(5.0, duration):
             continue
-        end = min(info.duration, start + window)
-        if end - start < 5:
+        if any(
+            _candidate_overlap(candidate, existing) > 0.52
+            or abs(candidate["peak"] - existing["peak"]) < window * 0.38
+            for existing in selected
+        ):
+            continue
+        selected.append(candidate)
+        if len(selected) >= pool_size:
+            break
+
+    if not selected:
+        fallback_peak = min(max(0, window // 2), max(0, int(duration) - 1))
+        selected = [_window_candidate(signals, fallback_peak, duration, window)]
+    selected.sort(key=lambda candidate: candidate["audio_score"], reverse=True)
+    return selected
+
+
+def _visual_window_summary(path: Path, start: float, end: float, fps: float = 2.0) -> tuple[float, float]:
+    """Measure action and hard visual changes only inside a shortlisted window."""
+    width, height = 64, 36
+    clip_duration = max(0.5, end - start)
+    command = [
+        ffmpeg_executable(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{clip_duration:.3f}",
+        "-i", str(path), "-an",
+        "-vf", f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1",
+    ]
+    process = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    frame_size = width * height
+    frame_count = len(process.stdout) // frame_size
+    if frame_count < 2:
+        return 0.0, 0.0
+    frames = np.frombuffer(process.stdout[:frame_count * frame_size], dtype=np.uint8)
+    frames = frames.reshape(frame_count, frame_size).astype(np.float32) / 255.0
+    differences = np.mean(np.abs(np.diff(frames, axis=0)), axis=1)
+    if differences.size == 0:
+        return 0.0, 0.0
+    motion = float(np.clip(0.55 * np.mean(differences) / 0.12 + 0.45 * np.percentile(differences, 85) / 0.24, 0, 1))
+    cuts = float(np.clip(np.mean(differences > 0.18) / 0.22, 0, 1))
+    return motion, cuts
+
+
+def _explain_candidate(candidate: dict) -> tuple[str, str]:
+    reaction = candidate["reaction"]
+    visual = candidate["visual"]
+    cuts = candidate["visual_cuts"]
+    momentum = candidate["momentum"]
+    escalation = candidate["escalation"]
+    contrast = candidate["contrast"]
+    if reaction >= 0.62 and visual >= 0.52:
+        return "Reaction + payoff", "Sudden reaction with strong visual action"
+    if reaction >= 0.68:
+        return "Big reaction", "Sharp audio reaction with a clear payoff"
+    if escalation >= 0.66 and contrast >= 0.5:
+        return "Build-up", "Energy builds into a strong ending"
+    if visual >= 0.67 or cuts >= 0.72:
+        return "Fast action", "Strong motion and visual changes"
+    if momentum >= 0.62:
+        return "High intensity", "Sustained energy across the full moment"
+    if contrast >= 0.58:
+        return "Standout moment", "Clearly stronger than the surrounding VOD"
+    return "Promising moment", "Best combined audio and visual signal in this section"
+
+
+def _finalize_candidates(candidates: list[dict], target_duration: int, limit: int) -> list[dict]:
+    if not candidates:
+        return []
+    qualities = np.asarray([candidate["quality"] for candidate in candidates], dtype=np.float32)
+    order = np.argsort(qualities)
+    ranks = np.empty(len(candidates), dtype=np.float32)
+    ranks[order] = (
+        np.ones(1, dtype=np.float32)
+        if len(candidates) == 1
+        else np.linspace(0.0, 1.0, len(candidates), dtype=np.float32)
+    )
+    for index, candidate in enumerate(candidates):
+        confidence = float(np.clip(0.78 * candidate["quality"] + 0.22 * ranks[index], 0, 1))
+        candidate["score"] = round(float(np.clip(28 + 70 * confidence, 1, 98)), 1)
+        candidate["label"], candidate["reason"] = _explain_candidate(candidate)
+        candidate["signals"] = {
+            "reaction": round(candidate["reaction"] * 100),
+            "momentum": round(candidate["momentum"] * 100),
+            "visual": round(candidate["visual"] * 100),
+            "contrast": round(candidate["contrast"] * 100),
+        }
+
+    candidates.sort(key=lambda candidate: (candidate["score"], candidate["quality"]), reverse=True)
+    picks: list[dict] = []
+    for candidate in candidates:
+        if any(
+            _candidate_overlap(candidate, existing) > 0.34
+            or abs(candidate["peak"] - existing["peak"]) < max(5.0, target_duration * 0.48)
+            for existing in picks
+        ):
             continue
         picks.append({
-            "start": float(start),
-            "end": float(end),
-            "score": round(score * 100, 1),
+            key: candidate[key]
+            for key in ("start", "end", "peak", "score", "label", "reason", "signals")
         })
         if len(picks) >= limit:
             break
+    return picks
 
+
+def analyze_viral_candidates(path: Path, target_duration: int = 30, limit: int = 5) -> list[dict]:
+    """Rank clip-worthy moments using reactions, momentum, contrast, and visuals.
+
+    The full VOD gets a streaming audio pass that is safe for multi-hour files.
+    Only a diverse shortlist is decoded visually, avoiding an expensive frame-by-
+    frame scan of the entire recording. Results preserve setup before each likely
+    payoff, reject dead-air-heavy windows, and explain why every clip was picked.
+    """
+    info = probe_video(path)
+    if info.duration <= 0:
+        return []
+    requested_duration = max(8, min(int(target_duration), 90))
+    requested_limit = max(1, min(int(limit), 10))
+
+    try:
+        audio = _audio_analysis_per_second(path)
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        empty = np.zeros(max(1, int(math.ceil(info.duration))), dtype=np.float32)
+        audio = AudioAnalysis(empty, empty.copy(), empty.copy(), empty.copy())
+    signals = _prepare_audio_signals(audio, info.duration)
+    candidates = _preliminary_candidates(signals, info.duration, requested_duration, requested_limit)
+    has_meaningful_audio = float(np.max(signals["raw_rms"], initial=0.0)) >= 1e-5
+
+    # Visual analysis is deliberately restricted to the strongest diverse shortlist.
+    visual_probe_count = len(candidates) if not has_meaningful_audio else max(10, requested_limit * 2)
+    for candidate in candidates[:visual_probe_count]:
+        try:
+            motion, cuts = _visual_window_summary(path, candidate["start"], candidate["end"])
+        except (OSError, subprocess.SubprocessError, RuntimeError):
+            motion, cuts = 0.0, 0.0
+        candidate["visual"] = motion
+        candidate["visual_cuts"] = cuts
+
+    for candidate in candidates:
+        visual_score = np.clip(0.72 * candidate["visual"] + 0.28 * candidate["visual_cuts"], 0, 1)
+        audio_score = candidate["audio_score"]
+        candidate["quality"] = float(np.clip(
+            (0.80 * audio_score + 0.20 * visual_score) if has_meaningful_audio
+            else visual_score,
+            0,
+            1,
+        ))
+
+    picks = _finalize_candidates(candidates, requested_duration, requested_limit)
     if not picks:
-        picks = [{"start": 0.0, "end": min(float(target_duration), info.duration), "score": 50.0}]
+        end = min(float(requested_duration), info.duration)
+        return [{
+            "start": 0.0,
+            "end": end,
+            "peak": round(end * 0.68, 2),
+            "score": 35.0,
+            "label": "Opening moment",
+            "reason": "Not enough variation was found to rank distinct moments",
+            "signals": {"reaction": 0, "momentum": 0, "visual": 0, "contrast": 0},
+        }]
     return picks
 
 

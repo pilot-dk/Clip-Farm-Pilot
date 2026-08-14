@@ -8,7 +8,7 @@ This updated build includes a simple, polished browser editor connected directly
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.2 is an installable Progressive Web App (PWA). The same editor now works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.3 is an installable Progressive Web App (PWA). The same editor now works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -46,7 +46,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 The packaged **Clip Farm Pilot.app** is built for Apple Silicon Macs (M1, M2, M3, M4, and newer):
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.2.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.3.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -78,7 +78,7 @@ The editor now includes:
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
 - Original impact-boom, whoosh, and record-scratch sound effects with adjustable volume.
 - Lens flare, punch zoom, and white flash visual effects with adjustable strength and precise playhead-based timing.
-- **Auto-Find Clips** with ranked candidate moments and one-click selection.
+- **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection.
 - **Export Clip** actions in the toolbar and editor panel.
 - Rendering status, errors, success feedback, and a finished MP4 save button.
 - A native macOS **Save As** window after rendering, with a reusable **Save exported MP4** button if saving is cancelled.
@@ -86,6 +86,17 @@ The editor now includes:
 - A **Publish directly** panel for connecting YouTube, Instagram, and TikTok accounts through their official OAuth sign-in flows.
 - Multi-platform publishing of the finished MP4 with a reusable title, caption/hashtags, visibility choice, per-platform success/error results, and direct links to successful posts.
 - Responsive layouts for desktop, phone, and tablet browsers, plus home-screen installation.
+
+### How Auto-Find Clips ranks moments
+
+Version 1.3 replaces the original loudness-only heuristic with a two-stage local analysis:
+
+1. A memory-safe streaming pass scores second-by-second loudness, reaction bursts, sudden rises, sustained momentum, and contrast with the surrounding VOD.
+2. A diverse shortlist receives targeted visual analysis for motion and scene changes. This avoids decoding every frame of a multi-hour stream.
+3. Each likely payoff is placed roughly two-thirds into the proposed clip, leaving room for setup before it and reaction afterward.
+4. Overlapping results and dead-air-heavy windows are suppressed. Every result includes a plain-language reason and separate reaction, energy, and visual indicators.
+
+The analysis runs locally and does not upload VOD audio or frames to an AI provider. Repeating an analysis of the same source during one app session reuses its cached audio features.
 
 ## Direct publishing to YouTube, Instagram, and TikTok
 
@@ -155,7 +166,7 @@ The source copy goes to the macOS Trash, so it can still be recovered until the 
 ## What this build already does
 
 - Upload MP4 / MOV / MKV / WEBM / M4V livestream recordings.
-- Auto-pick exciting 15–60 second candidate moments using local audio-energy and excitement-spike analysis.
+- Auto-pick exciting 15–60 second candidate moments using reactions, audio dynamics, build-up/payoff timing, local contrast, visual motion, and scene changes.
 - Export normal clips as:
   - **16:9** — YouTube / landscape
   - **9:16** — Shorts / TikTok / Reels
@@ -164,7 +175,7 @@ The source copy goes to the macOS Trash, so it can still be recovered until the 
 - Choose which corner of the original stream contains the face-cam.
 - Includes a Mac-friendly browser UI and an Expo React Native starter for iOS + Android.
 
-> “Viral” cannot be guaranteed. The included detector is an offline MVP that finds high-energy moments. The next production step should combine transcript hooks, semantic payoff, audio excitement, motion/game events, chat velocity, and visual face/emotion signals into a multi-signal ranking model.
+> “Viral” cannot be guaranteed. The detector is deliberately honest about what it sees: reactions, momentum, contrast, payoff timing, motion, and visual changes. Transcript meaning, chat velocity, and game-specific event feeds can improve ranking further when those data are available.
 
 ## Architecture
 

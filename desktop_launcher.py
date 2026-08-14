@@ -234,7 +234,7 @@ def _test_save_bridge(
 
 def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path, library, static_dir: Path) -> None:
     """Socket-free packaged-app test for restricted build environments."""
-    from backend.app.video import export_clip, generate_viral_title, probe_video
+    from backend.app.video import analyze_viral_candidates, export_clip, generate_viral_title, probe_video
 
     if not source_path.is_file():
         raise FileNotFoundError("The direct bundle test source is missing.")
@@ -266,6 +266,13 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     cached = next((item for item in library.list_items() if item["video_id"] == video_id), None)
     if not cached or cached.get("original_url") != "https://www.youtube.com/watch?v=bundled-test":
         raise RuntimeError("The bundled video library did not persist the VOD source.")
+
+    candidates = analyze_viral_candidates(cached_source, target_duration=15, limit=3)
+    if not candidates or not all(
+        item.get("label") and item.get("reason") and item.get("signals")
+        for item in candidates
+    ):
+        raise RuntimeError("The bundled multi-signal clip detector did not return explained candidates.")
 
     clip_end = min(2.5, info.duration)
     landscape_id = uuid.uuid4().hex

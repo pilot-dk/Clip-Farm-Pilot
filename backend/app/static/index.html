@@ -567,10 +567,14 @@
     }
 
     .candidate.selected { border-color: #64703f; background: var(--accent-soft); }
-    .candidate-meta { min-width: 0; gap: 9px; }
+    .candidate-meta { min-width: 0; gap: 9px; align-items: flex-start; }
+    .candidate-copy { min-width: 0; display: grid; gap: 2px; }
     .score-badge { min-width: 35px; padding: 4px 6px; border-radius: 6px; color: var(--accent); background: var(--accent-soft); font-size: 10px; font-weight: 850; text-align: center; }
     .candidate-time { color: #d4d7dd; font-size: 11px; font-variant-numeric: tabular-nums; }
-    .candidate-name { color: var(--muted); font-size: 10px; }
+    .candidate-name { color: #f1f3f6; font-size: 10px; font-weight: 750; }
+    .candidate-reason { max-width: 250px; color: var(--muted-2); font-size: 9px; line-height: 1.35; }
+    .candidate-signals { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+    .candidate-signal { padding: 2px 5px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 8px; }
 
     .ratio-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
     .ratio-option { position: relative; }
@@ -2090,10 +2094,23 @@
       candidates.forEach((candidate, index) => {
         const item = document.createElement("div");
         item.className = "candidate";
+        const signals = candidate.signals || {};
+        const signalChips = [
+          ["Reaction", signals.reaction],
+          ["Energy", signals.momentum],
+          ["Visual", signals.visual],
+        ].filter(([, value]) => Number.isFinite(Number(value)))
+          .map(([label, value]) => `<span class="candidate-signal">${label} ${Math.round(Number(value))}</span>`)
+          .join("");
         item.innerHTML = `
           <div class="candidate-meta">
             <span class="score-badge">${Math.round(candidate.score)}</span>
-            <span><span class="candidate-time">${formatTime(candidate.start)} – ${formatTime(candidate.end)}</span><span class="candidate-name">Moment ${index + 1}</span></span>
+            <span class="candidate-copy">
+              <span class="candidate-time">${formatTime(candidate.start)} – ${formatTime(candidate.end)}</span>
+              <span class="candidate-name">${escapeHtml(candidate.label || `Moment ${index + 1}`)}</span>
+              <span class="candidate-reason">${escapeHtml(candidate.reason || "Strong combined signal")}</span>
+              <span class="candidate-signals">${signalChips}</span>
+            </span>
           </div>
           <button class="button secondary small" type="button">Use</button>`;
         item.querySelector("button").addEventListener("click", () => {
@@ -2103,7 +2120,7 @@
           $("startTime").value = Number(candidate.start).toFixed(1);
           $("endTime").value = Number(candidate.end).toFixed(1);
           setVideoTime(candidate.start);
-          setStatus("success", `Moment ${index + 1} selected`, `${Math.round(candidate.score)}/100 energy score · ${formatTime(candidate.end - candidate.start, true)} clip.`);
+          setStatus("success", `${candidate.label || `Moment ${index + 1}`} selected`, `${Math.round(candidate.score)}/100 clip score · ${candidate.reason || "Strong combined signal"} · ${formatTime(candidate.end - candidate.start, true)} clip.`);
         });
         $("candidates").appendChild(item);
       });
@@ -2113,7 +2130,7 @@
       if (!state.videoId) return;
       const button = $("analyzeButton");
       setBusy(button, true, "Scanning…");
-      setStatus("working", "Finding strong moments", "Scanning audio energy and excitement spikes across the stream.");
+      setStatus("working", "Finding strong moments", "Scanning reactions, momentum, contrast, and visual action across the stream.");
       $("candidates").innerHTML = '<div class="candidate-empty">Analyzing the livestream…</div>';
 
       try {
