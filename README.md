@@ -44,7 +44,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 The packaged **ClipPilot.app** is built for Apple Silicon Macs (M1, M2, M3, M4, and newer):
 
-1. Unzip `ClipPilot-macOS-v1.0.1-Apple-Silicon.zip`.
+1. Unzip `ClipPilot-macOS-v1.1.0-Apple-Silicon.zip`.
 2. Drag **ClipPilot.app** into your Applications folder.
 3. Right-click **ClipPilot.app** and choose **Open** the first time.
 

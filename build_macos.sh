@@ -7,6 +7,8 @@ cd "$PROJECT_DIR"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV="$PROJECT_DIR/.build-venv"
 NODE_BINARY="${CLIPPILOT_NODE_BINARY:-}"
+APP_VERSION="${CLIPPILOT_VERSION:-1.1.0}"
+BUILD_NUMBER="${CLIPPILOT_BUILD_NUMBER:-${APP_VERSION//./}}"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_DIR/.pyinstaller-cache"
 
 if [[ -z "$NODE_BINARY" ]]; then
@@ -44,5 +46,9 @@ fi
   --hidden-import uvicorn.lifespan.on \
   desktop_launcher.py
 
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$PROJECT_DIR/dist/ClipPilot.app/Contents/Info.plist"
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$PROJECT_DIR/dist/ClipPilot.app/Contents/Info.plist"; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$PROJECT_DIR/dist/ClipPilot.app/Contents/Info.plist"
+fi
 codesign --force --deep --sign - "$PROJECT_DIR/dist/ClipPilot.app"
-echo "Built $PROJECT_DIR/dist/ClipPilot.app"
+echo "Built ClipPilot $APP_VERSION at $PROJECT_DIR/dist/ClipPilot.app"
