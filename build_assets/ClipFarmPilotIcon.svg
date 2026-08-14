@@ -1,14 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="180" y1="100" x2="850" y2="930" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#d2ff6a"/>
-      <stop offset="1" stop-color="#9bdc31"/>
+    <linearGradient id="bg" x1="160" y1="80" x2="880" y2="940" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12334A"/>
+      <stop offset="1" stop-color="#06101A"/>
+    </linearGradient>
+    <linearGradient id="aircraft" x1="512" y1="164" x2="512" y2="806" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#86E5FF"/>
+      <stop offset="1" stop-color="#38BFEF"/>
     </linearGradient>
     <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#000" flood-opacity=".22"/>
+      <feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#021019" flood-opacity=".55"/>
     </filter>
   </defs>
-  <rect x="72" y="72" width="880" height="880" rx="220" fill="url(#bg)"/>
-  <path d="M390 304c0-35 38-57 68-38l302 190c29 18 29 60 0 78L458 724c-30 19-68-3-68-38V304Z" fill="#111508" filter="url(#shadow)"/>
-  <path d="M253 274v476" stroke="#111508" stroke-width="54" stroke-linecap="round"/>
+  <rect width="1024" height="1024" fill="#06101A"/>
+  <rect x="72" y="72" width="880" height="880" rx="220" fill="url(#bg)" stroke="#2B6D89" stroke-width="10"/>
+  <circle cx="512" cy="512" r="312" fill="none" stroke="#5BD6FF" stroke-opacity=".10" stroke-width="8"/>
+  <circle cx="512" cy="512" r="224" fill="none" stroke="#5BD6FF" stroke-opacity=".08" stroke-width="8"/>
+  <path d="M512 164 610 420 842 510v60l-230-38 42 274-142-78-142 78 42-274-230 38v-60l232-90 98-256Z" fill="url(#aircraft)" filter="url(#shadow)"/>
+  <path d="m472 423 166 89-166 89V423Z" fill="#FFBD59"/>
 </svg>

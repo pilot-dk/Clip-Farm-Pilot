@@ -6,11 +6,14 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent
 ICONSET = ROOT / "ClipFarmPilot.iconset"
 ICONSET.mkdir(parents=True, exist_ok=True)
+STATIC_ASSETS = ROOT.parent / "backend" / "app" / "static"
+MOBILE_ASSETS = ROOT.parent / "mobile" / "assets"
+MOBILE_ASSETS.mkdir(parents=True, exist_ok=True)
 
 
 def render(size: int) -> Image.Image:
     scale = size / 1024
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    image = Image.new("RGBA", (size, size), (6, 16, 26, 255))
     draw = ImageDraw.Draw(image)
 
     inset = round(72 * scale)
@@ -18,20 +21,43 @@ def render(size: int) -> Image.Image:
     draw.rounded_rectangle(
         (inset, inset, size - inset, size - inset),
         radius=radius,
-        fill=(185, 243, 74, 255),
+        fill=(12, 34, 49, 255),
+        outline=(43, 109, 137, 255),
+        width=max(1, round(10 * scale)),
     )
-    draw.rounded_rectangle(
-        (round(226 * scale), round(248 * scale), round(280 * scale), round(776 * scale)),
-        radius=round(27 * scale),
-        fill=(17, 21, 8, 255),
+    for radar_radius, alpha in ((312, 30), (224, 22)):
+        radius_px = round(radar_radius * scale)
+        center = size // 2
+        draw.ellipse(
+            (center - radius_px, center - radius_px, center + radius_px, center + radius_px),
+            outline=(91, 214, 255, alpha),
+            width=max(1, round(8 * scale)),
+        )
+
+    draw.polygon(
+        [
+            (round(512 * scale), round(164 * scale)),
+            (round(610 * scale), round(420 * scale)),
+            (round(842 * scale), round(510 * scale)),
+            (round(842 * scale), round(570 * scale)),
+            (round(612 * scale), round(532 * scale)),
+            (round(654 * scale), round(806 * scale)),
+            (round(512 * scale), round(728 * scale)),
+            (round(370 * scale), round(806 * scale)),
+            (round(412 * scale), round(532 * scale)),
+            (round(182 * scale), round(570 * scale)),
+            (round(182 * scale), round(510 * scale)),
+            (round(414 * scale), round(420 * scale)),
+        ],
+        fill=(91, 214, 255, 255),
     )
     draw.polygon(
         [
-            (round(390 * scale), round(304 * scale)),
-            (round(770 * scale), round(512 * scale)),
-            (round(390 * scale), round(720 * scale)),
+            (round(472 * scale), round(423 * scale)),
+            (round(638 * scale), round(512 * scale)),
+            (round(472 * scale), round(601 * scale)),
         ],
-        fill=(17, 21, 8, 255),
+        fill=(255, 189, 89, 255),
     )
     return image
 
@@ -51,3 +77,8 @@ targets = {
 
 for filename, size in targets.items():
     render(size).save(ICONSET / filename, "PNG")
+
+render(192).save(STATIC_ASSETS / "icon-192.png", "PNG")
+render(512).save(STATIC_ASSETS / "icon-512.png", "PNG")
+render(1024).save(MOBILE_ASSETS / "icon.png", "PNG")
+render(1024).save(MOBILE_ASSETS / "adaptive-icon.png", "PNG")

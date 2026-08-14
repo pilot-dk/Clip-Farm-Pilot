@@ -3,33 +3,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0c10" />
+  <meta name="theme-color" content="#07131f" />
   <meta name="application-name" content="Clip Farm Pilot" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Clip Farm Pilot" />
   <link rel="canonical" href="https://clipfarmpilot.com/" />
   <link rel="manifest" href="/assets/manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="/assets/icon-192.png" />
   <link rel="apple-touch-icon" href="/assets/icon-192.png" />
   <title>Clip Farm Pilot Studio</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #090a0d;
-      --panel: #111318;
-      --panel-2: #171a20;
-      --panel-3: #1d2028;
-      --line: #292d36;
-      --line-strong: #373c49;
-      --text: #f4f5f7;
-      --muted: #959ba8;
-      --muted-2: #727886;
-      --accent: #b9f34a;
-      --accent-soft: rgba(185, 243, 74, .12);
-      --accent-dark: #0c1205;
+      --bg: #06101a;
+      --panel: #0b1824;
+      --panel-2: #102230;
+      --panel-3: #142b3d;
+      --line: rgba(115, 181, 216, .18);
+      --line-strong: rgba(125, 197, 232, .31);
+      --text: #f2f8fc;
+      --muted: #91a9ba;
+      --muted-2: #668297;
+      --accent: #5bd6ff;
+      --accent-soft: rgba(91, 214, 255, .11);
+      --accent-dark: #04131c;
+      --action: #ffbd59;
+      --action-hover: #ffcb78;
+      --action-soft: rgba(255, 189, 89, .12);
+      --success: #6ce6ab;
       --danger: #ff7e7e;
-      --shadow: 0 24px 64px rgba(0, 0, 0, .34);
-      --radius: 18px;
+      --shadow: 0 28px 70px rgba(0, 5, 10, .42);
+      --radius: 16px;
     }
 
     * { box-sizing: border-box; }
@@ -41,8 +46,12 @@
       min-height: 100vh;
       min-height: 100dvh;
       background:
-        radial-gradient(circle at 18% -10%, rgba(185, 243, 74, .08), transparent 28rem),
+        radial-gradient(circle at 16% -12%, rgba(41, 176, 226, .15), transparent 31rem),
+        radial-gradient(circle at 100% 0%, rgba(255, 189, 89, .055), transparent 28rem),
+        linear-gradient(rgba(91, 214, 255, .018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(91, 214, 255, .018) 1px, transparent 1px),
         var(--bg);
+      background-size: auto, auto, 42px 42px, 42px 42px, auto;
       color: var(--text);
       font: 14px/1.45 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
@@ -54,14 +63,14 @@
     .shell { min-height: 100vh; min-height: 100dvh; }
 
     .topbar {
-      height: 72px;
+      height: 76px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 24px;
       padding: 0 30px;
-      border-bottom: 1px solid rgba(255, 255, 255, .07);
-      background: rgba(9, 10, 13, .82);
+      border-bottom: 1px solid rgba(91, 214, 255, .14);
+      background: rgba(5, 15, 25, .88);
       backdrop-filter: blur(18px);
       position: sticky;
       top: 0;
@@ -77,17 +86,18 @@
     .brand-wrap { gap: 14px; }
 
     .brand-mark {
-      width: 34px;
-      height: 34px;
+      width: 38px;
+      height: 38px;
       display: grid;
       place-items: center;
-      border-radius: 10px;
-      background: var(--accent);
-      color: var(--accent-dark);
-      box-shadow: 0 0 0 5px rgba(185, 243, 74, .07);
+      border: 1px solid rgba(91, 214, 255, .52);
+      border-radius: 50%;
+      background: linear-gradient(145deg, #15354a, #071824);
+      color: var(--accent);
+      box-shadow: 0 0 0 5px rgba(91, 214, 255, .055), inset 0 1px rgba(255,255,255,.08);
     }
 
-    .brand-mark svg { width: 18px; height: 18px; }
+    .brand-mark svg { width: 21px; height: 21px; }
 
     .brand {
       gap: 9px;
@@ -97,16 +107,35 @@
     }
 
     .mvp-badge {
-      border: 1px solid var(--line-strong);
+      border: 1px solid rgba(255, 189, 89, .3);
       border-radius: 999px;
       padding: 3px 7px;
-      color: var(--muted);
+      color: var(--action);
       font-size: 10px;
       font-weight: 800;
       letter-spacing: .08em;
     }
 
     .top-actions { gap: 10px; }
+
+    .system-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-right: 5px;
+      color: var(--muted);
+      font: 750 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .system-state::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 10px rgba(108,230,171,.75);
+    }
 
     .auth-gate {
       position: fixed;
@@ -116,8 +145,8 @@
       place-items: center;
       padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
       background:
-        radial-gradient(circle at 50% 0%, rgba(185, 243, 74, .12), transparent 30rem),
-        rgba(9, 10, 13, .98);
+        radial-gradient(circle at 50% 0%, rgba(91, 214, 255, .14), transparent 30rem),
+        rgba(5, 15, 25, .98);
     }
     .auth-gate[hidden] { display: none; }
     .auth-card {
@@ -162,7 +191,7 @@
     }
 
     .workspace-title { gap: 12px; }
-    .workspace-title h1 { margin: 0; font-size: 20px; letter-spacing: -.45px; }
+    .workspace-title h1 { margin: 0; font-size: 22px; letter-spacing: -.55px; }
 
     .saved-dot {
       width: 7px;
@@ -174,6 +203,28 @@
 
     .workspace-kicker { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 
+    .flight-path {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .flight-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--muted-2);
+      background: rgba(8, 25, 38, .62);
+      font: 750 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .flight-step b { color: var(--accent); font-weight: 850; }
+    .flight-step.active { border-color: rgba(91,214,255,.38); color: #d9f5ff; background: var(--accent-soft); }
+
     .editor-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 372px;
@@ -182,7 +233,7 @@
     }
 
     .panel {
-      background: rgba(17, 19, 24, .96);
+      background: rgba(10, 24, 36, .96);
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
@@ -200,7 +251,16 @@
       border-bottom: 1px solid var(--line);
     }
 
-    .panel-title { font-size: 13px; font-weight: 750; letter-spacing: -.1px; }
+    .panel-title { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 750; letter-spacing: -.1px; }
+    .panel-code {
+      padding: 3px 6px;
+      border: 1px solid rgba(91,214,255,.25);
+      border-radius: 5px;
+      color: var(--accent);
+      background: rgba(91,214,255,.06);
+      font: 800 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em;
+    }
     .panel-subtitle { color: var(--muted); font-size: 12px; }
 
     .video-meta {
@@ -227,11 +287,10 @@
       place-items: center;
       padding: 30px;
       background:
-        linear-gradient(45deg, rgba(255,255,255,.015) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.015) 75%),
-        linear-gradient(45deg, rgba(255,255,255,.015) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.015) 75%),
-        #0d0f13;
-      background-size: 28px 28px;
-      background-position: 0 0, 14px 14px;
+        linear-gradient(rgba(91,214,255,.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(91,214,255,.022) 1px, transparent 1px),
+        #07131d;
+      background-size: 26px 26px;
     }
 
     .stage {
@@ -241,9 +300,9 @@
       place-items: center;
       position: relative;
       overflow: hidden;
-      border: 1px solid #303540;
+      border: 1px solid rgba(102, 188, 227, .3);
       border-radius: 12px;
-      background: #07080a;
+      background: #02080d;
       box-shadow: 0 20px 48px rgba(0,0,0,.48);
       transition: width .25s ease, aspect-ratio .25s ease;
     }
@@ -261,25 +320,27 @@
       z-index: 3;
       padding: 28px;
       text-align: center;
-      background: linear-gradient(145deg, #12151b, #0b0d11);
+      background:
+        radial-gradient(circle at 50% 48%, rgba(91,214,255,.09), transparent 17rem),
+        linear-gradient(145deg, #0d202f, #06111b);
     }
 
     .empty-preview[hidden] { display: none; }
 
     .empty-icon {
-      width: 58px;
-      height: 58px;
+      width: 76px;
+      height: 76px;
       display: grid;
       place-items: center;
       margin: 0 auto 18px;
-      border: 1px solid #323744;
-      border-radius: 17px;
+      border: 1px solid rgba(91,214,255,.32);
+      border-radius: 50%;
       color: var(--accent);
-      background: #181b22;
-      box-shadow: inset 0 1px rgba(255,255,255,.04);
+      background: rgba(7,23,34,.88);
+      box-shadow: 0 0 0 12px rgba(91,214,255,.025), inset 0 1px rgba(255,255,255,.05);
     }
 
-    .empty-icon svg { width: 24px; height: 24px; }
+    .empty-icon svg { width: 32px; height: 32px; }
     .empty-preview h2 { margin: 0 0 7px; font-size: 17px; letter-spacing: -.25px; }
     .empty-preview p { max-width: 330px; margin: 0 auto 20px; color: var(--muted); font-size: 13px; }
 
@@ -324,8 +385,8 @@
       padding: 5px 8px;
       border: 1px solid rgba(255,255,255,.12);
       border-radius: 7px;
-      color: rgba(255,255,255,.8);
-      background: rgba(4,5,7,.72);
+      color: var(--accent);
+      background: rgba(3,15,23,.8);
       backdrop-filter: blur(8px);
       font-size: 10px;
       font-weight: 800;
@@ -335,7 +396,7 @@
     .transport {
       padding: 15px 17px 17px;
       border-top: 1px solid var(--line);
-      background: #101217;
+      background: #091722;
     }
 
     .timeline-row {
@@ -516,8 +577,8 @@
     .button:active:not(:disabled) { transform: translateY(0); }
     .button:disabled { cursor: not-allowed; opacity: .4; }
     .button svg { width: 15px; height: 15px; flex: none; }
-    .button.primary { color: var(--accent-dark); background: var(--accent); box-shadow: 0 6px 20px rgba(185,243,74,.13); }
-    .button.primary:hover:not(:disabled) { background: #c7ff5a; }
+    .button.primary { color: #211300; background: var(--action); box-shadow: 0 7px 22px rgba(255,189,89,.14); }
+    .button.primary:hover:not(:disabled) { background: var(--action-hover); }
     .button.secondary { border-color: var(--line-strong); background: var(--panel-3); }
     .button.secondary:hover:not(:disabled) { background: #242832; }
     .button.ghost { min-height: 36px; color: var(--muted); background: transparent; border-color: var(--line); }
@@ -534,8 +595,8 @@
       place-items: center;
       padding: 0 5px;
       border-radius: 999px;
-      color: var(--accent-dark);
-      background: var(--accent);
+      color: #211300;
+      background: var(--action);
       font-size: 9px;
       font-weight: 850;
     }
@@ -873,6 +934,125 @@
     .library-actions { display: flex; gap: 7px; }
     .library-foot { border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 
+    /* Flight-deck visual language */
+    .panel,
+    .auth-card,
+    .library-dialog {
+      position: relative;
+      box-shadow: var(--shadow), inset 0 1px rgba(123, 218, 255, .035);
+    }
+    .panel::before,
+    .auth-card::before,
+    .library-dialog::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: 24px;
+      width: 54px;
+      height: 2px;
+      z-index: 2;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(91,214,255,.35);
+      pointer-events: none;
+    }
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #80cce8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em;
+    }
+    .section-label::after {
+      content: "";
+      height: 1px;
+      flex: 1;
+      background: linear-gradient(90deg, rgba(91,214,255,.22), transparent);
+    }
+    .stage::before,
+    .stage::after {
+      content: "";
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      z-index: 6;
+      pointer-events: none;
+    }
+    .stage::before {
+      top: 11px;
+      left: 11px;
+      border-top: 1px solid rgba(91,214,255,.65);
+      border-left: 1px solid rgba(91,214,255,.65);
+    }
+    .stage::after {
+      right: 11px;
+      bottom: 11px;
+      border-right: 1px solid rgba(91,214,255,.65);
+      border-bottom: 1px solid rgba(91,214,255,.65);
+    }
+    .ratio-label { right: 13px; left: auto; border-color: rgba(91,214,255,.22); }
+    .empty-preview > div { position: relative; z-index: 2; }
+    .empty-preview::before {
+      content: "";
+      position: absolute;
+      width: min(42vw, 350px);
+      aspect-ratio: 1;
+      border: 1px solid rgba(91,214,255,.08);
+      border-radius: 50%;
+      background:
+        linear-gradient(90deg, transparent 49.7%, rgba(91,214,255,.07) 50%, transparent 50.3%),
+        linear-gradient(transparent 49.7%, rgba(91,214,255,.07) 50%, transparent 50.3%);
+      box-shadow: 0 0 0 54px rgba(91,214,255,.014), inset 0 0 70px rgba(91,214,255,.02);
+    }
+    .empty-preview::after {
+      content: "SOURCE BAY / STANDBY";
+      position: absolute;
+      right: 22px;
+      bottom: 18px;
+      color: rgba(118,202,233,.38);
+      font: 750 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .12em;
+    }
+    .drop-zone,
+    .vod-box,
+    .source-tabs,
+    .face-controls,
+    .square-caption-controls,
+    .publish-fields,
+    .platform-account,
+    .candidate,
+    .ratio-card {
+      background-color: rgba(5, 17, 27, .7);
+    }
+    .drop-zone { border-color: rgba(110,181,218,.28); }
+    .drop-zone:hover,
+    .drop-zone.dragging { border-color: var(--accent); background: var(--accent-soft); }
+    .source-tab.active { color: #dff7ff; background: #143047; box-shadow: inset 0 0 0 1px rgba(91,214,255,.08); }
+    .upload-icon { border: 1px solid rgba(91,214,255,.15); }
+    .candidate.selected { border-color: rgba(91,214,255,.48); background: var(--accent-soft); }
+    .ratio-option input:checked + .ratio-card { border-color: rgba(91,214,255,.48); color: var(--accent); background: var(--accent-soft); }
+    .switch input:checked + .switch-track { background: var(--accent); }
+    .switch input:checked + .switch-track::after { background: #05202c; }
+    .time-field input:focus,
+    select:focus,
+    .vod-input:focus,
+    .caption-input:focus,
+    .text-input:focus,
+    .auth-input:focus { border-color: rgba(91,214,255,.62); box-shadow: 0 0 0 3px rgba(91,214,255,.09); }
+    .effects-card { border-color: rgba(255,189,89,.26); background: linear-gradient(145deg, rgba(255,189,89,.075), rgba(5,17,27,.94)); }
+    .effects-badge { color: var(--action); background: var(--action-soft); }
+    .viral-title-control { border-color: rgba(91,214,255,.23); background: linear-gradient(145deg, rgba(91,214,255,.075), rgba(5,17,27,.94)); }
+    .viral-title-result { border-color: rgba(91,214,255,.16); }
+    .platform-account.connected { border-color: rgba(108,230,171,.32); background: rgba(108,230,171,.045); }
+    .platform-account.connected .platform-copy small { color: var(--success); }
+    .status-panel::before { background: var(--action); box-shadow: 0 0 12px rgba(255,189,89,.28); }
+    .status-icon { border: 1px solid rgba(91,214,255,.14); }
+    .status-panel.success .status-icon { color: var(--success); background: rgba(108,230,171,.1); }
+    .download-link { border-color: rgba(91,214,255,.36); }
+    .library-source-badge { color: var(--accent); background: var(--accent-soft); }
+    .library-original { color: var(--accent); }
+
     @media (max-width: 1080px) {
       .editor-grid { grid-template-columns: minmax(0, 1fr) 340px; }
       .stage-wrap { min-height: 470px; }
@@ -885,11 +1065,20 @@
       .sidebar { grid-template-columns: 1fr 1fr; align-items: start; }
       .status-panel { grid-column: 1 / -1; }
       .stage-wrap { min-height: 440px; }
+      .system-state { display: none; }
+      .flight-path { width: 100%; overflow-x: auto; padding-bottom: 3px; }
     }
 
     @media (max-width: 620px) {
-      .topbar { min-height: 64px; gap: 10px; }
-      .brand-wrap { gap: 10px; }
+      .topbar { min-height: 64px; gap: 8px; padding-right: 12px; padding-left: 12px; }
+      .brand-wrap { min-width: 0; gap: 8px; }
+      .brand { gap: 5px; font-size: 14px; white-space: nowrap; }
+      .brand-mark { width: 34px; height: 34px; }
+      .brand-mark svg { width: 18px; height: 18px; }
+      .mvp-badge { display: none; }
+      .top-actions { gap: 6px; }
+      #topExportButton { width: 44px; min-width: 44px; padding: 0; }
+      .top-export-label { display: none; }
       #newProjectButton { display: none; }
       .install-button .install-label { display: none; }
       .library-button .library-button-label { display: none; }
@@ -898,10 +1087,19 @@
       .library-item { grid-template-columns: 1fr; }
       .library-actions { justify-content: flex-end; }
       .workspace-head { align-items: flex-start; flex-direction: column; }
+      .flight-step { flex: none; }
       .editor-grid, .sidebar { grid-template-columns: 1fr; }
       .status-panel { grid-column: auto; }
       .stage-wrap { min-height: 360px; padding: 18px; }
       .stage[data-aspect="9:16"] { width: min(60%, 290px); }
+      .empty-preview { padding: 12px; }
+      .empty-icon { width: 46px; height: 46px; margin-bottom: 8px; }
+      .empty-icon svg { width: 22px; height: 22px; }
+      .empty-preview h2 { margin-bottom: 2px; font-size: 15px; }
+      .empty-preview p { max-width: 260px; margin-bottom: 8px; font-size: 10px; line-height: 1.3; }
+      .empty-preview .button { min-height: 34px; padding: 0 11px; font-size: 11px; }
+      .empty-preview::before { width: 220px; }
+      .empty-preview::after { display: none; }
       .clip-range { grid-template-columns: 1fr 1fr; }
       .clip-range .button { grid-column: 1 / -1; }
       .video-meta { max-width: 72%; }
@@ -920,12 +1118,12 @@
     <section class="auth-card" aria-labelledby="authTitle">
       <div class="auth-logo">
         <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 12 8-12 8V4Z"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 2.7 7.2L21 12v2l-6.4-1.2L16 20l-4-2.2L8 20l1.4-7.2L3 14v-2l6.3-2.8L12 2Z"/></svg>
         </div>
         Clip Farm Pilot
       </div>
-      <h1 id="authTitle">Welcome back</h1>
-      <p>Enter your private web-app password to open the clip studio.</p>
+      <h1 id="authTitle">Return to the flight deck</h1>
+      <p>Enter your private password to unlock the clip studio.</p>
       <form class="auth-form" id="authForm">
         <label for="authPassword">Clip Farm Pilot password</label>
         <input class="auth-input" id="authPassword" name="password" type="password" autocomplete="current-password" required />
@@ -938,27 +1136,28 @@
     <header class="topbar">
       <div class="brand-wrap">
         <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 12 8-12 8V4Z"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 2.7 7.2L21 12v2l-6.4-1.2L16 20l-4-2.2L8 20l1.4-7.2L3 14v-2l6.3-2.8L12 2Z"/></svg>
         </div>
-        <div class="brand">Clip Farm Pilot <span class="mvp-badge">MVP</span></div>
+        <div class="brand">Clip Farm Pilot <span class="mvp-badge">FLIGHT DECK</span></div>
       </div>
       <div class="top-actions">
+        <span class="system-state">Systems online</span>
         <button class="button ghost install-button" type="button" id="installAppButton" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
           <span class="install-label">Install app</span>
         </button>
         <button class="button ghost library-button" type="button" id="libraryButton">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h6l2 2h10v10H3V7Z"/><path d="M3 7V5h6l2 2"/></svg>
-          <span class="library-button-label">Imported videos</span>
+          <span class="library-button-label">Video hangar</span>
           <span class="library-count" id="libraryCount" hidden>0</span>
         </button>
         <button class="button ghost" type="button" id="newProjectButton">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          New video
+          New flight
         </button>
         <button class="button primary" type="button" id="topExportButton" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-          Export clip
+          <span class="top-export-label">Launch clip</span>
         </button>
       </div>
     </header>
@@ -966,30 +1165,35 @@
     <main class="workspace">
       <div class="workspace-head">
         <div>
-          <div class="workspace-title"><h1>Clip editor</h1><span class="saved-dot" aria-hidden="true"></span></div>
-          <p class="workspace-kicker">Find the moment, frame it, and export it for any platform.</p>
+          <div class="workspace-title"><h1>Creator flight deck</h1><span class="saved-dot" aria-hidden="true"></span></div>
+          <p class="workspace-kicker">Turn long streams into standout clips cleared for every platform.</p>
         </div>
-        <div class="panel-subtitle"><span class="kbd">Space</span>&nbsp; Play / pause</div>
+        <div class="flight-path" aria-label="Clip workflow">
+          <span class="flight-step active"><b>01</b> Source</span>
+          <span class="flight-step"><b>02</b> Radar</span>
+          <span class="flight-step"><b>03</b> Frame</span>
+          <span class="flight-step"><b>04</b> Launch</span>
+        </div>
       </div>
 
       <div class="editor-grid">
         <section class="panel preview-panel" aria-label="Video preview and clip timing">
           <div class="panel-head">
-            <div class="panel-title">Preview</div>
+            <div class="panel-title"><span class="panel-code">VIEW 01</span> Preview monitor</div>
             <div class="video-meta" id="videoMeta"><span>No video selected</span></div>
           </div>
 
           <div class="stage-wrap">
             <div class="stage" id="stage" data-aspect="16:9">
-              <span class="ratio-label" id="ratioLabel">16:9</span>
+              <span class="ratio-label" id="ratioLabel">OUTPUT 16:9</span>
               <div class="empty-preview" id="emptyPreview">
                 <div>
                   <div class="empty-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10 21 7v10l-6-3"/><rect x="3" y="5" width="12" height="14" rx="2"/></svg>
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 2.7 7.2L21 12v2l-6.4-1.2L16 20l-4-2.2L8 20l1.4-7.2L3 14v-2l6.3-2.8L12 2Z"/></svg>
                   </div>
-                  <h2>Your clip starts here</h2>
-                  <p>Select a livestream recording to preview it and find high-energy moments automatically.</p>
-                  <button class="button secondary" type="button" id="emptySelectButton">Select video</button>
+                  <h2>Ready for takeoff</h2>
+                  <p>Load a livestream recording, then let Moment Radar locate the strongest reactions and payoffs.</p>
+                  <button class="button secondary" type="button" id="emptySelectButton">Load source video</button>
                 </div>
               </div>
               <video class="standard-preview" id="previewVideo" playsinline preload="metadata"></video>
@@ -1027,7 +1231,7 @@
         <aside class="sidebar" aria-label="Clip controls">
           <section class="panel control-panel">
             <div class="section">
-              <span class="section-label">Livestream video</span>
+              <span class="section-label">01 / Flight source</span>
               <div class="source-tabs" role="tablist" aria-label="Video source">
                 <button class="source-tab active" type="button" role="tab" aria-selected="true" data-source="file">Upload file</button>
                 <button class="source-tab" type="button" role="tab" aria-selected="false" data-source="vod">Paste VOD link</button>
@@ -1059,11 +1263,11 @@
             </div>
 
             <div class="section">
-              <span class="section-label">Smart moments</span>
+              <span class="section-label">02 / Moment radar</span>
               <div class="auto-find-row">
                 <button class="button secondary" type="button" id="analyzeButton" disabled>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.4 4.1L17.5 8l-4.1 1.4L12 13.5l-1.4-4.1L6.5 8l4.1-1.4L12 3ZM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
-                  Auto-Find Clips
+                  Scan for clips
                 </button>
                 <select id="clipDuration" aria-label="Target clip duration">
                   <option value="15">15 sec</option>
@@ -1072,11 +1276,11 @@
                   <option value="60">60 sec</option>
                 </select>
               </div>
-              <div class="candidates" id="candidates"><div class="candidate-empty">Upload a video to scan for candidate clips.</div></div>
+              <div class="candidates" id="candidates"><div class="candidate-empty">Load a video to scan for candidate clips.</div></div>
             </div>
 
             <div class="section">
-              <span class="section-label">Aspect ratio</span>
+              <span class="section-label">03 / Output route</span>
               <div class="ratio-grid" id="ratioGrid">
                 <label class="ratio-option">
                   <input type="radio" name="ratio" value="16:9" checked />
@@ -1104,7 +1308,7 @@
 
             <div class="section">
               <div class="switch-row">
-                <div class="switch-copy"><strong>Gaming overlay</strong><small>Face cam on top, gameplay below</small></div>
+                <div class="switch-copy"><strong>Cockpit layout</strong><small>Face cam on top, gameplay below</small></div>
                 <label class="switch">
                   <input id="gamingToggle" type="checkbox" />
                   <span class="switch-track"></span>
@@ -1142,7 +1346,7 @@
             </div>
 
             <div class="section">
-              <span class="section-label">Moment effects</span>
+              <span class="section-label">04 / Impact boosters</span>
               <div class="effects-card">
                 <span class="effects-badge">Works with every template</span>
                 <div class="effects-grid">
@@ -1189,7 +1393,7 @@
             <div class="section">
               <div class="viral-title-control">
                 <div class="switch-row">
-                  <div class="switch-copy"><strong>Viral clip filename</strong><small>Analyzes the finished clip and suggests a punchy title</small></div>
+                  <div class="switch-copy"><strong>AI callsign title</strong><small>Analyzes the finished clip and creates a punchy filename</small></div>
                   <label class="switch">
                     <input id="viralTitleToggle" type="checkbox" checked />
                     <span class="switch-track"></span>
@@ -1202,12 +1406,12 @@
               </div>
               <button class="button primary full" type="button" id="exportButton" disabled>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-                Export Clip
+                Launch Clip
               </button>
             </div>
 
             <div class="section" id="publishSection">
-              <span class="section-label">Publish directly</span>
+              <span class="section-label">05 / Destinations</span>
               <p class="publish-intro">Connect creator accounts with their official sign-in, select destinations, then send the finished MP4 without saving and re-uploading it manually.</p>
               <div class="platform-list" id="platformList">
                 <div class="platform-account" data-platform="youtube">
@@ -1247,7 +1451,7 @@
                   </select>
                   <button class="button primary" type="button" id="publishButton" disabled>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/></svg>
-                    Publish selected accounts
+                    Deploy to selected accounts
                   </button>
                 </div>
                 <small class="field-hint" id="publishHint">Export a clip first. New integrations and unaudited TikTok clients may be limited to private posts.</small>
@@ -1261,7 +1465,7 @@
               <div class="status-icon" id="statusIcon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="M12 8v4l2.5 2"/></svg>
               </div>
-              <div><div class="status-title" id="statusTitle">Ready when you are</div><div class="status-message" id="statusMessage">Select a livestream recording to begin.</div></div>
+              <div><div class="status-title" id="statusTitle">Preflight ready</div><div class="status-message" id="statusMessage">Load a livestream recording to begin.</div></div>
             </div>
             <div class="status-progress"><div class="progress-track"><div class="progress-bar"></div></div></div>
             <a class="download-link" id="downloadLink" href="#" download>
@@ -1278,8 +1482,8 @@
     <section class="library-dialog" role="dialog" aria-modal="true" aria-labelledby="libraryTitle">
       <header class="library-head">
         <div>
-          <h2 id="libraryTitle">Imported videos</h2>
-          <p>Find Clip Farm Pilot’s local source copies and clear them when clipping is finished.</p>
+          <h2 id="libraryTitle">Video hangar</h2>
+          <p>Review source copies and clear them after the clipping flight is complete.</p>
         </div>
         <button class="library-close" id="closeLibraryButton" type="button" aria-label="Close imported videos">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
@@ -1287,7 +1491,7 @@
       </header>
       <div class="library-body">
         <div class="library-location">
-          <strong>Clip Farm Pilot source storage</strong>
+          <strong>Hangar storage location</strong>
           <code id="libraryStoragePath">Loading…</code>
           URL imports and file uploads are working copies. Moving one to Trash never removes exported clips.
         </div>
@@ -1711,7 +1915,7 @@
     function updateRatio(ratio) {
       state.ratio = ratio;
       $("stage").dataset.aspect = ratio;
-      $("ratioLabel").textContent = state.layout === "gaming" ? "9:16 · GAMING" : ratio;
+      $("ratioLabel").textContent = state.layout === "gaming" ? "OUTPUT 9:16 · COCKPIT" : `OUTPUT ${ratio}`;
       $("squareCaptionControls").classList.toggle("visible", ratio === "1:1" && state.layout !== "gaming");
       requestAnimationFrame(() => {
         updateFacePreview();
@@ -1748,7 +1952,7 @@
 
     function resetCandidates() {
       state.selectedCandidate = null;
-      $("candidates").innerHTML = '<div class="candidate-empty">Run Auto-Find Clips to rank high-energy moments.</div>';
+      $("candidates").innerHTML = '<div class="candidate-empty">Run Moment Radar to rank high-energy moments.</div>';
     }
 
     function loadLocalPreview(file) {
@@ -2162,7 +2366,7 @@
       const buttons = [$("exportButton"), $("topExportButton")];
       buttons.forEach((button) => setBusy(button, true, "Rendering…"));
       $("viralTitleResult").classList.remove("visible");
-      setStatus("working", "Rendering your clip", `${state.ratio} ${state.layout === "gaming" ? "gaming overlay" : "social crop"} · ${formatTime(range.end - range.start, true)}.`);
+      setStatus("working", "Clearing clip for launch", `${state.ratio} ${state.layout === "gaming" ? "cockpit layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`);
 
       try {
         const response = await fetch(`/api/videos/${state.videoId}/export`, {
@@ -2275,7 +2479,7 @@
       $("endTime").value = 30;
       enableEditor(false);
       $("candidates").innerHTML = '<div class="candidate-empty">Upload a video to scan for candidate clips.</div>';
-      setStatus("ready", "Ready when you are", "Select a livestream recording to begin.");
+      setStatus("ready", "Preflight ready", "Load a livestream recording to begin.");
       switchSource("file");
     }
 
@@ -2376,7 +2580,7 @@
         const portrait = document.querySelector('input[name="ratio"][value="9:16"]');
         portrait.checked = true;
         updateRatio("9:16");
-        toast("Gaming overlay uses the 9:16 vertical format.");
+        toast("Cockpit layout uses the 9:16 vertical format.");
       } else {
         updateRatio(document.querySelector('input[name="ratio"]:checked').value);
       }

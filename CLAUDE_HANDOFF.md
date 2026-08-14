@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-14  
 Current version: 1.3.0  
-Application baseline commit: `3c86861` (`Improve VOD clip detection with multi-signal ranking`)
+Clip-detection baseline commit: `3c86861` (`Improve VOD clip detection with multi-signal ranking`)
 
 ## Start here
 
@@ -23,6 +23,8 @@ The hosted health endpoint reported Clip Farm Pilot 1.3.0 at handoff. The new Re
 
 Working features:
 
+- Unified aviation-inspired Flight Deck interface across the responsive PWA and Expo mobile starter
+- New aircraft/play app icon, navy instrument palette, amber launch actions, and phone-safe compact controls
 - File upload and public YouTube/Twitch VOD import
 - Imported-video library with source links, local paths, reveal/open, and deletion
 - Video preview, start/end controls, and clip-range playback
@@ -56,7 +58,7 @@ The product name is **Clip Farm Pilot**. The canonical slug is `clipfarmpilot`, 
 | `build_macos.sh` | Reproducible Apple Silicon PyInstaller build and ad-hoc signing |
 | `Dockerfile` | Hosted Linux/FFmpeg image |
 | `render.yaml` | Render Blueprint and hosted environment settings |
-| `mobile/` | Early Expo starter; the PWA is currently the stronger mobile experience |
+| `mobile/` | Expo mobile starter with the shared Flight Deck theme; functionality is still behind the PWA |
 | `tests/` | Unit and integration regression suite |
 
 There is no separate frontend build step. The production UI is the single tracked `backend/app/static/index.html` file.
