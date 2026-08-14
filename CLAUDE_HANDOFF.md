@@ -203,12 +203,16 @@ outputs/Clip-Farm-Pilot-macOS-v1.3.0-Apple-Silicon.zip
 Its SHA-256 at handoff is:
 
 ```text
-bcd4874dee435536558aee0cd65b12f0652a61dc1c9a286bff576bf56912b529
+6e1d4678bfe5f4893cf5a96fe77530e4e4d25c8adb06e40f77270a72bb80beda
 ```
 
 The app is ad-hoc signed, not Apple-notarized. Users may need to right-click **Open** on first launch. A public polished release eventually needs an Apple Developer ID, hardened runtime, notarization, and preferably universal or separate Intel/Apple Silicon builds.
 
-The 1.3 archive has been built and verified locally but has **not** been published as a GitHub release. Publishing a release is a public external action; confirm with the owner immediately before doing it.
+The 1.3 archive was rebuilt from Flight Deck commit `9a4d196`, verified, and published as the latest GitHub release:
+
+```text
+https://github.com/pilot-dk/Clip-Farm-Pilot/releases/tag/v1.3.0
+```
 
 ## Deployment
 
