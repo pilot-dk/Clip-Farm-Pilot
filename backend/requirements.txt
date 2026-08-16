@@ -6,4 +6,5 @@ imageio-ffmpeg==0.6.0
 yt-dlp[default]==2026.7.4
 pillow==12.3.0
 requests==2.34.2
+send2trash==1.8.3
 pyobjc-framework-CoreText==12.2.2; sys_platform == "darwin"

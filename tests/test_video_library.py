@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 from backend.app.vod import CachedVideoLibrary
-from desktop_launcher import DesktopApi
+from desktop_launcher import DesktopApi, _default_storage_dir
 
 
 class CachedVideoLibraryTests(unittest.TestCase):
@@ -70,9 +71,27 @@ class CachedVideoLibraryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 library.move_to_trash("../not-a-video")
 
+    def test_default_library_uses_the_operating_system_trash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            uploads = root / "uploads"
+            uploads.mkdir()
+            video_id = "e" * 32
+            source = uploads / f"{video_id}.mp4"
+            source.write_bytes(b"video")
+            library = CachedVideoLibrary(uploads)
+            library.register(video_id, "Trash test", "file")
+
+            with patch("send2trash.send2trash") as send_to_trash:
+                result = library.move_to_trash(video_id)
+
+            self.assertEqual(result["disposition"], "trash")
+            send_to_trash.assert_called_once_with(str(source.resolve()))
+            self.assertEqual(library.list_items(), [])
+
 
 class DesktopApiTests(unittest.TestCase):
-    def test_reveal_video_uses_finder_with_validated_cached_file(self):
+    def test_reveal_video_uses_platform_file_manager_with_validated_cached_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             uploads = root / "uploads"
@@ -84,7 +103,7 @@ class DesktopApiTests(unittest.TestCase):
             source.write_bytes(b"video")
             api = DesktopApi(exports, uploads)
 
-            with patch("desktop_launcher.subprocess.run") as run:
+            with patch("desktop_launcher.sys.platform", "darwin"), patch("desktop_launcher.subprocess.run") as run:
                 result = api.reveal_video(video_id)
 
             self.assertEqual(result["status"], "revealed")
@@ -100,6 +119,45 @@ class DesktopApiTests(unittest.TestCase):
             api = DesktopApi(exports, uploads)
             with self.assertRaises(ValueError):
                 api.reveal_video("../../private")
+
+    def test_reveal_video_uses_windows_explorer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            uploads = root / "uploads"
+            exports = root / "exports"
+            uploads.mkdir()
+            exports.mkdir()
+            video_id = "d" * 32
+            source = uploads / f"{video_id}.mp4"
+            source.write_bytes(b"video")
+            api = DesktopApi(exports, uploads)
+
+            with patch("desktop_launcher.sys.platform", "win32"), patch("desktop_launcher.subprocess.run") as run:
+                api.reveal_video(video_id)
+
+            run.assert_called_once_with(
+                ["explorer", f"/select,{source.resolve()}"],
+                check=True,
+                capture_output=True,
+            )
+
+    def test_cross_platform_storage_locations(self):
+        with patch("desktop_launcher.sys.platform", "win32"), patch.dict(
+            os.environ,
+            {"LOCALAPPDATA": "C:/Users/test/AppData/Local"},
+            clear=True,
+        ):
+            self.assertEqual(
+                _default_storage_dir(),
+                Path("C:/Users/test/AppData/Local") / "Clip Farm Pilot",
+            )
+
+        with patch("desktop_launcher.sys.platform", "linux"), patch.dict(
+            os.environ,
+            {"XDG_DATA_HOME": "/home/test/.data"},
+            clear=True,
+        ):
+            self.assertEqual(_default_storage_dir(), Path("/home/test/.data/clipfarmpilot"))
 
 
 if __name__ == "__main__":

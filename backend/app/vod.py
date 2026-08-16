@@ -58,7 +58,9 @@ class CachedVideoLibrary:
     def __init__(self, uploads: Path, metadata_path: Path | None = None, trash_dir: Path | None = None):
         self.uploads = uploads.resolve()
         self.metadata_path = metadata_path or self.uploads.parent / "video_library.json"
-        self.trash_dir = trash_dir or Path(env("TRASH_DIR", Path.home() / ".Trash")).expanduser()
+        configured_trash = env("TRASH_DIR")
+        self._use_system_trash = trash_dir is None and not configured_trash
+        self.trash_dir = trash_dir or Path(configured_trash or self.uploads.parent / "trash").expanduser()
         self._records: dict[str, dict] = {}
         self._lock = threading.RLock()
         self._load()
@@ -189,6 +191,11 @@ class CachedVideoLibrary:
             if permanent_deletion:
                 source.unlink()
                 disposition = "deleted"
+            elif self._use_system_trash:
+                from send2trash import send2trash
+
+                send2trash(str(source))
+                disposition = "trash"
             else:
                 self.trash_dir.mkdir(parents=True, exist_ok=True)
                 safe_title = re.sub(r"[^A-Za-z0-9 _.-]+", "", str(record.get("title") or "Imported video")).strip()

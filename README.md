@@ -8,7 +8,7 @@ This updated build includes a simple, polished browser editor connected directly
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.3.1 is an installable Progressive Web App (PWA). The same editor now works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.4 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -42,20 +42,39 @@ docker run --rm -p 8000:8000 \
 
 Then open `http://localhost:8000`. Copy `.env.example` when configuring another Docker host.
 
-## Open the Mac app — no Terminal required
+## Desktop downloads
 
-The packaged **Clip Farm Pilot.app** is built for Apple Silicon Macs (M1, M2, M3, M4, and newer):
+### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.3.1-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.4.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
-This development build is ad-hoc signed but not Apple-notarized, so macOS may require the right-click **Open** step. The app contains its own Python runtime, FFmpeg engine, and JavaScript runtime. Homebrew and Terminal setup are not required.
+This build is ad-hoc signed but not Apple-notarized, so macOS may require the right-click **Open** step.
+
+### Windows — x64
+
+1. Unzip `Clip-Farm-Pilot-Windows-v1.4.0-x64.zip`.
+2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
+3. If Windows SmartScreen appears, choose **More info → Run anyway**.
+
+The Windows build is currently unsigned. It uses the WebView2 runtime included with current Windows 10 and Windows 11 installations.
+
+### Linux — x64
+
+1. Extract `Clip-Farm-Pilot-Linux-v1.4.0-x64.tar.gz`.
+2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
+
+The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
+
+All three desktop downloads contain their own Python runtime, FFmpeg engine, and JavaScript runtime.
 
 Clip Farm Pilot saves imported videos and exports under:
 
 ```text
-~/Library/Application Support/Clip Farm Pilot
+macOS:   ~/Library/Application Support/Clip Farm Pilot
+Windows: %LOCALAPPDATA%\Clip Farm Pilot
+Linux:   ~/.local/share/clipfarmpilot
 ```
 
 ## Studio GUI
@@ -65,7 +84,7 @@ The editor now includes:
 - Drag-and-drop or file-picker livestream upload with upload progress.
 - YouTube and Twitch VOD link importing with download progress.
 - An **Imported videos** library showing each cached source file, its original VOD link, size, date, and exact local save path.
-- One-click **Show in Finder** and recoverable **Move to Trash** controls. Exported clips are never removed with a source video.
+- One-click **Show in folder** and recoverable **Move to Trash** controls. Exported clips are never removed with a source video.
 - A responsive video preview that changes shape with the selected export ratio.
 - Clip start/end controls, playhead scrubbing, and clip-range playback.
 - **16:9**, **9:16**, and **1:1** visual presets.
@@ -81,7 +100,7 @@ The editor now includes:
 - **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection.
 - **Export Clip** actions in the toolbar and editor panel.
 - Rendering status, errors, success feedback, and a finished MP4 save button.
-- A native macOS **Save As** window after rendering, with a reusable **Save exported MP4** button if saving is cancelled.
+- A native desktop **Save As** window after rendering, with a reusable **Save exported MP4** button if saving is cancelled.
 - An optional **Viral clip filename** generator that inspects the finished clip’s audio-energy arc and combines it with the VOD/upload title or creator-entered center text.
 - A **Publish directly** panel for connecting YouTube, Instagram, and TikTok accounts through their official OAuth sign-in flows.
 - Multi-platform publishing of the finished MP4 with a reusable title, caption/hashtags, visibility choice, per-platform success/error results, and direct links to successful posts.
@@ -107,7 +126,7 @@ After exporting a clip, scroll to **Publish directly**:
 3. Review the generated title, add a caption/hashtags, and choose a visibility level.
 4. Press **Publish selected accounts**.
 
-The upload uses the already-rendered MP4 in Clip Farm Pilot’s export storage, so saving a duplicate copy first is not required. Account tokens are stored locally in `social-accounts.json` inside Clip Farm Pilot’s Application Support folder with owner-only file permissions; passwords are never collected.
+The upload uses the already-rendered MP4 in Clip Farm Pilot’s export storage, so saving a duplicate copy first is not required. Account tokens are stored locally in `social-accounts.json` inside the platform-specific Clip Farm Pilot data folder with owner-only file permissions; passwords are never collected.
 
 Social networks require the app owner to register Clip Farm Pilot before third-party accounts can connect. Until the corresponding credentials are provided, that platform is labelled **Developer setup required** and links to the official setup documentation instead of pretending to connect.
 
@@ -136,7 +155,7 @@ The **Viral clip filename** switch is enabled by default. After rendering, Clip 
 FC 26 Weekend League — Wait for the Ending.mp4
 ```
 
-The generated title appears in the editor and becomes the default filename in the macOS **Save As** window. You can edit that filename in the Save window before saving, or turn the switch off to use Clip Farm Pilot’s standard filename.
+The generated title appears in the editor and becomes the default filename in the desktop **Save As** window. You can edit that filename before saving, or turn the switch off to use Clip Farm Pilot’s standard filename.
 
 This offline MVP uses the source/VOD title, creator-entered square caption, and changes in audio intensity. It does not yet transcribe speech or understand the exact game event, and no title can guarantee virality. Transcript-aware title generation is a natural next production upgrade.
 
@@ -158,10 +177,10 @@ Clip Farm Pilot downloads a local working copy because audio analysis and FFmpeg
 ## Remove a cached VOD when you are done
 
 1. Press **Imported videos** in the top toolbar.
-2. Use **Show in Finder** to reveal Clip Farm Pilot’s local source copy. URL imports also include a link back to the original YouTube or Twitch page.
+2. Use **Show in folder** to reveal Clip Farm Pilot’s local source copy. URL imports also include a link back to the original YouTube or Twitch page.
 3. Press **Move to Trash** and confirm when you no longer need the full VOD.
 
-The source copy goes to the macOS Trash, so it can still be recovered until the Trash is emptied. Finished MP4 exports saved through **Export Clip** remain wherever you saved them and are not touched.
+The source copy goes to the operating system’s Trash or Recycle Bin, so it can still be recovered until that is emptied. Finished MP4 exports saved through **Export Clip** remain wherever you saved them and are not touched.
 
 ## What this build already does
 
@@ -184,7 +203,7 @@ The source copy goes to the macOS Trash, so it can still be recovered until the 
 - `mobile/` — Expo/React Native client for iOS and Android.
 - `Dockerfile` and `render.yaml` — portable hosted web deployment.
 
-## Run the Mac/web MVP
+## Run the web MVP locally
 
 ### 1. Install FFmpeg
 
@@ -220,7 +239,7 @@ The browser version supports VOD links too. Its Python dependencies now include 
 4. Optionally enable **Gaming overlay** and identify the source face-cam corner, crop size, and inward offset.
 5. For **1:1**, optionally enter center text and adjust **Caption size** from 50% to 175%.
 6. Optionally select a sound and visual effect, place the preview on the payoff, and press **Use playhead**.
-7. Press **Export Clip**, choose a location in the macOS **Save As** window, and press **Save**. If you cancel, use **Save exported MP4** in the status panel.
+7. Press **Export Clip**, choose a location in the desktop **Save As** window, and press **Save**. If you cancel, use **Save exported MP4** in the status panel.
 
 ## Run the iPhone / Android prototype
 
@@ -270,6 +289,22 @@ export CLIPFARMPILOT_NODE_BINARY=/absolute/path/to/an/arm64/node
 ```
 
 The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App Store or avoid first-open Gatekeeper warnings for wider distribution, use an Apple Developer signing identity and notarization workflow.
+
+## Build Windows and Linux apps from source
+
+On Windows x64 with Python 3.12 and Node.js installed:
+
+```powershell
+./build_windows.ps1 -Version 1.4.0
+```
+
+On Ubuntu 24.04 x64 with Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installed:
+
+```bash
+./build_linux.sh
+```
+
+The GitHub Actions **Build Windows and Linux releases** workflow runs both builds on their native operating systems and uploads the verified archives to an existing GitHub release tag.
 
 ## Recommended v0.2 — what makes Clip Farm Pilot truly competitive
 

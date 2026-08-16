@@ -1111,6 +1111,197 @@
       .button.small { min-height: 38px; }
       .auth-card { padding: 24px 20px; }
     }
+
+    /* Simple Studio — calmer surfaces, progressive disclosure, smoother motion */
+    html { scroll-behavior: smooth; }
+
+    body {
+      background:
+        radial-gradient(circle at 18% -8%, rgba(71, 169, 216, .12), transparent 34rem),
+        radial-gradient(circle at 96% 4%, rgba(255, 189, 89, .045), transparent 28rem),
+        #080f16;
+    }
+
+    .topbar {
+      height: 64px;
+      padding: 0 24px;
+      border-bottom-color: rgba(145, 188, 211, .12);
+      background: rgba(8, 15, 22, .94);
+      backdrop-filter: blur(22px) saturate(130%);
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-color: rgba(91, 214, 255, .3);
+      border-radius: 11px;
+      box-shadow: none;
+    }
+
+    .mvp-badge {
+      border: 0;
+      color: var(--muted-2);
+      background: transparent;
+    }
+
+    .system-state { display: none; }
+    .workspace { padding: 20px 24px 34px; }
+    .workspace-head { align-items: center; margin-bottom: 16px; }
+    .workspace-title { gap: 0; }
+    .workspace-title h1 { font-size: 19px; letter-spacing: -.35px; }
+    .workspace-kicker { margin-top: 2px; font-size: 12px; }
+    .saved-dot, .flight-path { display: none; }
+
+    .editor-grid {
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 16px;
+    }
+
+    .panel,
+    .auth-card,
+    .library-dialog {
+      border-color: rgba(145, 188, 211, .14);
+      background: rgba(13, 26, 37, .96);
+      box-shadow: 0 16px 44px rgba(0, 6, 12, .24);
+    }
+
+    .panel::before,
+    .auth-card::before,
+    .library-dialog::before,
+    .stage::before,
+    .stage::after,
+    .empty-preview::before,
+    .empty-preview::after { display: none; }
+
+    .panel-head { min-height: 52px; padding: 11px 15px; }
+    .panel-code { display: none; }
+    .stage-wrap {
+      min-height: 500px;
+      padding: 20px;
+      background: #09131d;
+    }
+
+    .stage {
+      border-color: rgba(145, 188, 211, .2);
+      box-shadow: 0 14px 38px rgba(0, 0, 0, .34);
+      transition: width .32s cubic-bezier(.2,.8,.2,1), aspect-ratio .32s cubic-bezier(.2,.8,.2,1);
+    }
+
+    .empty-preview {
+      background: radial-gradient(circle at 50% 42%, rgba(91, 214, 255, .07), transparent 17rem), #0b1722;
+    }
+
+    .empty-icon {
+      width: 62px;
+      height: 62px;
+      border-radius: 18px;
+      box-shadow: none;
+    }
+
+    .transport { background: #0b1823; }
+    .control-panel { padding: 16px; }
+    .section + .section { margin-top: 18px; padding-top: 18px; }
+
+    .section-label {
+      gap: 0;
+      color: #b7cbd8;
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .section-label::after { display: none; }
+
+    .source-tabs,
+    .drop-zone,
+    .vod-box,
+    .face-controls,
+    .square-caption-controls,
+    .publish-fields,
+    .platform-account,
+    .candidate,
+    .ratio-card {
+      background-color: rgba(6, 16, 24, .62);
+    }
+
+    .drop-zone { padding: 17px 14px; }
+    .ratio-card { min-height: 68px; }
+
+    .button {
+      transition: transform .18s cubic-bezier(.2,.8,.2,1), background .18s ease,
+        border-color .18s ease, opacity .18s ease, box-shadow .18s ease;
+    }
+
+    .button:hover:not(:disabled) { transform: translateY(-1px); }
+    .button:active:not(:disabled) { transform: scale(.985); }
+
+    .disclosure-section > summary {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: -10px -10px 0;
+      padding: 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      list-style: none;
+      transition: background .18s ease;
+    }
+
+    .disclosure-section > summary::-webkit-details-marker { display: none; }
+    .disclosure-section > summary:hover { background: rgba(91, 214, 255, .055); }
+    .disclosure-summary-copy { min-width: 0; }
+    .disclosure-summary-copy strong { display: block; font-size: 12px; }
+    .disclosure-summary-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .disclosure-chevron {
+      width: 25px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      transition: transform .22s cubic-bezier(.2,.8,.2,1), color .18s ease;
+    }
+    .disclosure-section[open] .disclosure-chevron { transform: rotate(180deg); color: var(--accent); }
+    .disclosure-content { padding-top: 12px; animation: reveal-options .22s ease both; }
+    @keyframes reveal-options { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+    .effects-card {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .effects-badge { display: none; }
+    .viral-title-control { padding: 12px; background: rgba(6, 16, 24, .62); }
+    .status-panel { transition: border-color .2s ease, background .2s ease; }
+    .candidate { animation: reveal-options .2s ease both; }
+
+    .toast { backdrop-filter: blur(18px); }
+
+    @media (max-width: 900px) {
+      .editor-grid, .sidebar { grid-template-columns: 1fr; }
+      .status-panel { grid-column: auto; }
+      .stage-wrap { min-height: 430px; }
+    }
+
+    @media (max-width: 620px) {
+      .topbar { min-height: 60px; padding-top: env(safe-area-inset-top); }
+      .workspace { padding: 15px 12px calc(28px + env(safe-area-inset-bottom)); }
+      .workspace-head { margin-bottom: 12px; }
+      .workspace-title h1 { font-size: 17px; }
+      .workspace-kicker { font-size: 11px; }
+      .stage-wrap { min-height: 330px; padding: 12px; }
+      .control-panel { padding: 14px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
   </style>
 </head>
 <body>
@@ -1122,7 +1313,7 @@
         </div>
         Clip Farm Pilot
       </div>
-      <h1 id="authTitle">Return to the flight deck</h1>
+      <h1 id="authTitle">Open your studio</h1>
       <p>Enter your private password to unlock the clip studio.</p>
       <form class="auth-form" id="authForm">
         <label for="authPassword">Clip Farm Pilot password</label>
@@ -1138,26 +1329,26 @@
         <div class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 2.7 7.2L21 12v2l-6.4-1.2L16 20l-4-2.2L8 20l1.4-7.2L3 14v-2l6.3-2.8L12 2Z"/></svg>
         </div>
-        <div class="brand">Clip Farm Pilot <span class="mvp-badge">FLIGHT DECK</span></div>
+        <div class="brand">Clip Farm Pilot <span class="mvp-badge">STUDIO</span></div>
       </div>
       <div class="top-actions">
-        <span class="system-state">Systems online</span>
+        <span class="system-state">Ready</span>
         <button class="button ghost install-button" type="button" id="installAppButton" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
           <span class="install-label">Install app</span>
         </button>
         <button class="button ghost library-button" type="button" id="libraryButton">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h6l2 2h10v10H3V7Z"/><path d="M3 7V5h6l2 2"/></svg>
-          <span class="library-button-label">Video hangar</span>
+          <span class="library-button-label">Videos</span>
           <span class="library-count" id="libraryCount" hidden>0</span>
         </button>
         <button class="button ghost" type="button" id="newProjectButton">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          New flight
+          New project
         </button>
         <button class="button primary" type="button" id="topExportButton" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-          <span class="top-export-label">Launch clip</span>
+          <span class="top-export-label">Export</span>
         </button>
       </div>
     </header>
@@ -1165,8 +1356,8 @@
     <main class="workspace">
       <div class="workspace-head">
         <div>
-          <div class="workspace-title"><h1>Creator flight deck</h1><span class="saved-dot" aria-hidden="true"></span></div>
-          <p class="workspace-kicker">Turn long streams into standout clips cleared for every platform.</p>
+          <div class="workspace-title"><h1>Create a clip</h1><span class="saved-dot" aria-hidden="true"></span></div>
+          <p class="workspace-kicker">Import a stream, pick a moment, choose a format, and export.</p>
         </div>
         <div class="flight-path" aria-label="Clip workflow">
           <span class="flight-step active"><b>01</b> Source</span>
@@ -1191,8 +1382,8 @@
                   <div class="empty-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 2.7 7.2L21 12v2l-6.4-1.2L16 20l-4-2.2L8 20l1.4-7.2L3 14v-2l6.3-2.8L12 2Z"/></svg>
                   </div>
-                  <h2>Ready for takeoff</h2>
-                  <p>Load a livestream recording, then let Moment Radar locate the strongest reactions and payoffs.</p>
+                  <h2>Add a livestream</h2>
+                  <p>Upload a video or paste a YouTube or Twitch VOD link to get started.</p>
                   <button class="button secondary" type="button" id="emptySelectButton">Load source video</button>
                 </div>
               </div>
@@ -1231,7 +1422,7 @@
         <aside class="sidebar" aria-label="Clip controls">
           <section class="panel control-panel">
             <div class="section">
-              <span class="section-label">01 / Flight source</span>
+              <span class="section-label">1. Source</span>
               <div class="source-tabs" role="tablist" aria-label="Video source">
                 <button class="source-tab active" type="button" role="tab" aria-selected="true" data-source="file">Upload file</button>
                 <button class="source-tab" type="button" role="tab" aria-selected="false" data-source="vod">Paste VOD link</button>
@@ -1263,11 +1454,11 @@
             </div>
 
             <div class="section">
-              <span class="section-label">02 / Moment radar</span>
+              <span class="section-label">2. Find a clip</span>
               <div class="auto-find-row">
                 <button class="button secondary" type="button" id="analyzeButton" disabled>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.4 4.1L17.5 8l-4.1 1.4L12 13.5l-1.4-4.1L6.5 8l4.1-1.4L12 3ZM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
-                  Scan for clips
+                  Auto-Find Clips
                 </button>
                 <select id="clipDuration" aria-label="Target clip duration">
                   <option value="15">15 sec</option>
@@ -1280,7 +1471,7 @@
             </div>
 
             <div class="section">
-              <span class="section-label">03 / Output route</span>
+              <span class="section-label">3. Format</span>
               <div class="ratio-grid" id="ratioGrid">
                 <label class="ratio-option">
                   <input type="radio" name="ratio" value="16:9" checked />
@@ -1308,7 +1499,7 @@
 
             <div class="section">
               <div class="switch-row">
-                <div class="switch-copy"><strong>Cockpit layout</strong><small>Face cam on top, gameplay below</small></div>
+                <div class="switch-copy"><strong>Gaming layout</strong><small>Face cam on top, gameplay below</small></div>
                 <label class="switch">
                   <input id="gamingToggle" type="checkbox" />
                   <span class="switch-track"></span>
@@ -1345,8 +1536,12 @@
               </div>
             </div>
 
-            <div class="section">
-              <span class="section-label">04 / Impact boosters</span>
+            <details class="section disclosure-section" id="effectsSection">
+              <summary>
+                <span class="disclosure-summary-copy"><strong>Effects</strong><small>Optional sound and visual boost</small></span>
+                <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="disclosure-content">
               <div class="effects-card">
                 <span class="effects-badge">Works with every template</span>
                 <div class="effects-grid">
@@ -1389,12 +1584,13 @@
                 </div>
                 <small class="field-hint">Place the effect on one payoff moment. Impact Boom is original; Vine Boom uses the supplied sample.</small>
               </div>
-            </div>
+              </div>
+            </details>
 
             <div class="section">
               <div class="viral-title-control">
                 <div class="switch-row">
-                  <div class="switch-copy"><strong>AI callsign title</strong><small>Analyzes the finished clip and creates a punchy filename</small></div>
+                  <div class="switch-copy"><strong>Smart filename</strong><small>Creates a punchy name for the finished clip</small></div>
                   <label class="switch">
                     <input id="viralTitleToggle" type="checkbox" checked />
                     <span class="switch-track"></span>
@@ -1407,12 +1603,16 @@
               </div>
               <button class="button primary full" type="button" id="exportButton" disabled>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-                Launch Clip
+                Export Clip
               </button>
             </div>
 
-            <div class="section" id="publishSection">
-              <span class="section-label">05 / Destinations</span>
+            <details class="section disclosure-section" id="publishSection">
+              <summary>
+                <span class="disclosure-summary-copy"><strong>Publish directly</strong><small>YouTube, Instagram, and TikTok</small></span>
+                <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="disclosure-content">
               <p class="publish-intro">Connect creator accounts with their official sign-in, select destinations, then send the finished MP4 without saving and re-uploading it manually.</p>
               <div class="platform-list" id="platformList">
                 <div class="platform-account" data-platform="youtube">
@@ -1458,7 +1658,8 @@
                 <small class="field-hint" id="publishHint">Export a clip first. New integrations and unaudited TikTok clients may be limited to private posts.</small>
                 <div class="publish-results" id="publishResults"></div>
               </div>
-            </div>
+              </div>
+            </details>
           </section>
 
           <section class="panel status-panel" id="statusPanel" aria-live="polite">
@@ -1466,7 +1667,7 @@
               <div class="status-icon" id="statusIcon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="M12 8v4l2.5 2"/></svg>
               </div>
-              <div><div class="status-title" id="statusTitle">Preflight ready</div><div class="status-message" id="statusMessage">Load a livestream recording to begin.</div></div>
+              <div><div class="status-title" id="statusTitle">Ready</div><div class="status-message" id="statusMessage">Add a livestream recording to begin.</div></div>
             </div>
             <div class="status-progress"><div class="progress-track"><div class="progress-bar"></div></div></div>
             <a class="download-link" id="downloadLink" href="#" download>
@@ -1483,8 +1684,8 @@
     <section class="library-dialog" role="dialog" aria-modal="true" aria-labelledby="libraryTitle">
       <header class="library-head">
         <div>
-          <h2 id="libraryTitle">Video hangar</h2>
-          <p>Review source copies and clear them after the clipping flight is complete.</p>
+          <h2 id="libraryTitle">Imported videos</h2>
+          <p>Review source files and remove them when you are finished clipping.</p>
         </div>
         <button class="library-close" id="closeLibraryButton" type="button" aria-label="Close imported videos">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
@@ -1492,7 +1693,7 @@
       </header>
       <div class="library-body">
         <div class="library-location">
-          <strong>Hangar storage location</strong>
+          <strong>Video storage location</strong>
           <code id="libraryStoragePath">Loading…</code>
           URL imports and file uploads are working copies. Moving one to Trash never removes exported clips.
         </div>
@@ -1649,7 +1850,7 @@
       count.hidden = items.length === 0;
 
       if (!items.length) {
-        $("libraryList").innerHTML = '<div class="library-empty"><strong>No cached videos yet</strong>Videos imported from a URL or selected from your Mac will appear here.</div>';
+        $("libraryList").innerHTML = '<div class="library-empty"><strong>No imported videos yet</strong>Videos imported from a URL or selected from your computer will appear here.</div>';
         return;
       }
 
@@ -1677,7 +1878,7 @@
               ${originalLink}
             </div>
             <div class="library-actions">
-              <button class="button secondary small" type="button" data-library-action="reveal" data-video-id="${escapeHtml(item.video_id)}">${desktopMode ? "Show in Finder" : "Open source"}</button>
+              <button class="button secondary small" type="button" data-library-action="reveal" data-video-id="${escapeHtml(item.video_id)}">${desktopMode ? "Show in folder" : "Open source"}</button>
               <button class="button danger small" type="button" data-library-action="delete" data-video-id="${escapeHtml(item.video_id)}">${deleteLabel}</button>
             </div>
           </article>`;
@@ -1717,7 +1918,7 @@
       try {
         if (window.pywebview?.api?.reveal_video) {
           await window.pywebview.api.reveal_video(item.video_id);
-          toast("Source video revealed in Finder.");
+          toast("Source video revealed in its folder.");
         } else {
           window.open(item.source_url, "_blank", "noopener");
         }
@@ -1916,7 +2117,7 @@
     function updateRatio(ratio) {
       state.ratio = ratio;
       $("stage").dataset.aspect = ratio;
-      $("ratioLabel").textContent = state.layout === "gaming" ? "OUTPUT 9:16 · COCKPIT" : `OUTPUT ${ratio}`;
+      $("ratioLabel").textContent = state.layout === "gaming" ? "9:16 · GAMING" : ratio;
       $("squareCaptionControls").classList.toggle("visible", ratio === "1:1" && state.layout !== "gaming");
       requestAnimationFrame(() => {
         updateFacePreview();
@@ -1953,7 +2154,7 @@
 
     function resetCandidates() {
       state.selectedCandidate = null;
-      $("candidates").innerHTML = '<div class="candidate-empty">Run Moment Radar to rank high-energy moments.</div>';
+      $("candidates").innerHTML = '<div class="candidate-empty">Use Auto-Find Clips to rank high-energy moments.</div>';
     }
 
     function loadLocalPreview(file) {
@@ -2367,7 +2568,7 @@
       const buttons = [$("exportButton"), $("topExportButton")];
       buttons.forEach((button) => setBusy(button, true, "Rendering…"));
       $("viralTitleResult").classList.remove("visible");
-      setStatus("working", "Clearing clip for launch", `${state.ratio} ${state.layout === "gaming" ? "cockpit layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`);
+      setStatus("working", "Exporting clip", `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`);
 
       try {
         const response = await fetch(`/api/videos/${state.videoId}/export`, {
@@ -2430,7 +2631,7 @@
 
       const link = $("downloadLink");
       link.classList.add("saving");
-      setStatus("working", "Choose where to save", "Opening the macOS Save As window…");
+      setStatus("working", "Choose where to save", "Opening the desktop Save As window…");
       try {
         const result = await window.pywebview.api.save_export(state.exportId, link.download || "Clip Farm Pilot-clip.mp4");
         if (result?.status === "saved") {
@@ -2480,7 +2681,7 @@
       $("endTime").value = 30;
       enableEditor(false);
       $("candidates").innerHTML = '<div class="candidate-empty">Upload a video to scan for candidate clips.</div>';
-      setStatus("ready", "Preflight ready", "Load a livestream recording to begin.");
+      setStatus("ready", "Ready", "Add a livestream recording to begin.");
       switchSource("file");
     }
 
@@ -2581,7 +2782,7 @@
         const portrait = document.querySelector('input[name="ratio"][value="9:16"]');
         portrait.checked = true;
         updateRatio("9:16");
-        toast("Cockpit layout uses the 9:16 vertical format.");
+        toast("Gaming layout uses the 9:16 vertical format.");
       } else {
         updateRatio(document.querySelector('input[name="ratio"]:checked').value);
       }

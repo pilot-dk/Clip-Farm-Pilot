@@ -10,12 +10,16 @@ backend/storage/exports/*
 mobile/node_modules/
 mobile/.expo/
 .build-venv/
+.build-venv-windows/
+.build-venv-linux/
 .pyinstaller-cache/
+.pyinstaller-cache-linux/
 build/
 dist/
 outputs/
 *.spec
 build_assets/*.iconset/
 build_assets/*.icns
+build_assets/*.ico
 .DS_Store
 .env

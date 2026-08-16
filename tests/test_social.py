@@ -71,11 +71,14 @@ class DesktopSocialLinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             api = DesktopApi(root)
-            with patch("desktop_launcher.subprocess.run") as run:
+            with patch("desktop_launcher.webbrowser.open", return_value=True) as open_browser:
                 result = api.open_external_url("https://accounts.google.com/o/oauth2/v2/auth?client_id=test")
 
         self.assertEqual(result["status"], "opened")
-        run.assert_called_once()
+        open_browser.assert_called_once_with(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
+            new=2,
+        )
 
     def test_external_link_rejects_unexpected_host(self):
         with tempfile.TemporaryDirectory() as temporary:

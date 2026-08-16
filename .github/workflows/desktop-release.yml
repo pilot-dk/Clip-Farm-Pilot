@@ -1,0 +1,85 @@
+name: Build Windows and Linux releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag, such as v1.4.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            desktop-requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Build Windows x64 app
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart("v")
+          ./build_windows.ps1 -Version $version
+      - name: Test packaged Windows app
+        shell: pwsh
+        run: |
+          $env:CLIPFARMPILOT_TEST_MODE = "1"
+          & "dist\ClipFarmPilot\ClipFarmPilot.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: outputs/Clip-Farm-Pilot-Windows-*.zip
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install Linux desktop and video tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3-gi python3-venv gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libgtk-3-0 libwebkit2gtk-4.1-0
+      - name: Build Linux x64 app
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          chmod +x build_linux.sh
+          CLIPFARMPILOT_VERSION="${RELEASE_TAG#v}" ./build_linux.sh
+      - name: Test packaged Linux app
+        run: CLIPFARMPILOT_TEST_MODE=1 dist/ClipFarmPilot/ClipFarmPilot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: outputs/Clip-Farm-Pilot-Linux-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-release"
+          path: release-assets
+          merge-multiple: true
+      - name: Upload desktop downloads to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" release-assets/* --clobber

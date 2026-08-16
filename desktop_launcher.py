@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.request
 import uuid
+import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -51,7 +52,7 @@ class DesktopApi:
         if source.parent != self._exports_dir or not source.is_file():
             raise FileNotFoundError("The exported clip is no longer available. Please export it again.")
         if self._window is None:
-            raise RuntimeError("The Mac save window is not ready.")
+            raise RuntimeError("The desktop save window is not ready.")
 
         safe_name = Path(suggested_name or DEFAULT_CLIP_FILENAME).name[:120]
         if not safe_name.lower().endswith(".mp4"):
@@ -77,7 +78,7 @@ class DesktopApi:
         return {"status": "saved", "path": str(destination)}
 
     def reveal_video(self, video_id: str) -> dict:
-        """Reveal one of Clip Farm Pilot's cached source videos in macOS Finder."""
+        """Reveal one of Clip Farm Pilot's cached source videos in the system file manager."""
         if not self._ITEM_ID.fullmatch(video_id or ""):
             raise ValueError("That imported video could not be identified.")
         if self._uploads_dir is None:
@@ -90,9 +91,15 @@ class DesktopApi:
         ]
         candidates = [path for path in candidates if path.parent == self._uploads_dir]
         if not candidates:
-            raise FileNotFoundError("The imported video is no longer on this Mac.")
+            raise FileNotFoundError("The imported video is no longer on this computer.")
         source = max(candidates, key=lambda path: path.stat().st_size)
-        subprocess.run(["open", "-R", str(source)], check=True, capture_output=True)
+        if sys.platform == "darwin":
+            command = ["open", "-R", str(source)]
+        elif sys.platform == "win32":
+            command = ["explorer", f"/select,{source}"]
+        else:
+            command = ["xdg-open", str(source.parent)]
+        subprocess.run(command, check=True, capture_output=True)
         return {"status": "revealed", "path": str(source)}
 
     def open_external_url(self, url: str) -> dict:
@@ -100,12 +107,23 @@ class DesktopApi:
         parsed = urlparse(url)
         if parsed.scheme != "https" or parsed.hostname not in self._OAUTH_HOSTS:
             raise ValueError("Clip Farm Pilot blocked an unexpected external link.")
-        subprocess.run(["open", url], check=True, capture_output=True)
+        if not webbrowser.open(url, new=2):
+            raise RuntimeError("The sign-in page could not be opened in the default browser.")
         return {"status": "opened"}
 
 
 def _resource_dir() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+
+def _default_storage_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    if sys.platform == "win32":
+        local_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        return Path(local_data) / APP_NAME if local_data else Path.home() / "AppData" / "Local" / APP_NAME
+    data_home = os.environ.get("XDG_DATA_HOME")
+    return (Path(data_home) if data_home else Path.home() / ".local" / "share") / "clipfarmpilot"
 
 
 def _available_port() -> int:
@@ -119,10 +137,9 @@ def _configure_runtime() -> None:
     if configured_storage:
         storage = Path(str(configured_storage)).expanduser()
     else:
-        application_support = Path.home() / "Library" / "Application Support"
-        storage = application_support / APP_NAME
-        legacy_storage = application_support / ("Clip" + "Pilot")
-        if legacy_storage.is_dir() and not storage.exists():
+        storage = _default_storage_dir()
+        legacy_storage = Path.home() / "Library" / "Application Support" / ("Clip" + "Pilot")
+        if sys.platform == "darwin" and legacy_storage.is_dir() and not storage.exists():
             try:
                 legacy_storage.rename(storage)
             except OSError:
@@ -136,9 +153,11 @@ def _configure_runtime() -> None:
     os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg
     os.environ[f"{ENV_PREFIX}FFMPEG_EXE"] = ffmpeg
 
-    bundled_node = _resource_dir() / "bin" / "node"
-    if bundled_node.exists():
-        os.environ[f"{ENV_PREFIX}NODE_EXE"] = str(bundled_node)
+    for node_name in ("node.exe", "node"):
+        bundled_node = _resource_dir() / "bin" / node_name
+        if bundled_node.exists():
+            os.environ[f"{ENV_PREFIX}NODE_EXE"] = str(bundled_node)
+            break
 
 
 def _wait_for_server(url: str, timeout: float = 20.0) -> None:
@@ -385,7 +404,8 @@ def main() -> int:
             window.destroy()
 
         test_window = env("TEST_WINDOW") == "1"
-        webview.start(close_test_window if test_window else None, gui="cocoa", debug=False, private_mode=False)
+        desktop_gui = "cocoa" if sys.platform == "darwin" else "edgechromium" if sys.platform == "win32" else "gtk"
+        webview.start(close_test_window if test_window else None, gui=desktop_gui, debug=False, private_mode=False)
         return 0
     finally:
         server.should_exit = True
