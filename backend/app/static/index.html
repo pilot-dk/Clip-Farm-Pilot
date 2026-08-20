@@ -2065,6 +2065,48 @@
       return lines.slice(0, 7);
     }
 
+    function visibleCanvasBounds(context, width, height) {
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let left = width;
+      let top = height;
+      let right = -1;
+      let bottom = -1;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          if (pixels[(y * width + x) * 4 + 3] === 0) continue;
+          left = Math.min(left, x);
+          top = Math.min(top, y);
+          right = Math.max(right, x);
+          bottom = Math.max(bottom, y);
+        }
+      }
+      return right < left ? null : { left, top, right: right + 1, bottom: bottom + 1 };
+    }
+
+    function opticallyCenterCanvas(canvas) {
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      const bounds = visibleCanvasBounds(context, canvas.width, canvas.height);
+      if (!bounds) return canvas;
+
+      const width = bounds.right - bounds.left;
+      const height = bounds.bottom - bounds.top;
+      const visible = document.createElement("canvas");
+      visible.width = width;
+      visible.height = height;
+      visible.getContext("2d").drawImage(
+        canvas,
+        bounds.left, bounds.top, width, height,
+        0, 0, width, height,
+      );
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(
+        visible,
+        Math.round((canvas.width - width) / 2),
+        Math.round((canvas.height - height) / 2),
+      );
+      return canvas;
+    }
+
     function renderSquareCaptionOverlay() {
       const text = $("captionText").value.trim();
       if (state.ratio !== "1:1" || state.layout === "gaming" || !text) return "";
@@ -2095,7 +2137,7 @@
         context.strokeText(line, 540, y, 960);
         context.fillText(line, 540, y, 960);
       });
-      return canvas.toDataURL("image/png");
+      return opticallyCenterCanvas(canvas).toDataURL("image/png");
     }
 
     function updateEffectControls() {

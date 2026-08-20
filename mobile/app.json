@@ -2,7 +2,7 @@
   "expo": {
     "name": "Clip Farm Pilot",
     "slug": "clipfarmpilot",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",

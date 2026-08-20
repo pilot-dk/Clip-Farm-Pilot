@@ -682,6 +682,33 @@ def _emoji_font(size: int = 64) -> ImageFont.FreeTypeFont | None:
     return None
 
 
+def center_caption_overlay(image: Image.Image) -> Image.Image:
+    """Optically center the visible caption pixels on a transparent canvas.
+
+    Font advance widths are not reliable for mixed text and color emoji. Their
+    side bearings vary between Apple Color Emoji, Segoe UI Emoji, and Linux
+    fallbacks, which can make a mathematically centered text run look shifted.
+    Centering the final alpha bounds keeps every renderer and platform aligned.
+    """
+    source = image.convert("RGBA")
+    bounds = source.getchannel("A").getbbox()
+    if bounds is None:
+        return source
+
+    visible = source.crop(bounds)
+    centered = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    x = round((source.width - visible.width) / 2)
+    y = round((source.height - visible.height) / 2)
+    centered.alpha_composite(visible, (x, y))
+    return centered
+
+
+def _center_caption_file(destination: Path) -> None:
+    with Image.open(destination) as rendered:
+        centered = center_caption_overlay(rendered)
+    centered.save(destination, format="PNG")
+
+
 def _render_square_caption_macos(text: str, destination: Path, font_scale: float) -> bool:
     """Render caption text through Core Text so full emoji sequences stay intact.
 
@@ -857,6 +884,7 @@ def _wrap_caption(
 
 def _render_square_caption(text: str, destination: Path, font_scale: float = 1.0) -> None:
     if _render_square_caption_macos(text, destination, font_scale):
+        _center_caption_file(destination)
         return
 
     canvas = Image.new("RGBA", (1080, 1080), (0, 0, 0, 0))
@@ -899,7 +927,7 @@ def _render_square_caption(text: str, destination: Path, font_scale: float = 1.0
                 )
             x += token_width
         y += line_height
-    canvas.save(destination)
+    center_caption_overlay(canvas).save(destination)
 
 
 def _render_sound_effect(effect: SoundEffect, destination: Path) -> None:

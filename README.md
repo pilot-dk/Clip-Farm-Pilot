@@ -46,7 +46,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.4.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.4.1-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -54,7 +54,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.4.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.4.1-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -62,7 +62,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.4.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.4.1-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -93,6 +93,7 @@ The editor now includes:
 - Optional centered text for 1:1 clips, styled as bold white type with a black outline (and native color emoji).
 - Device-rendered color emoji for square captions in the browser, avoiding Linux-server missing-glyph boxes.
 - Native macOS emoji shaping for square captions, including hearts, flags, skin tones, keycaps, and joined family/profession emoji without missing-glyph boxes.
+- Pixel-based optical centering that keeps the complete text-and-emoji caption centered consistently on macOS, Windows, Linux, and the web app.
 - A live **Caption size** slider for 1:1 clips, adjustable from 50% to 175% with the selected size carried into the rendered MP4.
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
 - A bundled Vine Boom option plus original impact-boom, whoosh, and record-scratch sound effects with adjustable volume.
@@ -295,7 +296,7 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On Windows x64 with Python 3.12 and Node.js installed:
 
 ```powershell
-./build_windows.ps1 -Version 1.4.0
+./build_windows.ps1 -Version 1.4.1
 ```
 
 On Ubuntu 24.04 x64 with Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installed:

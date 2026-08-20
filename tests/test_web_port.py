@@ -15,9 +15,12 @@ from backend.app import main
 from backend.app.vod import CachedVideoLibrary
 
 
-def png_data_url(size: tuple[int, int] = (1080, 1080)) -> str:
+def png_data_url(size: tuple[int, int] = (1080, 1080), box: tuple[int, int, int, int] | None = None) -> str:
     output = io.BytesIO()
-    Image.new("RGBA", size, (0, 0, 0, 0)).save(output, format="PNG")
+    image = Image.new("RGBA", size, (0, 0, 0, 0))
+    if box is not None:
+        image.paste((255, 255, 255, 255), box)
+    image.save(output, format="PNG")
     return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
 
 
@@ -35,6 +38,17 @@ class WebPortTests(unittest.TestCase):
     def test_rejects_wrong_caption_dimensions(self):
         with self.assertRaisesRegex(ValueError, "1080"):
             main._caption_overlay_from_data_url(png_data_url((512, 512)))
+
+    def test_browser_caption_pixels_are_optically_recentered(self):
+        overlay = main._caption_overlay_from_data_url(png_data_url(box=(100, 200, 300, 300)))
+        self.assertIsNotNone(overlay)
+        try:
+            with Image.open(overlay) as image:
+                bounds = image.getchannel("A").getbbox()
+        finally:
+            overlay.unlink(missing_ok=True)
+
+        self.assertEqual(bounds, (440, 490, 640, 590))
 
     def test_signed_session_cookie_authenticates(self):
         expires = 4_102_444_800

@@ -45,6 +45,17 @@ class ViralTitleTests(unittest.TestCase):
 
 
 class SquareCaptionSizeTests(unittest.TestCase):
+    def test_text_and_emoji_caption_is_optically_centered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "centered.png"
+            _render_square_caption("W larp ❤️", target, 1.0)
+            with Image.open(target) as image:
+                bounds = image.getchannel("A").getbbox()
+
+        self.assertIsNotNone(bounds)
+        self.assertLessEqual(abs((bounds[0] + bounds[2]) / 2 - 540), 0.5)
+        self.assertLessEqual(abs((bounds[1] + bounds[3]) / 2 - 540), 0.5)
+
     def test_caption_scale_changes_rendered_text_size(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

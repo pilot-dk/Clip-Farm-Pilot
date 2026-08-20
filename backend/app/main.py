@@ -24,7 +24,13 @@ from pydantic import BaseModel, Field
 
 from .brand import APP_NAME, APP_SLUG, APP_VERSION, env
 from .social import SocialPublishError, SocialPublisher
-from .video import analyze_viral_candidates, export_clip, generate_viral_title, probe_video
+from .video import (
+    analyze_viral_candidates,
+    center_caption_overlay,
+    export_clip,
+    generate_viral_title,
+    probe_video,
+)
 from .vod import CachedVideoLibrary, VodImportManager
 
 BASE = Path(__file__).resolve().parents[1]
@@ -146,12 +152,13 @@ def _caption_overlay_from_data_url(value: str) -> Path | None:
         with Image.open(io.BytesIO(raw)) as image:
             if image.format != "PNG" or image.size != (1080, 1080):
                 raise ValueError("The square-caption image must be a 1080 × 1080 PNG.")
-            image.verify()
+            image.load()
+            centered = center_caption_overlay(image)
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("The square-caption image could not be read.") from exc
     temporary = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-browser-caption-", suffix=".png", delete=False)
     try:
-        temporary.write(raw)
+        centered.save(temporary, format="PNG")
         return Path(temporary.name)
     finally:
         temporary.close()

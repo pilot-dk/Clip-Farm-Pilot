@@ -23,6 +23,10 @@ class SimpleStudioUiTests(unittest.TestCase):
         duplicates = sorted({value for value in identifiers if identifiers.count(value) > 1})
         self.assertEqual(duplicates, [])
 
+    def test_square_caption_export_uses_pixel_based_optical_centering(self):
+        self.assertIn("function opticallyCenterCanvas(canvas)", self.html)
+        self.assertIn("return opticallyCenterCanvas(canvas).toDataURL", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
