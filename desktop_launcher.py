@@ -214,6 +214,7 @@ def _test_vod_pipeline(url: str, vod_url: str) -> list[str]:
                 "layout": "standard",
                 "caption_text": "W shave ❤️",
                 "caption_font_scale": 1.50,
+                "caption_position": "bottom",
             })
             if env("TEST_DELETE_LIBRARY") == "1":
                 deleted = _json_request(url, f"/api/library/videos/{job['video_id']}", method="DELETE")
@@ -326,6 +327,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         aspect="1:1",
         caption_text="W shave ❤️",
         caption_font_scale=1.50,
+        caption_position="bottom",
         sound_effect="whoosh",
         visual_effect="lens-flare",
         effect_time=0.6,

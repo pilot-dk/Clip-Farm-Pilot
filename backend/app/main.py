@@ -81,6 +81,7 @@ class ExportRequest(BaseModel):
     face_inset_y_fraction: float = Field(0.02, ge=0.0, le=0.30)
     caption_text: str = Field("", max_length=160)
     caption_font_scale: float = Field(1.0, ge=0.50, le=1.75)
+    caption_position: Literal["top", "center", "bottom"] = "center"
     caption_overlay_data_url: str = Field("", max_length=3_000_000)
     sound_effect: Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"] = "none"
     visual_effect: Literal["none", "lens-flare", "punch-zoom", "white-flash"] = "none"
@@ -136,7 +137,10 @@ async def protect_api(request: Request, call_next):
     return response
 
 
-def _caption_overlay_from_data_url(value: str) -> Path | None:
+def _caption_overlay_from_data_url(
+    value: str,
+    caption_position: Literal["top", "center", "bottom"] = "center",
+) -> Path | None:
     if not value:
         return None
     prefix = "data:image/png;base64,"
@@ -153,7 +157,7 @@ def _caption_overlay_from_data_url(value: str) -> Path | None:
             if image.format != "PNG" or image.size != (1080, 1080):
                 raise ValueError("The square-caption image must be a 1080 × 1080 PNG.")
             image.load()
-            centered = center_caption_overlay(image)
+            centered = center_caption_overlay(image, caption_position)
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("The square-caption image could not be read.") from exc
     temporary = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-browser-caption-", suffix=".png", delete=False)
@@ -301,7 +305,7 @@ def export(video_id: str, req: ExportRequest):
     caption_overlay: Path | None = None
     try:
         if req.aspect == "1:1" and req.caption_text.strip() and req.caption_overlay_data_url:
-            caption_overlay = _caption_overlay_from_data_url(req.caption_overlay_data_url)
+            caption_overlay = _caption_overlay_from_data_url(req.caption_overlay_data_url, req.caption_position)
         export_clip(
             source=source,
             output=target,
@@ -316,6 +320,7 @@ def export(video_id: str, req: ExportRequest):
             face_inset_y_fraction=req.face_inset_y_fraction,
             caption_text=req.caption_text,
             caption_font_scale=req.caption_font_scale,
+            caption_position=req.caption_position,
             caption_overlay_path=caption_overlay,
             sound_effect=req.sound_effect,
             visual_effect=req.visual_effect,

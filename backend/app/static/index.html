@@ -375,6 +375,8 @@
       text-shadow: 0 1px 1px rgba(0,0,0,.9);
       pointer-events: none;
     }
+    .square-caption-preview[data-caption-position="top"] { top: 9%; transform: none; }
+    .square-caption-preview[data-caption-position="bottom"] { top: auto; bottom: 9%; transform: none; }
     .stage[data-aspect="1:1"]:not(.gaming) .square-caption-preview.has-text { display: block; }
 
     .ratio-label {
@@ -701,6 +703,27 @@
     }
     .caption-input:focus { border-color: #66723f; box-shadow: 0 0 0 3px rgba(185,243,74,.08); }
     .caption-size-control { margin-top: 13px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    .caption-position-control { min-width: 0; margin: 13px 0 0; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    .caption-position-control legend { padding: 0; color: var(--muted); font-size: 11px; }
+    .caption-position-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+    .caption-position-option { position: relative; min-width: 0; cursor: pointer; }
+    .caption-position-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .caption-position-option span {
+      display: flex;
+      min-height: 34px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      color: var(--muted);
+      background: #080a0e;
+      font-size: 10px;
+      font-weight: 750;
+      transition: border-color .16s ease, color .16s ease, background .16s ease, transform .16s ease;
+    }
+    .caption-position-option:hover span { border-color: #4d5634; color: var(--text); transform: translateY(-1px); }
+    .caption-position-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .caption-position-option input:checked + span { border-color: #68763d; color: #eaffbd; background: rgba(185,243,74,.09); }
     .field-hint { display: block; margin-top: 6px; color: var(--muted-2); font-size: 9px; line-height: 1.45; }
 
     .effects-card {
@@ -1487,13 +1510,21 @@
                 </label>
               </div>
               <div class="square-caption-controls" id="squareCaptionControls">
-                <div class="caption-head"><label for="captionText">Center text (optional)</label><span id="captionCount">0 / 160</span></div>
+                <div class="caption-head"><label for="captionText">Caption text (optional)</label><span id="captionCount">0 / 160</span></div>
                 <textarea class="caption-input" id="captionText" maxlength="160" rows="2" placeholder="W shave ❤️"></textarea>
+                <fieldset class="caption-position-control">
+                  <legend>Caption placement</legend>
+                  <div class="caption-position-grid">
+                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="top" /><span>Top</span></label>
+                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="center" checked /><span>Centre</span></label>
+                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="bottom" /><span>Bottom</span></label>
+                  </div>
+                </fieldset>
                 <div class="caption-size-control">
                   <div class="range-head"><span>Caption size</span><output id="captionSizeValue">100%</output></div>
                   <input id="captionSize" type="range" min="50" max="175" value="100" step="5" aria-label="Square caption text size" />
                 </div>
-                <small class="field-hint">Shown in the middle with bold white text and a black outline, like your reference.</small>
+                <small class="field-hint">Bold white text with a black outline, placed at the top, centre, or bottom of the square clip.</small>
               </div>
             </div>
 
@@ -2019,8 +2050,10 @@
     function updateSquareCaption() {
       const text = $("captionText").value;
       const sizePercent = Number($("captionSize").value) || 100;
+      const captionPosition = document.querySelector('input[name="captionPosition"]:checked')?.value || "center";
       const preview = $("squareCaptionPreview");
       preview.textContent = text;
+      preview.dataset.captionPosition = captionPosition;
       preview.classList.toggle("has-text", Boolean(text.trim()));
       $("captionCount").textContent = `${text.length} / 160`;
       $("captionSizeValue").value = `${sizePercent}%`;
@@ -2083,7 +2116,7 @@
       return right < left ? null : { left, top, right: right + 1, bottom: bottom + 1 };
     }
 
-    function opticallyCenterCanvas(canvas) {
+    function opticallyCenterCanvas(canvas, verticalPosition = "center") {
       const context = canvas.getContext("2d", { willReadFrequently: true });
       const bounds = visibleCanvasBounds(context, canvas.width, canvas.height);
       if (!bounds) return canvas;
@@ -2099,10 +2132,14 @@
         0, 0, width, height,
       );
       context.clearRect(0, 0, canvas.width, canvas.height);
+      const edgeMargin = Math.round(canvas.height * .089);
+      let y = Math.round((canvas.height - height) / 2);
+      if (verticalPosition === "top") y = Math.min(edgeMargin, Math.max(0, canvas.height - height));
+      if (verticalPosition === "bottom") y = Math.max(0, canvas.height - height - edgeMargin);
       context.drawImage(
         visible,
         Math.round((canvas.width - width) / 2),
-        Math.round((canvas.height - height) / 2),
+        y,
       );
       return canvas;
     }
@@ -2137,7 +2174,8 @@
         context.strokeText(line, 540, y, 960);
         context.fillText(line, 540, y, 960);
       });
-      return opticallyCenterCanvas(canvas).toDataURL("image/png");
+      const captionPosition = document.querySelector('input[name="captionPosition"]:checked')?.value || "center";
+      return opticallyCenterCanvas(canvas, captionPosition).toDataURL("image/png");
     }
 
     function updateEffectControls() {
@@ -2628,6 +2666,7 @@
             face_inset_y_fraction: Number($("faceInsetY").value) / 100,
             caption_text: state.ratio === "1:1" ? $("captionText").value : "",
             caption_font_scale: Number($("captionSize").value) / 100,
+            caption_position: document.querySelector('input[name="captionPosition"]:checked')?.value || "center",
             caption_overlay_data_url: renderSquareCaptionOverlay(),
             sound_effect: $("soundEffect").value,
             visual_effect: $("visualEffect").value,
@@ -2698,6 +2737,7 @@
       $("vodUrl").value = "";
       $("captionText").value = "";
       $("captionSize").value = "100";
+      document.querySelector('input[name="captionPosition"][value="center"]').checked = true;
       $("soundEffect").value = "none";
       $("visualEffect").value = "none";
       $("effectTime").value = "1.0";
@@ -2840,6 +2880,7 @@
 
     ["faceCorner", "faceWidth", "faceHeight", "faceInsetX", "faceInsetY"].forEach((id) => $(id).addEventListener("input", updateFacePreview));
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
+    document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
     ["soundEffect", "visualEffect", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();

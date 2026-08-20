@@ -24,8 +24,14 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertEqual(duplicates, [])
 
     def test_square_caption_export_uses_pixel_based_optical_centering(self):
-        self.assertIn("function opticallyCenterCanvas(canvas)", self.html)
-        self.assertIn("return opticallyCenterCanvas(canvas).toDataURL", self.html)
+        self.assertIn("function opticallyCenterCanvas(canvas, verticalPosition", self.html)
+        self.assertIn("return opticallyCenterCanvas(canvas, captionPosition).toDataURL", self.html)
+
+    def test_square_caption_has_top_center_and_bottom_placement_controls(self):
+        for value, label in (("top", "Top"), ("center", "Centre"), ("bottom", "Bottom")):
+            self.assertIn(f'name="captionPosition" value="{value}"', self.html)
+            self.assertIn(f"<span>{label}</span>", self.html)
+        self.assertIn("caption_position:", self.html)
 
 
 if __name__ == "__main__":

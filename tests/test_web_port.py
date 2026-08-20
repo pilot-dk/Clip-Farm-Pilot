@@ -50,6 +50,22 @@ class WebPortTests(unittest.TestCase):
 
         self.assertEqual(bounds, (440, 490, 640, 590))
 
+    def test_browser_caption_overlay_respects_top_and_bottom_placement(self):
+        paths = []
+        try:
+            top_path = main._caption_overlay_from_data_url(png_data_url(box=(100, 200, 300, 300)), "top")
+            bottom_path = main._caption_overlay_from_data_url(png_data_url(box=(100, 200, 300, 300)), "bottom")
+            paths.extend((top_path, bottom_path))
+            with Image.open(top_path) as top_image, Image.open(bottom_path) as bottom_image:
+                top_bounds = top_image.getchannel("A").getbbox()
+                bottom_bounds = bottom_image.getchannel("A").getbbox()
+        finally:
+            for path in paths:
+                path.unlink(missing_ok=True)
+
+        self.assertEqual(top_bounds, (440, 96, 640, 196))
+        self.assertEqual(bottom_bounds, (440, 884, 640, 984))
+
     def test_signed_session_cookie_authenticates(self):
         expires = 4_102_444_800
         with patch.object(main, "WEB_PASSWORD", "private"), patch.object(main, "SESSION_SECRET", "test-secret"):

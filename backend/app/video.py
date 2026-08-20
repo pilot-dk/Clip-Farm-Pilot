@@ -22,6 +22,7 @@ from .brand import APP_SLUG, env
 
 Aspect = Literal["16:9", "9:16", "1:1"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
+CaptionPosition = Literal["top", "center", "bottom"]
 SoundEffect = Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"]
 VisualEffect = Literal["none", "lens-flare", "punch-zoom", "white-flash"]
 
@@ -682,14 +683,19 @@ def _emoji_font(size: int = 64) -> ImageFont.FreeTypeFont | None:
     return None
 
 
-def center_caption_overlay(image: Image.Image) -> Image.Image:
-    """Optically center the visible caption pixels on a transparent canvas.
+def center_caption_overlay(
+    image: Image.Image,
+    vertical_position: CaptionPosition = "center",
+) -> Image.Image:
+    """Optically position visible caption pixels on a transparent canvas.
 
     Font advance widths are not reliable for mixed text and color emoji. Their
     side bearings vary between Apple Color Emoji, Segoe UI Emoji, and Linux
-    fallbacks, which can make a mathematically centered text run look shifted.
-    Centering the final alpha bounds keeps every renderer and platform aligned.
+    fallbacks, which can make a mathematically positioned text run look shifted.
+    Positioning the final alpha bounds keeps every renderer and platform aligned.
     """
+    if vertical_position not in {"top", "center", "bottom"}:
+        raise ValueError("Unsupported square-caption position.")
     source = image.convert("RGBA")
     bounds = source.getchannel("A").getbbox()
     if bounds is None:
@@ -698,14 +704,20 @@ def center_caption_overlay(image: Image.Image) -> Image.Image:
     visible = source.crop(bounds)
     centered = Image.new("RGBA", source.size, (0, 0, 0, 0))
     x = round((source.width - visible.width) / 2)
-    y = round((source.height - visible.height) / 2)
+    edge_margin = round(source.height * 0.089)
+    if vertical_position == "top":
+        y = min(edge_margin, max(0, source.height - visible.height))
+    elif vertical_position == "bottom":
+        y = max(0, source.height - visible.height - edge_margin)
+    else:
+        y = round((source.height - visible.height) / 2)
     centered.alpha_composite(visible, (x, y))
     return centered
 
 
-def _center_caption_file(destination: Path) -> None:
+def _center_caption_file(destination: Path, vertical_position: CaptionPosition) -> None:
     with Image.open(destination) as rendered:
-        centered = center_caption_overlay(rendered)
+        centered = center_caption_overlay(rendered, vertical_position)
     centered.save(destination, format="PNG")
 
 
@@ -882,9 +894,14 @@ def _wrap_caption(
     return lines[:3]
 
 
-def _render_square_caption(text: str, destination: Path, font_scale: float = 1.0) -> None:
+def _render_square_caption(
+    text: str,
+    destination: Path,
+    font_scale: float = 1.0,
+    caption_position: CaptionPosition = "center",
+) -> None:
     if _render_square_caption_macos(text, destination, font_scale):
-        _center_caption_file(destination)
+        _center_caption_file(destination, caption_position)
         return
 
     canvas = Image.new("RGBA", (1080, 1080), (0, 0, 0, 0))
@@ -927,7 +944,7 @@ def _render_square_caption(text: str, destination: Path, font_scale: float = 1.0
                 )
             x += token_width
         y += line_height
-    center_caption_overlay(canvas).save(destination)
+    center_caption_overlay(canvas, caption_position).save(destination)
 
 
 def _render_sound_effect(effect: SoundEffect, destination: Path) -> None:
@@ -1156,6 +1173,7 @@ def export_clip(
     face_inset_y_fraction: float = 0.02,
     caption_text: str = "",
     caption_font_scale: float = 1.0,
+    caption_position: CaptionPosition = "center",
     caption_overlay_path: Path | None = None,
     sound_effect: SoundEffect = "none",
     visual_effect: VisualEffect = "none",
@@ -1232,7 +1250,7 @@ def export_clip(
                 overlay_path = caption_overlay_path
             try:
                 if owns_overlay:
-                    _render_square_caption(caption_text, overlay_path, caption_font_scale)
+                    _render_square_caption(caption_text, overlay_path, caption_font_scale, caption_position)
                 filter_complex = (
                     f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
                     f"crop={width}:{height}[base];"

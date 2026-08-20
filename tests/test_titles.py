@@ -56,6 +56,26 @@ class SquareCaptionSizeTests(unittest.TestCase):
         self.assertLessEqual(abs((bounds[0] + bounds[2]) / 2 - 540), 0.5)
         self.assertLessEqual(abs((bounds[1] + bounds[3]) / 2 - 540), 0.5)
 
+    def test_caption_can_be_positioned_at_top_center_and_bottom(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bounds_by_position = {}
+            for position in ("top", "center", "bottom"):
+                target = root / f"{position}.png"
+                _render_square_caption("W larp ❤️", target, 1.0, position)
+                with Image.open(target) as image:
+                    bounds_by_position[position] = image.getchannel("A").getbbox()
+
+        top = bounds_by_position["top"]
+        center = bounds_by_position["center"]
+        bottom = bounds_by_position["bottom"]
+        self.assertEqual(top[1], 96)
+        self.assertLess(top[1], center[1])
+        self.assertLess(center[1], bottom[1])
+        self.assertEqual(bottom[3], 984)
+        for bounds in bounds_by_position.values():
+            self.assertLessEqual(abs((bounds[0] + bounds[2]) / 2 - 540), 0.5)
+
     def test_caption_scale_changes_rendered_text_size(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
