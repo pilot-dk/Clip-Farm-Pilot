@@ -33,6 +33,23 @@ class SimpleStudioUiTests(unittest.TestCase):
             self.assertIn(f"<span>{label}</span>", self.html)
         self.assertIn("caption_position:", self.html)
 
+    def test_classic_video_filters_are_available_and_exported(self):
+        labels = {
+            "none": "None",
+            "black-white": "Black &amp; white",
+            "cinematic": "Cinematic",
+            "vivid": "Vivid",
+            "warm": "Warm",
+            "cool": "Cool",
+            "faded": "Faded / Vintage",
+            "high-contrast": "High contrast",
+        }
+        self.assertIn('<select id="videoFilter">', self.html)
+        for value, label in labels.items():
+            self.assertIn(f'<option value="{value}">{label}</option>', self.html)
+        self.assertIn('video_filter: $("videoFilter").value', self.html)
+        self.assertIn("function updateVideoFilterPreview()", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

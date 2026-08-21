@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 
 ROOT = Path(__file__).resolve().parent
@@ -11,54 +11,67 @@ MOBILE_ASSETS = ROOT.parent / "mobile" / "assets"
 MOBILE_ASSETS.mkdir(parents=True, exist_ok=True)
 
 
+def _mix(start: tuple[int, int, int], end: tuple[int, int, int], amount: float) -> tuple[int, int, int, int]:
+    return tuple(round(a + (b - a) * amount) for a, b in zip(start, end)) + (255,)
+
+
 def render(size: int) -> Image.Image:
+    """Render one minimal, high-contrast pilot/play mark at any icon size."""
     scale = size / 1024
-    image = Image.new("RGBA", (size, size), (6, 16, 26, 255))
+    image = Image.new("RGBA", (size, size))
     draw = ImageDraw.Draw(image)
+    for y in range(size):
+        draw.line((0, y, size, y), fill=_mix((10, 35, 52), (3, 12, 21), y / max(1, size - 1)))
 
-    inset = round(72 * scale)
-    radius = round(220 * scale)
-    draw.rounded_rectangle(
-        (inset, inset, size - inset, size - inset),
-        radius=radius,
-        fill=(12, 34, 49, 255),
-        outline=(43, 109, 137, 255),
-        width=max(1, round(10 * scale)),
+    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow)
+    glow_draw.ellipse(
+        (-round(210 * scale), -round(260 * scale), round(870 * scale), round(720 * scale)),
+        fill=(70, 214, 255, 48),
     )
-    for radar_radius, alpha in ((312, 30), (224, 22)):
-        radius_px = round(radar_radius * scale)
-        center = size // 2
-        draw.ellipse(
-            (center - radius_px, center - radius_px, center + radius_px, center + radius_px),
-            outline=(91, 214, 255, alpha),
-            width=max(1, round(8 * scale)),
-        )
+    glow = glow.filter(ImageFilter.GaussianBlur(max(1, round(155 * scale))))
+    image.alpha_composite(glow)
 
-    draw.polygon(
-        [
-            (round(512 * scale), round(164 * scale)),
-            (round(610 * scale), round(420 * scale)),
-            (round(842 * scale), round(510 * scale)),
-            (round(842 * scale), round(570 * scale)),
-            (round(612 * scale), round(532 * scale)),
-            (round(654 * scale), round(806 * scale)),
-            (round(512 * scale), round(728 * scale)),
-            (round(370 * scale), round(806 * scale)),
-            (round(412 * scale), round(532 * scale)),
-            (round(182 * scale), round(570 * scale)),
-            (round(182 * scale), round(510 * scale)),
-            (round(414 * scale), round(420 * scale)),
-        ],
-        fill=(91, 214, 255, 255),
-    )
-    draw.polygon(
-        [
-            (round(472 * scale), round(423 * scale)),
-            (round(638 * scale), round(512 * scale)),
-            (round(472 * scale), round(601 * scale)),
-        ],
-        fill=(255, 189, 89, 255),
-    )
+    plane_points = [
+        (round(512 * scale), round(166 * scale)),
+        (round(600 * scale), round(414 * scale)),
+        (round(824 * scale), round(500 * scale)),
+        (round(824 * scale), round(562 * scale)),
+        (round(610 * scale), round(532 * scale)),
+        (round(650 * scale), round(810 * scale)),
+        (round(512 * scale), round(730 * scale)),
+        (round(374 * scale), round(810 * scale)),
+        (round(414 * scale), round(532 * scale)),
+        (round(200 * scale), round(562 * scale)),
+        (round(200 * scale), round(500 * scale)),
+        (round(424 * scale), round(414 * scale)),
+    ]
+    play_points = [
+        (round(470 * scale), round(426 * scale)),
+        (round(646 * scale), round(520 * scale)),
+        (round(470 * scale), round(614 * scale)),
+    ]
+
+    shadow_mask = Image.new("L", (size, size), 0)
+    shadow_draw = ImageDraw.Draw(shadow_mask)
+    shadow_offset = round(20 * scale)
+    shadow_draw.polygon([(x, y + shadow_offset) for x, y in plane_points], fill=190)
+    shadow_draw.polygon([(x, y + shadow_offset) for x, y in play_points], fill=0)
+    shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(max(1, round(28 * scale))))
+    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    shadow.putalpha(shadow_mask)
+    image.alpha_composite(shadow)
+
+    mark_mask = Image.new("L", (size, size), 0)
+    mark_draw = ImageDraw.Draw(mark_mask)
+    mark_draw.polygon(plane_points, fill=255)
+    mark_draw.polygon(play_points, fill=0)
+    mark = Image.new("RGBA", (size, size))
+    mark_draw = ImageDraw.Draw(mark)
+    for y in range(size):
+        mark_draw.line((0, y, size, y), fill=_mix((133, 233, 255), (49, 190, 235), y / max(1, size - 1)))
+    mark.putalpha(mark_mask)
+    image.alpha_composite(mark)
     return image
 
 

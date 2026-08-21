@@ -8,10 +8,59 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from backend.app.video import _render_sound_effect, _render_visual_overlay
+from backend.app.video import (
+    VIDEO_FILTER_CHAINS,
+    _run,
+    _video_filter_chain,
+    ffmpeg_executable,
+    _render_sound_effect,
+    _render_visual_overlay,
+)
 
 
 class EffectAssetTests(unittest.TestCase):
+    def test_classic_video_filter_chains_are_defined(self):
+        self.assertEqual(_video_filter_chain("none"), "")
+        for name in (
+            "black-white",
+            "cinematic",
+            "vivid",
+            "warm",
+            "cool",
+            "faded",
+            "high-contrast",
+        ):
+            self.assertTrue(_video_filter_chain(name))
+        with self.assertRaisesRegex(ValueError, "Unknown video filter"):
+            _video_filter_chain("not-a-filter")
+
+    def test_every_classic_video_filter_renders_a_changed_frame(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.bmp"
+            x = np.linspace(0, 255, 96, dtype=np.uint8)
+            y = np.linspace(0, 255, 64, dtype=np.uint8)[:, None]
+            pixels = np.zeros((64, 96, 3), dtype=np.uint8)
+            pixels[:, :, 0] = x
+            pixels[:, :, 1] = y
+            pixels[:, :, 2] = 220 - (x // 2)
+            Image.fromarray(pixels, "RGB").save(source)
+
+            for name in VIDEO_FILTER_CHAINS:
+                if name == "none":
+                    continue
+                target = root / f"{name}.bmp"
+                _run([
+                    ffmpeg_executable(), "-y", "-v", "error", "-i", str(source),
+                    "-vf", _video_filter_chain(name), "-frames:v", "1", str(target),
+                ])
+                rendered = np.asarray(Image.open(target).convert("RGB"), dtype=np.int16)
+                difference = np.abs(rendered - pixels.astype(np.int16))
+                self.assertGreater(float(difference.mean()), 1.0, name)
+                if name == "black-white":
+                    self.assertLess(float(np.abs(rendered[:, :, 0] - rendered[:, :, 1]).mean()), 1.0)
+                    self.assertLess(float(np.abs(rendered[:, :, 1] - rendered[:, :, 2]).mean()), 1.0)
+
     def test_original_effect_sounds_are_valid_and_audible(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

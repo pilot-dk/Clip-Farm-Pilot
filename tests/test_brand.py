@@ -11,7 +11,7 @@ class BrandTests(unittest.TestCase):
     def test_public_brand_constants(self):
         self.assertEqual(APP_NAME, "Clip Farm Pilot")
         self.assertEqual(APP_SLUG, "clipfarmpilot")
-        self.assertEqual(APP_VERSION, "1.4.2")
+        self.assertEqual(APP_VERSION, "1.5.0")
 
     def test_current_environment_setting_takes_priority(self):
         with patch.dict(

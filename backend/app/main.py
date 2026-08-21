@@ -83,6 +83,16 @@ class ExportRequest(BaseModel):
     caption_font_scale: float = Field(1.0, ge=0.50, le=1.75)
     caption_position: Literal["top", "center", "bottom"] = "center"
     caption_overlay_data_url: str = Field("", max_length=3_000_000)
+    video_filter: Literal[
+        "none",
+        "black-white",
+        "cinematic",
+        "vivid",
+        "warm",
+        "cool",
+        "faded",
+        "high-contrast",
+    ] = "none"
     sound_effect: Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"] = "none"
     visual_effect: Literal["none", "lens-flare", "punch-zoom", "white-flash"] = "none"
     effect_time: float = Field(1.0, ge=0.0, le=86_400.0)
@@ -322,6 +332,7 @@ def export(video_id: str, req: ExportRequest):
             caption_font_scale=req.caption_font_scale,
             caption_position=req.caption_position,
             caption_overlay_path=caption_overlay,
+            video_filter=req.video_filter,
             sound_effect=req.sound_effect,
             visual_effect=req.visual_effect,
             effect_time=req.effect_time,

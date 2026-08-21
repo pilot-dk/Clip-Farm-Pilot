@@ -1,21 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="160" y1="80" x2="880" y2="940" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#12334A"/>
-      <stop offset="1" stop-color="#06101A"/>
+    <linearGradient id="background" x1="160" y1="0" x2="790" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A2334"/>
+      <stop offset="1" stop-color="#030C15"/>
     </linearGradient>
-    <linearGradient id="aircraft" x1="512" y1="164" x2="512" y2="806" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#86E5FF"/>
-      <stop offset="1" stop-color="#38BFEF"/>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(245 140) rotate(43) scale(720 650)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#46D6FF" stop-opacity=".20"/>
+      <stop offset="1" stop-color="#46D6FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="512" y1="166" x2="512" y2="810" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#85E9FF"/>
+      <stop offset="1" stop-color="#31BEEB"/>
     </linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#021019" flood-opacity=".55"/>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="20" stdDeviation="28" flood-color="#000" flood-opacity=".62"/>
     </filter>
+    <mask id="play-cutout">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <path d="m470 426 176 94-176 94V426Z" fill="#000"/>
+    </mask>
   </defs>
-  <rect width="1024" height="1024" fill="#06101A"/>
-  <rect x="72" y="72" width="880" height="880" rx="220" fill="url(#bg)" stroke="#2B6D89" stroke-width="10"/>
-  <circle cx="512" cy="512" r="312" fill="none" stroke="#5BD6FF" stroke-opacity=".10" stroke-width="8"/>
-  <circle cx="512" cy="512" r="224" fill="none" stroke="#5BD6FF" stroke-opacity=".08" stroke-width="8"/>
-  <path d="M512 164 610 420 842 510v60l-230-38 42 274-142-78-142 78 42-274-230 38v-60l232-90 98-256Z" fill="url(#aircraft)" filter="url(#shadow)"/>
-  <path d="m472 423 166 89-166 89V423Z" fill="#FFBD59"/>
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <path d="m512 166 88 248 224 86v62l-214-30 40 278-138-80-138 80 40-278-214 30v-62l224-86 88-248Z" fill="url(#mark)" mask="url(#play-cutout)" filter="url(#shadow)"/>
 </svg>

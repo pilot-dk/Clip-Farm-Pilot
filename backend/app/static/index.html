@@ -733,6 +733,7 @@
       background: linear-gradient(145deg, rgba(255,183,77,.075), rgba(13,15,20,.96));
     }
     .effects-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .video-filter-field { margin-bottom: 13px; }
     .effects-card .field + .field, .effects-strengths { margin-top: 13px; }
     .effect-time-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
     .effect-time-row .button { height: 40px; white-space: nowrap; }
@@ -1575,6 +1576,20 @@
               <div class="disclosure-content">
               <div class="effects-card">
                 <span class="effects-badge">Works with every template</span>
+                <div class="field video-filter-field">
+                  <label for="videoFilter">Video filter</label>
+                  <select id="videoFilter">
+                    <option value="none">None</option>
+                    <option value="black-white">Black &amp; white</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="vivid">Vivid</option>
+                    <option value="warm">Warm</option>
+                    <option value="cool">Cool</option>
+                    <option value="faded">Faded / Vintage</option>
+                    <option value="high-contrast">High contrast</option>
+                  </select>
+                  <small class="field-hint">Applies a polished look to the entire clip and updates the preview instantly.</small>
+                </div>
                 <div class="effects-grid">
                   <div class="field">
                     <label for="soundEffect">Sound effect</label>
@@ -1613,7 +1628,7 @@
                     <input id="visualStrength" type="range" min="25" max="150" value="100" step="5" aria-label="Visual effect strength" />
                   </div>
                 </div>
-                <small class="field-hint">Place the effect on one payoff moment. Impact Boom is original; Vine Boom uses the supplied sample.</small>
+                <small class="field-hint">Filters cover the full clip. Sound and visual effects land on one payoff moment. Impact Boom is original; Vine Boom uses the supplied sample.</small>
               </div>
               </div>
             </details>
@@ -1761,6 +1776,17 @@
       socialAccounts: [],
       deletionMode: "trash",
       appStarted: false,
+    };
+
+    const videoFilterPreviewStyles = {
+      none: "none",
+      "black-white": "grayscale(1) contrast(1.12) brightness(1.01)",
+      cinematic: "contrast(1.16) saturate(.88) brightness(.965) sepia(.07)",
+      vivid: "contrast(1.10) saturate(1.35) brightness(1.015)",
+      warm: "sepia(.18) saturate(1.12) hue-rotate(-8deg)",
+      cool: "saturate(1.04) hue-rotate(10deg)",
+      faded: "contrast(.84) saturate(.78) brightness(1.055)",
+      "high-contrast": "contrast(1.32) saturate(1.08) brightness(.985)",
     };
 
     const icons = {
@@ -1986,6 +2012,11 @@
       return [$("previewVideo"), $("facePreview"), $("gamePreview")];
     }
 
+    function updateVideoFilterPreview() {
+      const previewFilter = videoFilterPreviewStyles[$("videoFilter").value] || "none";
+      allVideos().forEach((video) => { video.style.filter = previewFilter; });
+    }
+
     function syncVideos(source) {
       allVideos().forEach((video) => {
         if (video !== source && Math.abs(video.currentTime - source.currentTime) > .12) video.currentTime = source.currentTime;
@@ -2192,6 +2223,7 @@
       $("visualStrengthValue").value = `${visualStrength}%`;
       $("soundVolume").style.setProperty("--progress", `${soundVolume / 2}%`);
       $("visualStrength").style.setProperty("--progress", `${(visualStrength - 25) / 125 * 100}%`);
+      updateVideoFilterPreview();
     }
 
     function updateRatio(ratio) {
@@ -2668,6 +2700,7 @@
             caption_font_scale: Number($("captionSize").value) / 100,
             caption_position: document.querySelector('input[name="captionPosition"]:checked')?.value || "center",
             caption_overlay_data_url: renderSquareCaptionOverlay(),
+            video_filter: $("videoFilter").value,
             sound_effect: $("soundEffect").value,
             visual_effect: $("visualEffect").value,
             effect_time: Number($("effectTime").value) || 0,
@@ -2738,6 +2771,7 @@
       $("captionText").value = "";
       $("captionSize").value = "100";
       document.querySelector('input[name="captionPosition"][value="center"]').checked = true;
+      $("videoFilter").value = "none";
       $("soundEffect").value = "none";
       $("visualEffect").value = "none";
       $("effectTime").value = "1.0";
@@ -2881,7 +2915,7 @@
     ["faceCorner", "faceWidth", "faceHeight", "faceInsetX", "faceInsetY"].forEach((id) => $(id).addEventListener("input", updateFacePreview));
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
     document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
-    ["soundEffect", "visualEffect", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
+    ["videoFilter", "soundEffect", "visualEffect", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();
       const relativeTime = Math.min(range.end - range.start, Math.max(0, activeVideo().currentTime - range.start));

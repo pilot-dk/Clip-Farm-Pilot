@@ -25,6 +25,16 @@ FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 CaptionPosition = Literal["top", "center", "bottom"]
 SoundEffect = Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"]
 VisualEffect = Literal["none", "lens-flare", "punch-zoom", "white-flash"]
+VideoFilter = Literal[
+    "none",
+    "black-white",
+    "cinematic",
+    "vivid",
+    "warm",
+    "cool",
+    "faded",
+    "high-contrast",
+]
 
 EFFECT_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
@@ -32,6 +42,20 @@ ASPECT_SIZES: dict[Aspect, tuple[int, int]] = {
     "16:9": (1920, 1080),
     "9:16": (1080, 1920),
     "1:1": (1080, 1080),
+}
+
+VIDEO_FILTER_CHAINS: dict[VideoFilter, str] = {
+    "none": "",
+    "black-white": "hue=s=0,eq=contrast=1.12:brightness=0.01",
+    "cinematic": (
+        "eq=contrast=1.16:saturation=0.88:brightness=-0.025,"
+        "colorbalance=rs=-0.035:gs=0.01:bs=0.075:rm=0.045:gm=0.005:bm=-0.04:pl=1"
+    ),
+    "vivid": "eq=contrast=1.10:saturation=1.35:brightness=0.015",
+    "warm": "colorbalance=rs=0.08:rm=0.055:rh=0.035:bs=-0.07:bm=-0.04:pl=1,eq=saturation=1.08",
+    "cool": "colorbalance=rs=-0.055:rm=-0.035:bs=0.08:bm=0.055:bh=0.03:pl=1,eq=saturation=1.04",
+    "faded": "eq=contrast=0.84:saturation=0.78:brightness=0.055,colorbalance=rs=0.025:bs=0.045:pl=1",
+    "high-contrast": "eq=contrast=1.32:saturation=1.08:brightness=-0.015",
 }
 
 
@@ -1062,6 +1086,13 @@ def _has_audio(path: Path) -> bool:
     return result.returncode == 0
 
 
+def _video_filter_chain(video_filter: VideoFilter) -> str:
+    try:
+        return VIDEO_FILTER_CHAINS[video_filter]
+    except KeyError as exc:
+        raise ValueError("Unknown video filter.") from exc
+
+
 def _apply_effects(
     source: Path,
     output: Path,
@@ -1175,6 +1206,7 @@ def export_clip(
     caption_font_scale: float = 1.0,
     caption_position: CaptionPosition = "center",
     caption_overlay_path: Path | None = None,
+    video_filter: VideoFilter = "none",
     sound_effect: SoundEffect = "none",
     visual_effect: VisualEffect = "none",
     effect_time: float = 1.0,
@@ -1185,6 +1217,7 @@ def export_clip(
     start = max(0.0, min(start, info.duration))
     end = max(start + 0.1, min(end, info.duration))
     duration = end - start
+    filter_chain = _video_filter_chain(video_filter)
     if sound_effect not in {"none", "impact-boom", "vine-boom", "whoosh", "record-scratch"}:
         raise ValueError("Unknown sound effect.")
     if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
@@ -1221,8 +1254,9 @@ def export_clip(
             # 36% of the vertical frame is face-cam, 64% gameplay.
             face_h = 690
             game_h = 1230
+            source_filters = f"{filter_chain}," if filter_chain else ""
             filter_complex = (
-                f"[0:v]split=2[face][game];"
+                f"[0:v]{source_filters}split=2[face][game];"
                 f"[face]crop={fw}:{fh}:{fx}:{fy},"
                 f"scale=1080:{face_h}:force_original_aspect_ratio=increase,crop=1080:{face_h}[faceout];"
                 f"[game]scale=1080:{game_h}:force_original_aspect_ratio=increase,crop=1080:{game_h}[gameout];"
@@ -1251,9 +1285,14 @@ def export_clip(
             try:
                 if owns_overlay:
                     _render_square_caption(caption_text, overlay_path, caption_font_scale, caption_position)
+                base_filters = (
+                    f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                    f"crop={width}:{height}"
+                )
+                if filter_chain:
+                    base_filters += f",{filter_chain}"
                 filter_complex = (
-                    f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-                    f"crop={width}:{height}[base];"
+                    f"[0:v]{base_filters}[base];"
                     f"[base][1:v]overlay=0:0:eof_action=repeat[outv]"
                 )
                 cmd = common[:-2] + ["-i", str(overlay_path)] + common[-2:] + [
@@ -1271,6 +1310,8 @@ def export_clip(
         else:
             width, height = ASPECT_SIZES[aspect]
             vf = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+            if filter_chain:
+                vf += f",{filter_chain}"
             cmd = common + [
                 "-vf", vf,
                 "-map", "0:v:0", "-map", "0:a?",
