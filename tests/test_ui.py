@@ -50,6 +50,13 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn('video_filter: $("videoFilter").value', self.html)
         self.assertIn("function updateVideoFilterPreview()", self.html)
 
+    def test_smart_sound_placement_is_enabled_with_manual_override(self):
+        self.assertIn('<input id="autoSoundEffectToggle" type="checkbox" checked disabled', self.html)
+        self.assertIn("likely punchline endings, reactions, and cuts", self.html)
+        self.assertIn('auto_sound_effect: $("autoSoundEffectToggle").checked', self.html)
+        self.assertIn("data.sound_effect_times", self.html)
+        self.assertIn("smartPlacementResult", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

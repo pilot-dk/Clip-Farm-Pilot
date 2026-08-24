@@ -10,7 +10,9 @@ from PIL import Image
 
 from backend.app.video import (
     VIDEO_FILTER_CHAINS,
+    _apply_effects,
     _run,
+    _smart_sound_times_from_signals,
     _video_filter_chain,
     ffmpeg_executable,
     _render_sound_effect,
@@ -19,6 +21,64 @@ from backend.app.video import (
 
 
 class EffectAssetTests(unittest.TestCase):
+    def test_vine_boom_smart_placement_can_select_multiple_phrase_endings(self):
+        envelope = np.full(240, 0.02, dtype=np.float32)
+        for start, stop in ((10, 25), (72, 88), (145, 164), (205, 220)):
+            envelope[start:stop] = np.linspace(0.45, 0.92, stop - start)
+        times = _smart_sound_times_from_signals(
+            envelope,
+            hop_seconds=0.10,
+            duration=24.0,
+            sound_effect="vine-boom",
+            fallback_time=1.0,
+        )
+
+        self.assertGreaterEqual(len(times), 3)
+        self.assertEqual(times, sorted(times))
+        self.assertTrue(all(b - a >= 3.2 for a, b in zip(times, times[1:])))
+        self.assertTrue(any(abs(value - 8.8) < 0.35 for value in times))
+        self.assertTrue(any(abs(value - 16.4) < 0.35 for value in times))
+
+    def test_whoosh_smart_placement_favors_scene_changes_without_audio(self):
+        times = _smart_sound_times_from_signals(
+            np.zeros(120, dtype=np.float32),
+            hop_seconds=0.10,
+            duration=12.0,
+            sound_effect="whoosh",
+            scene_times=[3.0, 8.5],
+        )
+
+        self.assertEqual(times, [3.03, 8.53])
+
+    def test_repeated_sound_effects_mix_into_one_finished_clip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.mp4"
+            target = root / "repeated.mp4"
+            _run([
+                ffmpeg_executable(), "-y", "-v", "error",
+                "-f", "lavfi", "-i", "color=c=navy:s=96x64:r=24:d=2.4",
+                "-f", "lavfi", "-i", "sine=frequency=260:sample_rate=48000:duration=2.4",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(source),
+            ])
+
+            _apply_effects(
+                source,
+                target,
+                duration=2.4,
+                width=96,
+                height=64,
+                sound_effect="impact-boom",
+                visual_effect="none",
+                effect_time=0.5,
+                sound_effect_times=[0.35, 1.35],
+                sound_volume=0.75,
+                visual_strength=1.0,
+            )
+
+            self.assertTrue(target.is_file())
+            self.assertGreater(target.stat().st_size, source.stat().st_size // 2)
+
     def test_classic_video_filter_chains_are_defined(self):
         self.assertEqual(_video_filter_chain("none"), "")
         for name in (

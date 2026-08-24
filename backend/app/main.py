@@ -96,6 +96,7 @@ class ExportRequest(BaseModel):
     sound_effect: Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"] = "none"
     visual_effect: Literal["none", "lens-flare", "punch-zoom", "white-flash"] = "none"
     effect_time: float = Field(1.0, ge=0.0, le=86_400.0)
+    auto_sound_effect: bool = True
     sound_volume: float = Field(1.0, ge=0.0, le=2.0)
     visual_strength: float = Field(1.0, ge=0.25, le=1.5)
     viral_title: bool = True
@@ -316,7 +317,7 @@ def export(video_id: str, req: ExportRequest):
     try:
         if req.aspect == "1:1" and req.caption_text.strip() and req.caption_overlay_data_url:
             caption_overlay = _caption_overlay_from_data_url(req.caption_overlay_data_url, req.caption_position)
-        export_clip(
+        sound_effect_times = export_clip(
             source=source,
             output=target,
             start=req.start,
@@ -336,6 +337,7 @@ def export(video_id: str, req: ExportRequest):
             sound_effect=req.sound_effect,
             visual_effect=req.visual_effect,
             effect_time=req.effect_time,
+            auto_sound_effect=req.auto_sound_effect,
             sound_volume=req.sound_volume,
             visual_strength=req.visual_strength,
         )
@@ -368,6 +370,12 @@ def export(video_id: str, req: ExportRequest):
         "viral_title": title_result["title"],
         "suggested_filename": title_result["filename"],
         "title_strategy": title_result["strategy"],
+        "sound_effect_times": sound_effect_times,
+        "sound_effect_mode": (
+            "smart" if req.sound_effect != "none" and req.auto_sound_effect
+            else "manual" if req.sound_effect != "none"
+            else "none"
+        ),
     }
 
 

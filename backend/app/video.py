@@ -1093,6 +1093,170 @@ def _video_filter_chain(video_filter: VideoFilter) -> str:
         raise ValueError("Unknown video filter.") from exc
 
 
+def _clip_audio_envelope(
+    source: Path,
+    start: float,
+    end: float,
+    sample_rate: int = 8_000,
+    hop_seconds: float = 0.10,
+) -> tuple[np.ndarray, float]:
+    """Decode a short clip into a fine-grained loudness envelope."""
+    duration = max(0.1, float(end) - float(start))
+    result = _run([
+        ffmpeg_executable(), "-v", "error",
+        "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
+        "-t", f"{duration:.3f}", "-vn", "-ac", "1", "-ar", str(sample_rate),
+        "-f", "s16le", "pipe:1",
+    ])
+    samples = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+    frame_size = max(1, round(sample_rate * hop_seconds))
+    if samples.size == 0:
+        return np.zeros(max(1, math.ceil(duration / hop_seconds)), dtype=np.float32), hop_seconds
+    frame_count = math.ceil(samples.size / frame_size)
+    padded = np.pad(samples, (0, frame_count * frame_size - samples.size))
+    frames = padded.reshape(frame_count, frame_size)
+    envelope = np.sqrt(np.mean(np.square(frames), axis=1)).astype(np.float32)
+    return envelope, frame_size / sample_rate
+
+
+def _clip_scene_change_times(source: Path, start: float, end: float) -> list[float]:
+    """Return hard-cut timestamps relative to a short selected clip."""
+    duration = max(0.1, float(end) - float(start))
+    result = subprocess.run(
+        [
+            ffmpeg_executable(), "-v", "info",
+            "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
+            "-t", f"{duration:.3f}", "-an",
+            "-vf", "scale=160:-2,select=gt(scene\\,0.30),showinfo",
+            "-fps_mode", "vfr", "-f", "null", "-",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    output = result.stderr.decode("utf-8", errors="replace")
+    return [
+        value
+        for value in (float(match) for match in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", output))
+        if 0.35 <= value <= duration - 0.20
+    ]
+
+
+def _smart_sound_times_from_signals(
+    envelope: np.ndarray,
+    hop_seconds: float,
+    duration: float,
+    sound_effect: SoundEffect,
+    scene_times: list[float] | tuple[float, ...] = (),
+    fallback_time: float = 1.0,
+) -> list[float]:
+    """Rank likely punchline endings, reactions, and cuts for one selected sound.
+
+    This deliberately relies on local audio/visual structure rather than claiming
+    to understand the words being spoken. Different effects favor different
+    event shapes, and spacing/quality gates prevent repetitive over-editing.
+    """
+    clip_duration = max(0.1, float(duration))
+    if sound_effect == "none":
+        return []
+
+    values = np.asarray(envelope, dtype=np.float32)
+    values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+    candidates: list[tuple[float, float, str]] = []
+    if values.size >= 5 and float(np.max(values, initial=0.0)) >= 1e-6:
+        floor = float(np.percentile(values, 18))
+        ceiling = float(np.percentile(values, 94))
+        normalized = np.clip((values - floor) / max(ceiling - floor, 1e-6), 0, 1)
+        smoothed = np.convolve(normalized, np.ones(3, dtype=np.float32) / 3, mode="same")
+
+        for index in range(4, max(4, len(smoothed) - 4)):
+            before = smoothed[max(0, index - 6):index]
+            after = smoothed[index:min(len(smoothed), index + 4)]
+            pre_level = float(np.mean(before)) if before.size else 0.0
+            post_level = float(np.mean(after)) if after.size else 0.0
+            pre_peak = float(np.max(before, initial=0.0))
+            post_peak = float(np.max(after, initial=0.0))
+            drop = pre_level - post_level
+            rise = post_peak - float(np.mean(smoothed[max(0, index - 4):index]))
+
+            if pre_level >= 0.24 and drop >= 0.14 and post_level <= 0.46:
+                score = 0.60 * pre_level + 1.12 * drop + 0.20 * pre_peak
+                candidates.append((index * hop_seconds + 0.06, score, "phrase-end"))
+            if post_peak >= 0.54 and rise >= 0.18:
+                score = 0.68 * post_peak + 0.95 * rise
+                candidates.append((index * hop_seconds, score, "reaction"))
+            if smoothed[index] >= 0.72 and smoothed[index] >= max(smoothed[index - 2:index + 3]):
+                candidates.append((index * hop_seconds, 0.62 * float(smoothed[index]), "peak"))
+
+    for scene_time in scene_times:
+        candidates.append((float(scene_time) + 0.03, 0.78, "scene"))
+
+    weights = {
+        "vine-boom": {"phrase-end": 1.30, "reaction": 0.72, "peak": 0.40, "scene": 0.24},
+        "impact-boom": {"phrase-end": 0.65, "reaction": 1.18, "peak": 0.92, "scene": 0.76},
+        "whoosh": {"phrase-end": 0.22, "reaction": 0.42, "peak": 0.35, "scene": 1.85},
+        "record-scratch": {"phrase-end": 1.35, "reaction": 0.42, "peak": 0.24, "scene": 0.58},
+    }[sound_effect]
+    spacing = {
+        "vine-boom": 3.2,
+        "impact-boom": 3.6,
+        "whoosh": 2.8,
+        "record-scratch": 4.2,
+    }[sound_effect]
+    max_hits = min(6, max(1, int(clip_duration // 9) + 1))
+    ranked = sorted(
+        (
+            (score * weights[kind], min(max(0.35, time_value), max(0.35, clip_duration - 0.20)))
+            for time_value, score, kind in candidates
+            if 0.30 <= time_value <= clip_duration - 0.15
+        ),
+        reverse=True,
+    )
+    selected: list[float] = []
+    best_score = ranked[0][0] if ranked else 0.0
+    quality_floor = max(0.34, best_score * 0.48)
+    for score, time_value in ranked:
+        if score < quality_floor or any(abs(time_value - existing) < spacing for existing in selected):
+            continue
+        selected.append(time_value)
+        if len(selected) >= max_hits:
+            break
+
+    if not selected:
+        fallback = min(max(0.35, float(fallback_time)), max(0.35, clip_duration - 0.20))
+        selected = [fallback]
+    return [round(value, 2) for value in sorted(selected)]
+
+
+def suggest_sound_effect_times(
+    source: Path,
+    start: float,
+    end: float,
+    sound_effect: SoundEffect,
+    fallback_time: float = 1.0,
+) -> list[float]:
+    """Analyze a selected clip and return smart, repeat-capable SFX timestamps."""
+    duration = max(0.1, float(end) - float(start))
+    try:
+        envelope, hop_seconds = _clip_audio_envelope(source, start, end)
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        envelope, hop_seconds = np.zeros(1, dtype=np.float32), 0.10
+    try:
+        scenes = _clip_scene_change_times(source, start, end)
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        scenes = []
+    return _smart_sound_times_from_signals(
+        envelope,
+        hop_seconds,
+        duration,
+        sound_effect,
+        scenes,
+        fallback_time,
+    )
+
+
 def _apply_effects(
     source: Path,
     output: Path,
@@ -1102,6 +1266,7 @@ def _apply_effects(
     sound_effect: SoundEffect,
     visual_effect: VisualEffect,
     effect_time: float,
+    sound_effect_times: list[float] | None,
     sound_volume: float,
     visual_strength: float,
 ) -> None:
@@ -1112,9 +1277,16 @@ def _apply_effects(
     inputs = [ffmpeg_executable(), "-y", "-v", "error", "-i", str(source)]
     sound_index: int | None = None
     overlay_index: int | None = None
+    sound_triggers = []
+    if sound_effect != "none":
+        supplied = [trigger] if sound_effect_times is None else sound_effect_times
+        sound_triggers = sorted({
+            round(min(max(0.0, float(value)), max(0.0, duration - 0.05)), 3)
+            for value in supplied
+        })
 
     try:
-        if sound_effect != "none":
+        if sound_triggers:
             sound_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-sfx-", suffix=".wav", delete=False)
             sound_path = Path(sound_file.name)
             sound_file.close()
@@ -1162,12 +1334,41 @@ def _apply_effects(
 
         audio_label: str | None = None
         if sound_index is not None:
-            delay_ms = round(trigger * 1000)
-            filters.append(f"[{sound_index}:a]adelay={delay_ms}|{delay_ms},volume={volume:.3f}[sfx]")
-            if _has_audio(source):
-                filters.append("[0:a][sfx]amix=inputs=2:duration=first:dropout_transition=0[aout]")
+            source_labels = [f"sfxsource{index}" for index in range(len(sound_triggers))]
+            if len(source_labels) > 1:
+                filters.append(
+                    f"[{sound_index}:a]asplit={len(source_labels)}"
+                    + "".join(f"[{label}]" for label in source_labels)
+                )
             else:
-                filters.append(f"[sfx]apad=whole_dur={duration:.3f},atrim=0:{duration:.3f}[aout]")
+                source_labels = [f"{sound_index}:a"]
+            effect_labels: list[str] = []
+            for index, (source_label, sound_trigger) in enumerate(zip(source_labels, sound_triggers)):
+                delay_ms = round(sound_trigger * 1000)
+                effect_label = f"sfx{index}"
+                filters.append(
+                    f"[{source_label}]adelay={delay_ms}:all=1,volume={volume:.3f}[{effect_label}]"
+                )
+                effect_labels.append(effect_label)
+            effect_inputs = "".join(f"[{label}]" for label in effect_labels)
+            if _has_audio(source):
+                filters.append(
+                    f"[0:a]{effect_inputs}amix=inputs={len(effect_labels) + 1}:"
+                    "duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]"
+                )
+            else:
+                if len(effect_labels) > 1:
+                    filters.append(
+                        f"{effect_inputs}amix=inputs={len(effect_labels)}:duration=longest:"
+                        "dropout_transition=0:normalize=0[effectmix]"
+                    )
+                    effect_source = "effectmix"
+                else:
+                    effect_source = effect_labels[0]
+                filters.append(
+                    f"[{effect_source}]apad=whole_dur={duration:.3f},"
+                    f"atrim=0:{duration:.3f},alimiter=limit=0.95[aout]"
+                )
             audio_label = "aout"
 
         command = inputs
@@ -1210,9 +1411,10 @@ def export_clip(
     sound_effect: SoundEffect = "none",
     visual_effect: VisualEffect = "none",
     effect_time: float = 1.0,
+    auto_sound_effect: bool = True,
     sound_volume: float = 1.0,
     visual_strength: float = 1.0,
-) -> None:
+) -> list[float]:
     info = probe_video(source)
     start = max(0.0, min(start, info.duration))
     end = max(start + 0.1, min(end, info.duration))
@@ -1222,6 +1424,13 @@ def export_clip(
         raise ValueError("Unknown sound effect.")
     if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
         raise ValueError("Unknown visual effect.")
+
+    sound_effect_times: list[float] = []
+    if sound_effect != "none":
+        if auto_sound_effect:
+            sound_effect_times = suggest_sound_effect_times(source, start, end, sound_effect, effect_time)
+        else:
+            sound_effect_times = [round(min(max(0.0, effect_time), max(0.0, duration - 0.05)), 2)]
 
     has_effects = sound_effect != "none" or visual_effect != "none"
     base_temporary: Path | None = None
@@ -1333,9 +1542,11 @@ def export_clip(
                 sound_effect,
                 visual_effect,
                 effect_time,
+                sound_effect_times,
                 sound_volume,
                 visual_strength,
             )
     finally:
         if base_temporary is not None:
             base_temporary.unlink(missing_ok=True)
+    return sound_effect_times

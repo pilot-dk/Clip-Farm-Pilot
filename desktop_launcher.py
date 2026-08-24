@@ -269,6 +269,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         or 'id="soundEffect"' not in html
         or 'id="visualEffect"' not in html
         or 'id="effectTime"' not in html
+        or 'id="autoSoundEffectToggle"' not in html
     ):
         raise RuntimeError("The bundled Clip Farm Pilot interface is missing an expected feature.")
 
@@ -301,7 +302,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     portrait_id = uuid.uuid4().hex
     square_id = uuid.uuid4().hex
     gaming_id = uuid.uuid4().hex
-    export_clip(
+    landscape_sound_times = export_clip(
         source=cached_source,
         output=exports_dir / f"{landscape_id}.mp4",
         start=0,
@@ -311,8 +312,9 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         sound_effect="record-scratch",
         visual_effect="white-flash",
         effect_time=0.6,
+        auto_sound_effect=False,
     )
-    export_clip(
+    portrait_sound_times = export_clip(
         source=cached_source,
         output=exports_dir / f"{portrait_id}.mp4",
         start=0,
@@ -323,7 +325,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         visual_effect="punch-zoom",
         effect_time=0.6,
     )
-    export_clip(
+    square_sound_times = export_clip(
         source=cached_source,
         output=exports_dir / f"{square_id}.mp4",
         start=0,
@@ -333,11 +335,11 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         caption_font_scale=1.50,
         caption_position="bottom",
         video_filter="warm",
-        sound_effect="whoosh",
+        sound_effect="vine-boom",
         visual_effect="lens-flare",
         effect_time=0.6,
     )
-    export_clip(
+    gaming_sound_times = export_clip(
         source=cached_source,
         output=exports_dir / f"{gaming_id}.mp4",
         start=0,
@@ -350,6 +352,10 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         visual_effect="lens-flare",
         effect_time=0.6,
     )
+    if landscape_sound_times != [0.6] or not all(
+        times for times in (portrait_sound_times, square_sound_times, gaming_sound_times)
+    ):
+        raise RuntimeError("The bundled smart/manual sound placement test did not return timestamps.")
     title_result = generate_viral_title(
         exports_dir / f"{gaming_id}.mp4",
         source_title="FC 26 Weekend League Livestream.mp4",

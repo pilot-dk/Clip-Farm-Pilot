@@ -734,6 +734,10 @@
     }
     .effects-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .video-filter-field { margin-bottom: 13px; }
+    .auto-sound-control { margin-top: 13px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    .auto-sound-control .switch-copy strong { font-size: 11px; }
+    .smart-placement-result { display: none; margin-top: 9px; padding: 8px 9px; border: 1px solid rgba(185,243,74,.18); border-radius: 8px; color: #dff6ae; background: rgba(185,243,74,.06); font-size: 9px; line-height: 1.45; }
+    .smart-placement-result.visible { display: block; }
     .effects-card .field + .field, .effects-strengths { margin-top: 13px; }
     .effect-time-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
     .effect-time-row .button { height: 40px; white-space: nowrap; }
@@ -1611,9 +1615,22 @@
                     </select>
                   </div>
                 </div>
+                <div class="auto-sound-control">
+                  <div class="switch-row">
+                    <div class="switch-copy">
+                      <strong>Smart sound placement</strong>
+                      <small id="smartSoundHint">Choose a sound effect to enable automatic timing.</small>
+                    </div>
+                    <label class="switch">
+                      <input id="autoSoundEffectToggle" type="checkbox" checked disabled />
+                      <span class="switch-track"></span>
+                    </label>
+                  </div>
+                  <div class="smart-placement-result" id="smartPlacementResult" role="status"></div>
+                </div>
                 <div class="field effect-time-row">
                   <div>
-                    <label for="effectTime">Trigger after clip starts</label>
+                    <label for="effectTime" id="effectTimeLabel">Manual trigger after clip starts</label>
                     <input class="number-field" id="effectTime" type="number" min="0" max="30" value="1.0" step="0.1" />
                   </div>
                   <button class="button secondary small" type="button" id="usePlayheadForEffect" disabled>Use playhead</button>
@@ -1628,7 +1645,7 @@
                     <input id="visualStrength" type="range" min="25" max="150" value="100" step="5" aria-label="Visual effect strength" />
                   </div>
                 </div>
-                <small class="field-hint">Filters cover the full clip. Sound and visual effects land on one payoff moment. Impact Boom is original; Vine Boom uses the supplied sample.</small>
+                <small class="field-hint">Smart placement can repeat a sound at likely punchline endings, reactions, and scene cuts while keeping hits spaced apart. Turn it off for one manual playhead position.</small>
               </div>
               </div>
             </details>
@@ -2212,13 +2229,23 @@
     function updateEffectControls() {
       const hasSound = $("soundEffect").value !== "none";
       const hasVisual = $("visualEffect").value !== "none";
-      const hasAnyEffect = hasSound || hasVisual;
+      const autoSound = hasSound && $("autoSoundEffectToggle").checked;
+      const hasManualTrigger = hasVisual || (hasSound && !autoSound);
       const soundVolume = Number($("soundVolume").value) || 0;
       const visualStrength = Number($("visualStrength").value) || 25;
+      $("autoSoundEffectToggle").disabled = !hasSound;
       $("soundVolume").disabled = !hasSound;
       $("visualStrength").disabled = !hasVisual;
-      $("effectTime").disabled = !hasAnyEffect;
-      $("usePlayheadForEffect").disabled = !state.videoId || !hasAnyEffect;
+      $("effectTime").disabled = !hasManualTrigger;
+      $("usePlayheadForEffect").disabled = !state.videoId || !hasManualTrigger;
+      $("effectTimeLabel").textContent = hasVisual
+        ? (hasSound && !autoSound ? "Sound / visual trigger after clip starts" : "Visual effect trigger after clip starts")
+        : "Manual sound trigger after clip starts";
+      $("smartSoundHint").textContent = !hasSound
+        ? "Choose a sound effect to enable automatic timing."
+        : autoSound
+          ? "Scans likely punchline endings, reactions, and cuts; repeats only when it fits."
+          : "Off — the sound will play once at the manual trigger below.";
       $("soundVolumeValue").value = `${soundVolume}%`;
       $("visualStrengthValue").value = `${visualStrength}%`;
       $("soundVolume").style.setProperty("--progress", `${soundVolume / 2}%`);
@@ -2680,6 +2707,8 @@
       const buttons = [$("exportButton"), $("topExportButton")];
       buttons.forEach((button) => setBusy(button, true, "Rendering…"));
       $("viralTitleResult").classList.remove("visible");
+      $("smartPlacementResult").textContent = "";
+      $("smartPlacementResult").classList.remove("visible");
       setStatus("working", "Exporting clip", `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`);
 
       try {
@@ -2704,6 +2733,7 @@
             sound_effect: $("soundEffect").value,
             visual_effect: $("visualEffect").value,
             effect_time: Number($("effectTime").value) || 0,
+            auto_sound_effect: $("autoSoundEffectToggle").checked,
             sound_volume: Number($("soundVolume").value) / 100,
             visual_strength: Number($("visualStrength").value) / 100,
             viral_title: $("viralTitleToggle").checked,
@@ -2713,6 +2743,15 @@
         if (!response.ok) throw new Error(apiError(data, "Export failed."));
         state.exportId = data.export_id;
         state.generatedTitle = data.viral_title || null;
+        const smartTimes = Array.isArray(data.sound_effect_times) ? data.sound_effect_times : [];
+        if (data.sound_effect_mode === "smart" && smartTimes.length) {
+          const effectName = $("soundEffect").selectedOptions[0]?.textContent || "Sound effect";
+          $("smartPlacementResult").textContent = `${effectName} placed ${smartTimes.length} time${smartTimes.length === 1 ? "" : "s"}: ${smartTimes.map((value) => formatTime(Number(value), true)).join(" · ")}`;
+          $("smartPlacementResult").classList.add("visible");
+        } else {
+          $("smartPlacementResult").textContent = "";
+          $("smartPlacementResult").classList.remove("visible");
+        }
         $("publishTitle").value = state.generatedTitle || data.viral_title || "New Clip";
         if (!$("publishCaption").value.trim() && state.ratio === "1:1") {
           $("publishCaption").value = $("captionText").value.trim();
@@ -2773,12 +2812,15 @@
       document.querySelector('input[name="captionPosition"][value="center"]').checked = true;
       $("videoFilter").value = "none";
       $("soundEffect").value = "none";
+      $("autoSoundEffectToggle").checked = true;
       $("visualEffect").value = "none";
       $("effectTime").value = "1.0";
       $("soundVolume").value = "100";
       $("visualStrength").value = "100";
       $("viralTitleResult").classList.remove("visible");
       $("viralTitleText").textContent = "";
+      $("smartPlacementResult").textContent = "";
+      $("smartPlacementResult").classList.remove("visible");
       $("publishTitle").value = "";
       $("publishCaption").value = "";
       $("publishResults").classList.remove("visible");
@@ -2915,7 +2957,7 @@
     ["faceCorner", "faceWidth", "faceHeight", "faceInsetX", "faceInsetY"].forEach((id) => $(id).addEventListener("input", updateFacePreview));
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
     document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
-    ["videoFilter", "soundEffect", "visualEffect", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
+    ["videoFilter", "soundEffect", "visualEffect", "autoSoundEffectToggle", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();
       const relativeTime = Math.min(range.end - range.start, Math.max(0, activeVideo().currentTime - range.start));

@@ -25,6 +25,10 @@ def png_data_url(size: tuple[int, int] = (1080, 1080), box: tuple[int, int, int,
 
 
 class WebPortTests(unittest.TestCase):
+    def test_smart_sound_placement_is_the_export_default(self):
+        request = main.ExportRequest(start=0, end=12, sound_effect="vine-boom")
+        self.assertTrue(request.auto_sound_effect)
+
     def test_accepts_browser_rendered_square_caption(self):
         overlay = main._caption_overlay_from_data_url(png_data_url())
         self.assertIsNotNone(overlay)

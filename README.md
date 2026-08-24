@@ -8,7 +8,7 @@ This updated build includes a simple, polished browser editor connected directly
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.5 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.6 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -46,7 +46,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.5.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.6.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -54,7 +54,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.5.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.6.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -62,7 +62,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.5.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.6.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -99,6 +99,9 @@ The editor now includes:
 - Seven full-clip looks: **Black & white**, **Cinematic**, **Vivid**, **Warm**, **Cool**, **Faded / Vintage**, and **High contrast**, with an instant preview in every template.
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
 - A bundled Vine Boom option plus original impact-boom, whoosh, and record-scratch sound effects with adjustable volume.
+- **Smart sound placement** that analyzes likely phrase endings, reactions, energy drops, and scene cuts, then adds one or more well-spaced hits automatically.
+- Effect-specific timing: Vine Boom favors punchline-like pauses, Impact Boom favors reaction spikes, Whoosh favors visual cuts, and Record Scratch favors abrupt stops.
+- A manual timing override for creators who want exactly one sound at the playhead.
 - Lens flare, punch zoom, and white flash visual effects with adjustable strength and precise playhead-based timing.
 - **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection.
 - **Export Clip** actions in the toolbar and editor panel.
@@ -164,7 +167,9 @@ This offline MVP uses the source/VOD title, creator-entered square caption, and 
 
 ## Filters, sound, and visual effects
 
-The **Effects** panel can apply a classic post-processing filter across the complete clip, and its separate moment controls can emphasize one payoff without changing templates. Choose one sound effect, one visual effect, or both, then set the trigger as seconds after the selected clip begins. You can type the time or move the preview to the moment and press **Use playhead**.
+The **Effects** panel can apply a classic post-processing filter across the complete clip. When a sound is selected, **Smart sound placement** is enabled by default: it scores likely phrase endings, reaction spikes, abrupt stops, and scene cuts, chooses moments that fit that particular effect, and can repeat the sound while enforcing spacing. The finished editor shows every chosen timestamp. Turn Smart placement off to use exactly one manual trigger from the playhead. Visual effects keep their own manual payoff trigger.
+
+Smart placement analyzes local audio and visual structure; it does not transcribe or claim to understand the literal meaning of speech. A pause after an unusual or funny sentence is therefore a strong Vine Boom candidate, while continuous speech without a clear ending may not be. This keeps the feature private, fast, and usable without an AI account or usage fees.
 
 Choose **Vine Boom** to use the bundled sample supplied by the project owner, or **Impact boom** for Clip Farm Pilot's original synthesized alternative. All effects are applied locally during export and work with landscape, portrait, square-caption, and gaming-overlay renders.
 
@@ -298,7 +303,7 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On Windows x64 with Python 3.12 and Node.js installed:
 
 ```powershell
-./build_windows.ps1 -Version 1.5.0
+./build_windows.ps1 -Version 1.6.0
 ```
 
 On Ubuntu 24.04 x64 with Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installed:
