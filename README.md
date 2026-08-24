@@ -8,13 +8,14 @@ This updated build includes a simple, polished browser editor connected directly
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.6 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.7 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
 - A private password screen for hosted copies.
 - Install support for iPhone, iPad, Android, and desktop browsers.
 - Browser-rendered square captions so the exact emoji from the device is carried into the MP4.
+- Offline live captions with word-level speech timing and selectable highlight colours.
 - Temporary cloud storage behavior, including permanent cleanup of finished VOD working copies.
 - A Docker image, Render Blueprint, and GitHub Actions checks for a GitHub-based deployment.
 
@@ -46,7 +47,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.6.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.7.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -54,7 +55,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.6.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.7.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -62,12 +63,12 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.6.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.7.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
 
-All three desktop downloads contain their own Python runtime, FFmpeg engine, and JavaScript runtime.
+All three desktop downloads contain their own Python runtime, FFmpeg engine, JavaScript runtime, and offline Whisper.cpp live-caption engine. No separate transcription account is required.
 
 Clip Farm Pilot saves imported videos and exports under:
 
@@ -96,6 +97,8 @@ The editor now includes:
 - Pixel-based optical centering that keeps the complete text-and-emoji caption centered consistently on macOS, Windows, Linux, and the web app.
 - Top, centre, and bottom placement choices for square captions, with the selected placement reflected in the preview and exported MP4.
 - A live **Caption size** slider for 1:1 clips, adjustable from 50% to 175% with the selected size carried into the rendered MP4.
+- Optional **Live captions** that transcribe English speech locally and keep a readable group of words on screen while highlighting the word currently being spoken.
+- Five live-caption colour schemes: **Pilot Lime**, **Ocean Blue**, **Sunset Gold**, **Neon Pink**, and **Electric Violet**.
 - Seven full-clip looks: **Black & white**, **Cinematic**, **Vivid**, **Warm**, **Cool**, **Faded / Vintage**, and **High contrast**, with an instant preview in every template.
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
 - A bundled Vine Boom option plus original impact-boom, whoosh, and record-scratch sound effects with adjustable volume.
@@ -163,7 +166,13 @@ FC 26 Weekend League — Wait for the Ending.mp4
 
 The generated title appears in the editor and becomes the default filename in the desktop **Save As** window. You can edit that filename before saving, or turn the switch off to use Clip Farm Pilot’s standard filename.
 
-This offline MVP uses the source/VOD title, creator-entered square caption, and changes in audio intensity. It does not yet transcribe speech or understand the exact game event, and no title can guarantee virality. Transcript-aware title generation is a natural next production upgrade.
+This filename generator uses the source/VOD title, creator-entered square caption, and changes in audio intensity. It does not yet reuse the live-caption transcript or understand the exact game event, and no title can guarantee virality. Transcript-aware title generation is a natural next production upgrade.
+
+## Live captions
+
+Open **Live captions**, enable the switch, and choose a colour scheme before exporting. Clip Farm Pilot extracts the selected clip's audio, transcribes English speech with the bundled offline `base.en` Whisper.cpp model, groups the result into short readable phrases, and highlights each word for its own spoken time range. The result is burned into the MP4 and works in 16:9, 9:16, 1:1, and gaming layouts.
+
+Caption transcription stays on the machine or hosted Clip Farm Pilot server running the export. It does not send audio to a third-party transcription API. Accuracy depends on microphone quality, overlapping speakers, music volume, accents, and game audio. The first live-captioned export takes longer because speech recognition runs before video rendering.
 
 ## Filters, sound, and visual effects
 
@@ -219,7 +228,17 @@ The source copy goes to the operating system’s Trash or Recycle Bin, so it can
 brew install ffmpeg
 ```
 
-### 2. Start the backend
+### 2. Prepare the offline caption engine
+
+From the project root, install CMake and Ninja when building on macOS, then run:
+
+```bash
+python3 scripts/prepare_caption_runtime.py
+```
+
+This downloads a checksum-verified Whisper.cpp runtime and the `base.en` model into the ignored `.caption-runtime/` build folder. Packaged and Docker builds run this preparation automatically.
+
+### 3. Start the backend
 
 ```bash
 cd backend
@@ -303,7 +322,7 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On Windows x64 with Python 3.12 and Node.js installed:
 
 ```powershell
-./build_windows.ps1 -Version 1.6.0
+./build_windows.ps1 -Version 1.7.0
 ```
 
 On Ubuntu 24.04 x64 with Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installed:
@@ -318,7 +337,7 @@ The GitHub Actions **Build Windows and Linux releases** workflow runs both build
 
 1. **Transcript intelligence** — transcribe the stream and score moments containing a strong setup, surprise, conflict, joke, rage/reaction, achievement, or payoff.
 2. **Automatic face-cam detection** — detect the webcam rectangle rather than asking the user to choose a corner.
-3. **Auto captions** — word-by-word animated subtitles with safe-area presets.
+3. **Caption customization** — custom fonts, placement, safe-area presets, and multilingual speech models.
 4. **Smart gameplay reframing** — track important game HUD/action instead of always center-cropping.
 5. **Face tracking** — keep the streamer centered when the source webcam moves.
 6. **Clip title/hook generation** — generate Shorts titles, on-screen hooks, captions, and descriptions.

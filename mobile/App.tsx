@@ -5,6 +5,7 @@ import {
   Linking,
   SafeAreaView,
   ScrollView,
+  Switch,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -17,13 +18,24 @@ const API = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 
 type Ratio = '16:9' | '9:16' | '1:1';
 type Layout = 'standard' | 'gaming';
+type CaptionScheme = 'pilot-lime' | 'ocean' | 'sunset' | 'neon-pink' | 'violet';
 type Candidate = { start: number; end: number; score: number };
+
+const CAPTION_SCHEMES: { value: CaptionScheme; label: string; colour: string }[] = [
+  { value: 'pilot-lime', label: 'Lime', colour: '#b9f34a' },
+  { value: 'ocean', label: 'Ocean', colour: '#35dcff' },
+  { value: 'sunset', label: 'Gold', colour: '#ffd24a' },
+  { value: 'neon-pink', label: 'Pink', colour: '#ff4fd8' },
+  { value: 'violet', label: 'Violet', colour: '#a98bff' },
+];
 
 export default function App() {
   const [videoId, setVideoId] = useState<string | null>(null);
   const [name, setName] = useState('No source loaded');
   const [ratio, setRatio] = useState<Ratio>('9:16');
   const [layout, setLayout] = useState<Layout>('standard');
+  const [liveCaptions, setLiveCaptions] = useState(false);
+  const [captionScheme, setCaptionScheme] = useState<CaptionScheme>('pilot-lime');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [busy, setBusy] = useState(false);
@@ -104,6 +116,8 @@ export default function App() {
           face_corner: 'top-right',
           face_width_fraction: 0.3,
           face_height_fraction: 0.34,
+          live_captions: liveCaptions,
+          live_caption_scheme: captionScheme,
         }),
       });
       const payload = await response.json();
@@ -188,6 +202,34 @@ export default function App() {
                 else setLayout('gaming');
               }}
             />
+          </View>
+        </Panel>
+
+        <Panel code="CC" title="Live captions">
+          <View style={styles.switchRow}>
+            <View style={styles.switchCopy}>
+              <Text style={styles.switchTitle}>Word-by-word highlights</Text>
+              <Text style={styles.panelHint}>Transcribe English speech and highlight the word being spoken.</Text>
+            </View>
+            <Switch
+              value={liveCaptions}
+              onValueChange={setLiveCaptions}
+              trackColor={{ false: '#263c49', true: '#357894' }}
+              thumbColor={liveCaptions ? '#5bd6ff' : '#8aa0ae'}
+            />
+          </View>
+          <View style={[styles.captionSchemes, !liveCaptions && styles.captionSchemesDisabled]}>
+            {CAPTION_SCHEMES.map((scheme) => (
+              <TouchableOpacity
+                key={scheme.value}
+                disabled={!liveCaptions}
+                onPress={() => setCaptionScheme(scheme.value)}
+                style={[styles.captionScheme, captionScheme === scheme.value && styles.captionSchemeActive]}
+              >
+                <View style={[styles.captionColour, { backgroundColor: scheme.colour }]} />
+                <Text style={styles.captionSchemeText}>{scheme.label}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </Panel>
 
@@ -322,6 +364,25 @@ const styles = StyleSheet.create({
   panelTitle: { color: '#f2f8fc', fontSize: 15, fontWeight: '800' },
   panelLine: { flex: 1, height: 1, backgroundColor: '#18384d' },
   panelHint: { marginBottom: 8, color: '#91a9ba', fontSize: 11 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  switchCopy: { flex: 1 },
+  switchTitle: { marginBottom: 4, color: '#f2f8fc', fontSize: 13, fontWeight: '800' },
+  captionSchemes: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 11 },
+  captionSchemesDisabled: { opacity: 0.42 },
+  captionScheme: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 34,
+    paddingHorizontal: 9,
+    borderWidth: 1,
+    borderColor: '#214258',
+    borderRadius: 9,
+    backgroundColor: '#081621',
+  },
+  captionSchemeActive: { borderColor: '#4f8da8', backgroundColor: '#102c3f' },
+  captionColour: { width: 8, height: 8, borderRadius: 4 },
+  captionSchemeText: { color: '#dcebf3', fontSize: 10, fontWeight: '800' },
   sourceName: { color: '#91a9ba', marginBottom: 2 },
   button: {
     minHeight: 48,

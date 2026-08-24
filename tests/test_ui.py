@@ -57,6 +57,15 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("data.sound_effect_times", self.html)
         self.assertIn("smartPlacementResult", self.html)
 
+    def test_live_captions_offer_word_highlighting_and_colour_schemes(self):
+        self.assertIn('id="liveCaptionsToggle"', self.html)
+        self.assertIn('id="liveCaptionScheme"', self.html)
+        for value in ("pilot-lime", "ocean", "sunset", "neon-pink", "violet"):
+            self.assertIn(f'value="{value}"', self.html)
+        self.assertIn("live_captions:", self.html)
+        self.assertIn("live_caption_scheme:", self.html)
+        self.assertIn("Automatic word-by-word highlights", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,13 @@ class WebPortTests(unittest.TestCase):
         request = main.ExportRequest(start=0, end=12, sound_effect="vine-boom")
         self.assertTrue(request.auto_sound_effect)
 
+    def test_live_caption_options_are_validated_and_default_off(self):
+        request = main.ExportRequest(start=0, end=12)
+        self.assertFalse(request.live_captions)
+        self.assertEqual(request.live_caption_scheme, "pilot-lime")
+        with self.assertRaises(ValueError):
+            main.ExportRequest(start=0, end=12, live_caption_scheme="invisible")
+
     def test_accepts_browser_rendered_square_caption(self):
         overlay = main._caption_overlay_from_data_url(png_data_url())
         self.assertIsNotNone(overlay)

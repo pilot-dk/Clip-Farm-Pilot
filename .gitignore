@@ -14,6 +14,8 @@ mobile/.expo/
 .build-venv-linux/
 .pyinstaller-cache/
 .pyinstaller-cache-linux/
+.caption-runtime/
+.caption-runtime-cache/
 build/
 dist/
 outputs/

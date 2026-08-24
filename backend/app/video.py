@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .brand import APP_SLUG, env
+from .captions import LIVE_CAPTION_SCHEMES, LiveCaptionScheme, transcribe_words, write_live_caption_ass
 
 Aspect = Literal["16:9", "9:16", "1:1"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
@@ -79,25 +80,44 @@ class AudioAnalysis:
 _AUDIO_ANALYSIS_CACHE: dict[tuple[str, int, int, int], AudioAnalysis] = {}
 _AUDIO_ANALYSIS_CACHE_LOCK = threading.RLock()
 _AUDIO_ANALYSIS_CACHE_LIMIT = 4
+_FFMPEG_ASS_SUPPORT: dict[str, bool] = {}
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def ffmpeg_executable() -> str:
+def _ffmpeg_supports_ass(executable: str) -> bool:
+    if executable in _FFMPEG_ASS_SUPPORT:
+        return _FFMPEG_ASS_SUPPORT[executable]
+    result = subprocess.run(
+        [executable, "-hide_banner", "-filters"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    filters = (result.stdout + result.stderr).decode("utf-8", errors="replace")
+    supported = bool(re.search(r"\b(?:ass|subtitles)\s+V->V\b", filters))
+    _FFMPEG_ASS_SUPPORT[executable] = supported
+    return supported
+
+
+def ffmpeg_executable(require_ass: bool = False) -> str:
     configured = env("FFMPEG_EXE")
-    if configured and Path(configured).exists():
+    if configured and Path(configured).exists() and (not require_ass or _ffmpeg_supports_ass(str(configured))):
         return configured
 
     system_ffmpeg = shutil.which("ffmpeg")
-    if system_ffmpeg:
+    if system_ffmpeg and (not require_ass or _ffmpeg_supports_ass(system_ffmpeg)):
         return system_ffmpeg
 
     try:
         import imageio_ffmpeg
 
-        return imageio_ffmpeg.get_ffmpeg_exe()
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+        if require_ass and not _ffmpeg_supports_ass(bundled):
+            raise RuntimeError("The bundled video engine does not support live captions.")
+        return bundled
     except Exception as exc:
         raise RuntimeError("FFmpeg is not available.") from exc
 
@@ -1269,12 +1289,13 @@ def _apply_effects(
     sound_effect_times: list[float] | None,
     sound_volume: float,
     visual_strength: float,
+    live_caption_ass: Path | None = None,
 ) -> None:
     trigger = min(max(0.0, float(effect_time)), max(0.0, duration - 0.05))
     volume = min(2.0, max(0.0, float(sound_volume)))
     strength = min(1.5, max(0.25, float(visual_strength)))
     temporary_paths: list[Path] = []
-    inputs = [ffmpeg_executable(), "-y", "-v", "error", "-i", str(source)]
+    inputs = [ffmpeg_executable(require_ass=live_caption_ass is not None), "-y", "-v", "error", "-i", str(source)]
     sound_index: int | None = None
     overlay_index: int | None = None
     sound_triggers = []
@@ -1331,6 +1352,11 @@ def _apply_effects(
             )
             filters.append(f"[0:v][overlayfx]overlay=0:0:eof_action=pass[vfx]")
             video_label = "vfx"
+
+        if live_caption_ass is not None:
+            caption_path = str(live_caption_ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            filters.append(f"[{video_label}]ass=filename='{caption_path}'[captioned]")
+            video_label = "captioned"
 
         audio_label: str | None = None
         if sound_index is not None:
@@ -1414,6 +1440,9 @@ def export_clip(
     auto_sound_effect: bool = True,
     sound_volume: float = 1.0,
     visual_strength: float = 1.0,
+    live_captions: bool = False,
+    live_caption_scheme: LiveCaptionScheme = "pilot-lime",
+    export_metadata: dict[str, object] | None = None,
 ) -> list[float]:
     info = probe_video(source)
     start = max(0.0, min(start, info.duration))
@@ -1424,6 +1453,8 @@ def export_clip(
         raise ValueError("Unknown sound effect.")
     if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
         raise ValueError("Unknown visual effect.")
+    if live_caption_scheme not in LIVE_CAPTION_SCHEMES:
+        raise ValueError("Unknown live-caption colour scheme.")
 
     sound_effect_times: list[float] = []
     if sound_effect != "none":
@@ -1432,10 +1463,27 @@ def export_clip(
         else:
             sound_effect_times = [round(min(max(0.0, effect_time), max(0.0, duration - 0.05)), 2)]
 
+    live_caption_ass: Path | None = None
+    live_caption_word_count = 0
+    if live_captions:
+        words = transcribe_words(source, start, end, ffmpeg_executable())
+        live_caption_word_count = len(words)
+        if words:
+            caption_file = tempfile.NamedTemporaryFile(
+                prefix=f"{APP_SLUG}-live-captions-", suffix=".ass", delete=False
+            )
+            live_caption_ass = Path(caption_file.name)
+            caption_file.close()
+            width, height = ASPECT_SIZES[aspect]
+            write_live_caption_ass(words, live_caption_ass, width, height, live_caption_scheme)
+    if export_metadata is not None:
+        export_metadata["live_caption_word_count"] = live_caption_word_count
+
     has_effects = sound_effect != "none" or visual_effect != "none"
+    has_postprocessing = has_effects or live_caption_ass is not None
     base_temporary: Path | None = None
     render_target = output
-    if has_effects:
+    if has_postprocessing:
         base_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-base-", suffix=".mp4", delete=False)
         base_temporary = Path(base_file.name)
         base_file.close()
@@ -1531,7 +1579,7 @@ def export_clip(
             ]
             _run(cmd)
 
-        if has_effects:
+        if has_postprocessing:
             width, height = ASPECT_SIZES[aspect]
             _apply_effects(
                 render_target,
@@ -1545,8 +1593,11 @@ def export_clip(
                 sound_effect_times,
                 sound_volume,
                 visual_strength,
+                live_caption_ass,
             )
     finally:
         if base_temporary is not None:
             base_temporary.unlink(missing_ok=True)
+        if live_caption_ass is not None:
+            live_caption_ass.unlink(missing_ok=True)
     return sound_effect_times

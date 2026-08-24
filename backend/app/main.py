@@ -23,6 +23,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from .brand import APP_NAME, APP_SLUG, APP_VERSION, env
+from .captions import caption_engine_status
 from .social import SocialPublishError, SocialPublisher
 from .video import (
     analyze_viral_candidates,
@@ -99,6 +100,8 @@ class ExportRequest(BaseModel):
     auto_sound_effect: bool = True
     sound_volume: float = Field(1.0, ge=0.0, le=2.0)
     visual_strength: float = Field(1.0, ge=0.25, le=1.5)
+    live_captions: bool = False
+    live_caption_scheme: Literal["pilot-lime", "ocean", "sunset", "neon-pink", "violet"] = "pilot-lime"
     viral_title: bool = True
 
 
@@ -188,7 +191,7 @@ def get_video(video_id: str) -> Path:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "name": APP_NAME, "version": app.version}
+    return {"ok": True, "name": APP_NAME, "version": app.version, "live_captions": caption_engine_status()}
 
 
 @app.get("/api/auth/status")
@@ -314,6 +317,7 @@ def export(video_id: str, req: ExportRequest):
     export_id = uuid.uuid4().hex
     target = EXPORTS / f"{export_id}.mp4"
     caption_overlay: Path | None = None
+    export_metadata: dict[str, object] = {}
     try:
         if req.aspect == "1:1" and req.caption_text.strip() and req.caption_overlay_data_url:
             caption_overlay = _caption_overlay_from_data_url(req.caption_overlay_data_url, req.caption_position)
@@ -340,6 +344,9 @@ def export(video_id: str, req: ExportRequest):
             auto_sound_effect=req.auto_sound_effect,
             sound_volume=req.sound_volume,
             visual_strength=req.visual_strength,
+            live_captions=req.live_captions,
+            live_caption_scheme=req.live_caption_scheme,
+            export_metadata=export_metadata,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -376,6 +383,9 @@ def export(video_id: str, req: ExportRequest):
             else "manual" if req.sound_effect != "none"
             else "none"
         ),
+        "live_captions": req.live_captions,
+        "live_caption_scheme": req.live_caption_scheme if req.live_captions else "none",
+        "live_caption_word_count": int(export_metadata.get("live_caption_word_count", 0)),
     }
 
 

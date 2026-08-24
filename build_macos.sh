@@ -8,7 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV="$PROJECT_DIR/.build-venv"
 NODE_BINARY="${CLIPFARMPILOT_NODE_BINARY:-}"
 APP_NAME="Clip Farm Pilot"
-APP_VERSION="${CLIPFARMPILOT_VERSION:-1.6.0}"
+APP_VERSION="${CLIPFARMPILOT_VERSION:-1.7.0}"
 BUILD_NUMBER="${CLIPFARMPILOT_BUILD_NUMBER:-${APP_VERSION//./}}"
 APP_BUNDLE="$PROJECT_DIR/dist/$APP_NAME.app"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_DIR/.pyinstaller-cache"
@@ -25,6 +25,7 @@ fi
 "$PYTHON_BIN" -m venv "$BUILD_ENV"
 "$BUILD_ENV/bin/python" -m pip install -r backend/requirements.txt -r desktop-requirements.txt
 "$BUILD_ENV/bin/python" build_assets/generate_icon.py
+"$BUILD_ENV/bin/python" scripts/prepare_caption_runtime.py --platform macos
 
 "$BUILD_ENV/bin/python" -m PyInstaller \
   --noconfirm \
@@ -37,6 +38,7 @@ fi
   --target-architecture arm64 \
   --add-data "backend/app/static:backend/app/static" \
   --add-data "backend/app/assets:backend/app/assets" \
+  --add-data ".caption-runtime:caption_runtime" \
   --add-binary "$NODE_BINARY:bin" \
   --collect-all imageio_ffmpeg \
   --collect-all yt_dlp \

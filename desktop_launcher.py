@@ -256,6 +256,7 @@ def _test_save_bridge(
 
 def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path, library, static_dir: Path) -> None:
     """Socket-free packaged-app test for restricted build environments."""
+    from backend.app.captions import caption_engine_self_test, caption_engine_status
     from backend.app.video import analyze_viral_candidates, export_clip, generate_viral_title, probe_video
 
     if not source_path.is_file():
@@ -270,8 +271,13 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         or 'id="visualEffect"' not in html
         or 'id="effectTime"' not in html
         or 'id="autoSoundEffectToggle"' not in html
+        or 'id="liveCaptionsToggle"' not in html
+        or 'id="liveCaptionScheme"' not in html
     ):
         raise RuntimeError("The bundled Clip Farm Pilot interface is missing an expected feature.")
+    if not caption_engine_status()["available"]:
+        raise RuntimeError("The bundled offline live-caption engine is missing.")
+    caption_engine_self_test()
 
     video_id = uuid.uuid4().hex
     cached_source = uploads_dir / f"{video_id}{source_path.suffix.lower()}"
@@ -324,6 +330,8 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         sound_effect="impact-boom",
         visual_effect="punch-zoom",
         effect_time=0.6,
+        live_captions=True,
+        live_caption_scheme="neon-pink",
     )
     square_sound_times = export_clip(
         source=cached_source,
@@ -393,6 +401,12 @@ def main() -> int:
     try:
         _wait_for_server(url)
         if env("TEST_MODE") == "1":
+            from backend.app.captions import caption_engine_self_test
+
+            health = _json_request(url, "/api/health")
+            if not health.get("live_captions", {}).get("available"):
+                raise RuntimeError("The packaged offline live-caption engine is missing.")
+            caption_engine_self_test()
             export_ids: list[str] = []
             if test_vod_url := env("TEST_VOD_URL"):
                 export_ids = _test_vod_pipeline(url, str(test_vod_url))

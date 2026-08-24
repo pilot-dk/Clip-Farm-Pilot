@@ -7,7 +7,7 @@ cd "$PROJECT_DIR"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV="$PROJECT_DIR/.build-venv-linux"
 NODE_BINARY="${CLIPFARMPILOT_NODE_BINARY:-$(command -v node || true)}"
-APP_VERSION="${CLIPFARMPILOT_VERSION:-1.6.0}"
+APP_VERSION="${CLIPFARMPILOT_VERSION:-1.7.0}"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_DIR/.pyinstaller-cache-linux"
 
 if [[ -z "$NODE_BINARY" || ! -x "$NODE_BINARY" ]]; then
@@ -18,6 +18,7 @@ fi
 "$PYTHON_BIN" -m venv --system-site-packages "$BUILD_ENV"
 "$BUILD_ENV/bin/python" -m pip install -r backend/requirements.txt -r desktop-requirements.txt
 "$BUILD_ENV/bin/python" build_assets/generate_icon.py
+"$BUILD_ENV/bin/python" scripts/prepare_caption_runtime.py --platform linux
 
 "$BUILD_ENV/bin/python" -m PyInstaller \
   --noconfirm \
@@ -28,6 +29,7 @@ fi
   --icon build_assets/ClipFarmPilot.iconset/icon_512x512.png \
   --add-data "backend/app/static:backend/app/static" \
   --add-data "backend/app/assets:backend/app/assets" \
+  --add-data ".caption-runtime:caption_runtime" \
   --add-binary "$NODE_BINARY:bin" \
   --collect-all imageio_ffmpeg \
   --collect-all yt_dlp \

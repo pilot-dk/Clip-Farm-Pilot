@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "1.6.0"
+  [string]$Version = "1.7.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +17,7 @@ if (-not $NodeBinary) {
 $BuildPython = Join-Path $BuildEnv "Scripts\python.exe"
 & $BuildPython -m pip install -r backend/requirements.txt -r desktop-requirements.txt
 & $BuildPython build_assets/generate_icon.py
+& $BuildPython scripts/prepare_caption_runtime.py --platform windows
 
 & $BuildPython -m PyInstaller `
   --noconfirm `
@@ -27,6 +28,7 @@ $BuildPython = Join-Path $BuildEnv "Scripts\python.exe"
   --icon build_assets/ClipFarmPilot.ico `
   --add-data "backend/app/static;backend/app/static" `
   --add-data "backend/app/assets;backend/app/assets" `
+  --add-data ".caption-runtime;caption_runtime" `
   --add-binary "$NodeBinary;bin" `
   --collect-all imageio_ffmpeg `
   --collect-all yt_dlp `

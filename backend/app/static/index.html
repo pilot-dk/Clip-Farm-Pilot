@@ -738,6 +738,28 @@
     .auto-sound-control .switch-copy strong { font-size: 11px; }
     .smart-placement-result { display: none; margin-top: 9px; padding: 8px 9px; border: 1px solid rgba(185,243,74,.18); border-radius: 8px; color: #dff6ae; background: rgba(185,243,74,.06); font-size: 9px; line-height: 1.45; }
     .smart-placement-result.visible { display: block; }
+    .live-caption-card { padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: #0d0f14; }
+    .live-caption-options { margin-top: 13px; opacity: .48; transition: opacity .18s ease; }
+    .live-caption-options.enabled { opacity: 1; }
+    .live-caption-preview {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 7px;
+      margin-top: 11px;
+      padding: 17px 12px;
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: 9px;
+      background: linear-gradient(145deg, #1c2130, #11141b);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 900;
+      letter-spacing: -.03em;
+      text-shadow: 0 2px 0 #000, 1px 0 0 #000, -1px 0 0 #000;
+    }
+    .live-caption-preview .active { display: inline-block; color: var(--caption-highlight, #b9f34a); transform: scale(1.06); }
+    .live-caption-engine-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 10px; color: var(--muted-2); font-size: 9px; line-height: 1.45; }
+    .live-caption-engine-note::before { content: "●"; color: var(--accent); font-size: 7px; line-height: 1.65; }
     .effects-card .field + .field, .effects-strengths { margin-top: 13px; }
     .effect-time-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
     .effect-time-row .button { height: 40px; white-space: nowrap; }
@@ -1572,6 +1594,40 @@
               </div>
             </div>
 
+            <details class="section disclosure-section" id="liveCaptionsSection">
+              <summary>
+                <span class="disclosure-summary-copy"><strong>Live captions</strong><small>Automatic word-by-word highlights</small></span>
+                <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="disclosure-content">
+                <div class="live-caption-card">
+                  <div class="switch-row">
+                    <div class="switch-copy"><strong>Enable live captions</strong><small>Transcribe English speech and highlight each spoken word</small></div>
+                    <label class="switch">
+                      <input id="liveCaptionsToggle" type="checkbox" />
+                      <span class="switch-track"></span>
+                    </label>
+                  </div>
+                  <div class="live-caption-options" id="liveCaptionOptions">
+                    <div class="field">
+                      <label for="liveCaptionScheme">Colour scheme</label>
+                      <select id="liveCaptionScheme" disabled>
+                        <option value="pilot-lime">Pilot Lime</option>
+                        <option value="ocean">Ocean Blue</option>
+                        <option value="sunset">Sunset Gold</option>
+                        <option value="neon-pink">Neon Pink</option>
+                        <option value="violet">Electric Violet</option>
+                      </select>
+                    </div>
+                    <div class="live-caption-preview" id="liveCaptionPreview" aria-label="Live-caption colour preview">
+                      <span>Every</span><span class="active">word</span><span>lands</span>
+                    </div>
+                    <div class="live-caption-engine-note">Runs privately on your device with offline English speech recognition. The first captioned export can take a little longer.</div>
+                  </div>
+                </div>
+              </div>
+            </details>
+
             <details class="section disclosure-section" id="effectsSection">
               <summary>
                 <span class="disclosure-summary-copy"><strong>Effects</strong><small>Optional sound and visual boost</small></span>
@@ -2253,6 +2309,21 @@
       updateVideoFilterPreview();
     }
 
+    function updateLiveCaptionControls() {
+      const enabled = $("liveCaptionsToggle").checked;
+      const scheme = $("liveCaptionScheme").value;
+      const highlights = {
+        "pilot-lime": "#b9f34a",
+        ocean: "#35dcff",
+        sunset: "#ffd24a",
+        "neon-pink": "#ff4fd8",
+        violet: "#a98bff",
+      };
+      $("liveCaptionScheme").disabled = !enabled;
+      $("liveCaptionOptions").classList.toggle("enabled", enabled);
+      $("liveCaptionPreview").style.setProperty("--caption-highlight", highlights[scheme] || highlights["pilot-lime"]);
+    }
+
     function updateRatio(ratio) {
       state.ratio = ratio;
       $("stage").dataset.aspect = ratio;
@@ -2705,11 +2776,15 @@
       }
 
       const buttons = [$("exportButton"), $("topExportButton")];
-      buttons.forEach((button) => setBusy(button, true, "Rendering…"));
+      buttons.forEach((button) => setBusy(button, true, $("liveCaptionsToggle").checked ? "Captioning…" : "Rendering…"));
       $("viralTitleResult").classList.remove("visible");
       $("smartPlacementResult").textContent = "";
       $("smartPlacementResult").classList.remove("visible");
-      setStatus("working", "Exporting clip", `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`);
+      setStatus(
+        "working",
+        $("liveCaptionsToggle").checked ? "Transcribing and exporting" : "Exporting clip",
+        `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`,
+      );
 
       try {
         const response = await fetch(`/api/videos/${state.videoId}/export`, {
@@ -2736,6 +2811,8 @@
             auto_sound_effect: $("autoSoundEffectToggle").checked,
             sound_volume: Number($("soundVolume").value) / 100,
             visual_strength: Number($("visualStrength").value) / 100,
+            live_captions: $("liveCaptionsToggle").checked,
+            live_caption_scheme: $("liveCaptionScheme").value,
             viral_title: $("viralTitleToggle").checked,
           }),
         });
@@ -2764,9 +2841,27 @@
         if ($("viralTitleToggle").checked && state.generatedTitle) {
           $("viralTitleText").textContent = $("downloadLink").download;
           $("viralTitleResult").classList.add("visible");
-          setStatus("success", "Viral title generated", `“${state.generatedTitle}” · Your MP4 is ready to save.`);
+          if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) {
+            setStatus("success", "Live-captioned clip ready", `${data.live_caption_word_count} words timed and highlighted · “${state.generatedTitle}”`);
+          } else if ($("liveCaptionsToggle").checked) {
+            setStatus("success", "Clip ready — no clear speech found", "The MP4 was exported normally, but the speech engine did not find words to caption.");
+          } else {
+            setStatus("success", "Viral title generated", `“${state.generatedTitle}” · Your MP4 is ready to save.`);
+          }
         } else {
-          setStatus("success", "Clip exported", "Your MP4 is rendered and ready to save.");
+          setStatus(
+            "success",
+            $("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0
+              ? "Live-captioned clip exported"
+              : $("liveCaptionsToggle").checked
+                ? "Clip ready — no clear speech found"
+                : "Clip exported",
+            $("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0
+              ? `${data.live_caption_word_count} words were transcribed and highlighted in the finished MP4.`
+              : $("liveCaptionsToggle").checked
+                ? "The MP4 was exported normally without captions. Try a section with clearer speech."
+              : "Your MP4 is rendered and ready to save.",
+          );
         }
         $("downloadLink").classList.add("visible");
         if (window.pywebview?.api?.save_export) await saveRenderedClip();
@@ -2810,6 +2905,8 @@
       $("captionText").value = "";
       $("captionSize").value = "100";
       document.querySelector('input[name="captionPosition"][value="center"]').checked = true;
+      $("liveCaptionsToggle").checked = false;
+      $("liveCaptionScheme").value = "pilot-lime";
       $("videoFilter").value = "none";
       $("soundEffect").value = "none";
       $("autoSoundEffectToggle").checked = true;
@@ -2826,6 +2923,7 @@
       $("publishResults").classList.remove("visible");
       updatePublishControls();
       updateSquareCaption();
+      updateLiveCaptionControls();
       updateEffectControls();
       $("emptyPreview").hidden = false;
       $("dropTitle").textContent = "Choose or drop a video";
@@ -2957,6 +3055,7 @@
     ["faceCorner", "faceWidth", "faceHeight", "faceInsetX", "faceInsetY"].forEach((id) => $(id).addEventListener("input", updateFacePreview));
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
     document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
+    ["liveCaptionsToggle", "liveCaptionScheme"].forEach((id) => $(id).addEventListener("input", updateLiveCaptionControls));
     ["videoFilter", "soundEffect", "visualEffect", "autoSoundEffectToggle", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();
@@ -3028,6 +3127,7 @@
 
     updateFacePreview();
     updateSquareCaption();
+    updateLiveCaptionControls();
     updateEffectControls();
     updateRatio("16:9");
     initializeAccess();

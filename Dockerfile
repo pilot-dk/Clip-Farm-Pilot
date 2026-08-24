@@ -13,6 +13,10 @@ WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/backend/requirements.txt
 
+COPY scripts /app/scripts
+RUN python /app/scripts/prepare_caption_runtime.py --platform linux --output /app/.caption-runtime --cache /tmp/caption-runtime-cache \
+    && rm -rf /tmp/caption-runtime-cache
+
 COPY backend /app/backend
 
 EXPOSE 8000
