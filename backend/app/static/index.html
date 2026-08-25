@@ -1709,14 +1709,14 @@
             <div class="section">
               <div class="viral-title-control">
                 <div class="switch-row">
-                  <div class="switch-copy"><strong>Smart filename</strong><small>Creates a punchy name for the finished clip</small></div>
+                  <div class="switch-copy"><strong>Original viral title</strong><small>Uses the clip’s spoken words and energy to create a fresh hook</small></div>
                   <label class="switch">
                     <input id="viralTitleToggle" type="checkbox" checked />
                     <span class="switch-track"></span>
                   </label>
                 </div>
                 <div class="viral-title-result" id="viralTitleResult">
-                  <span>Generated filename</span>
+                  <span>Fresh title recommendation</span>
                   <strong id="viralTitleText"></strong>
                 </div>
               </div>
@@ -2776,14 +2776,16 @@
       }
 
       const buttons = [$("exportButton"), $("topExportButton")];
-      buttons.forEach((button) => setBusy(button, true, $("liveCaptionsToggle").checked ? "Captioning…" : "Rendering…"));
+      const wantsLiveCaptions = $("liveCaptionsToggle").checked;
+      const wantsViralTitle = $("viralTitleToggle").checked;
+      buttons.forEach((button) => setBusy(button, true, wantsLiveCaptions ? "Captioning…" : wantsViralTitle ? "Writing title…" : "Rendering…"));
       $("viralTitleResult").classList.remove("visible");
       $("smartPlacementResult").textContent = "";
       $("smartPlacementResult").classList.remove("visible");
       setStatus(
         "working",
-        $("liveCaptionsToggle").checked ? "Transcribing and exporting" : "Exporting clip",
-        `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}.`,
+        wantsLiveCaptions ? "Transcribing and exporting" : wantsViralTitle ? "Creating a fresh viral title" : "Exporting clip",
+        `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}${wantsViralTitle ? " · listening for the strongest hook" : ""}.`,
       );
 
       try {
@@ -2846,7 +2848,7 @@
           } else if ($("liveCaptionsToggle").checked) {
             setStatus("success", "Clip ready — no clear speech found", "The MP4 was exported normally, but the speech engine did not find words to caption.");
           } else {
-            setStatus("success", "Viral title generated", `“${state.generatedTitle}” · Your MP4 is ready to save.`);
+            setStatus("success", "Original viral title ready", `“${state.generatedTitle}” · A different recommendation is created for every export.`);
           }
         } else {
           setStatus(
@@ -3020,7 +3022,7 @@
     $("viralTitleToggle").addEventListener("change", (event) => {
       if (!event.target.checked) {
         $("viralTitleResult").classList.remove("visible");
-        toast("Viral filename disabled. Clip Farm Pilot will use a standard filename.");
+        toast("Original viral title disabled. Clip Farm Pilot will use a standard filename.");
       }
     });
 

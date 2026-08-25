@@ -308,6 +308,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     portrait_id = uuid.uuid4().hex
     square_id = uuid.uuid4().hex
     gaming_id = uuid.uuid4().hex
+    portrait_metadata: dict[str, object] = {}
     landscape_sound_times = export_clip(
         source=cached_source,
         output=exports_dir / f"{landscape_id}.mp4",
@@ -332,6 +333,8 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         effect_time=0.6,
         live_captions=True,
         live_caption_scheme="neon-pink",
+        title_transcript=True,
+        export_metadata=portrait_metadata,
     )
     square_sound_times = export_clip(
         source=cached_source,
@@ -367,6 +370,8 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     title_result = generate_viral_title(
         exports_dir / f"{gaming_id}.mp4",
         source_title="FC 26 Weekend League Livestream.mp4",
+        transcript_text=str(portrait_metadata.get("title_transcript", "")),
+        variation_seed=gaming_id,
     )
     if not title_result["title"] or title_result["filename"].startswith(f"{APP_NAME}-"):
         raise RuntimeError("The bundled viral filename generator did not produce a content-aware title.")

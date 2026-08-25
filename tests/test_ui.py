@@ -66,6 +66,12 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("live_caption_scheme:", self.html)
         self.assertIn("Automatic word-by-word highlights", self.html)
 
+    def test_original_viral_title_is_enabled_and_explained(self):
+        self.assertIn('<input id="viralTitleToggle" type="checkbox" checked', self.html)
+        self.assertIn("Original viral title", self.html)
+        self.assertIn("spoken words and energy", self.html)
+        self.assertIn("A different recommendation is created for every export", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

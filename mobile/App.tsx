@@ -36,6 +36,8 @@ export default function App() {
   const [layout, setLayout] = useState<Layout>('standard');
   const [liveCaptions, setLiveCaptions] = useState(false);
   const [captionScheme, setCaptionScheme] = useState<CaptionScheme>('pilot-lime');
+  const [viralTitle, setViralTitle] = useState(true);
+  const [generatedTitle, setGeneratedTitle] = useState('');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,7 +104,7 @@ export default function App() {
   async function exportClip() {
     if (!videoId || !selected) return;
     setBusy(true);
-    setStatus('Clearing clip for launch…');
+    setStatus(viralTitle ? 'Creating a fresh title and exporting…' : 'Clearing clip for launch…');
 
     try {
       const response = await fetch(`${API}/api/videos/${videoId}/export`, {
@@ -118,11 +120,13 @@ export default function App() {
           face_height_fraction: 0.34,
           live_captions: liveCaptions,
           live_caption_scheme: captionScheme,
+          viral_title: viralTitle,
         }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || 'Export failed');
-      setStatus('Clip launched · opening video');
+      setGeneratedTitle(viralTitle ? payload.viral_title || '' : '');
+      setStatus(viralTitle && payload.viral_title ? `Fresh title · ${payload.viral_title}` : 'Clip launched · opening video');
       await Linking.openURL(`${API}${payload.download_url}`);
     } catch (error: any) {
       setStatus(error.message);
@@ -231,6 +235,22 @@ export default function App() {
               </TouchableOpacity>
             ))}
           </View>
+        </Panel>
+
+        <Panel code="VT" title="Original viral title">
+          <View style={styles.switchRow}>
+            <View style={styles.switchCopy}>
+              <Text style={styles.switchTitle}>Fresh recommendation per export</Text>
+              <Text style={styles.panelHint}>Uses spoken words and clip energy to create a new hook.</Text>
+            </View>
+            <Switch
+              value={viralTitle}
+              onValueChange={setViralTitle}
+              trackColor={{ false: '#263c49', true: '#357894' }}
+              thumbColor={viralTitle ? '#5bd6ff' : '#8aa0ae'}
+            />
+          </View>
+          {!!generatedTitle && <Text style={styles.generatedTitle}>{generatedTitle}</Text>}
         </Panel>
 
         <View style={styles.statusPanel}>
@@ -383,6 +403,18 @@ const styles = StyleSheet.create({
   captionSchemeActive: { borderColor: '#4f8da8', backgroundColor: '#102c3f' },
   captionColour: { width: 8, height: 8, borderRadius: 4 },
   captionSchemeText: { color: '#dcebf3', fontSize: 10, fontWeight: '800' },
+  generatedTitle: {
+    marginTop: 12,
+    padding: 11,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#285b73',
+    borderRadius: 9,
+    color: '#b9f34a',
+    backgroundColor: '#081621',
+    fontSize: 12,
+    fontWeight: '800',
+  },
   sourceName: { color: '#91a9ba', marginBottom: 2 },
   button: {
     minHeight: 48,

@@ -8,7 +8,7 @@ This updated build includes a simple, polished browser editor connected directly
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.7 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.8 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -47,7 +47,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.7.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.8.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -55,7 +55,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.7.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.8.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -63,7 +63,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.7.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.8.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -110,7 +110,7 @@ The editor now includes:
 - **Export Clip** actions in the toolbar and editor panel.
 - Rendering status, errors, success feedback, and a finished MP4 save button.
 - A native desktop **Save As** window after rendering, with a reusable **Save exported MP4** button if saving is cancelled.
-- An optional **Viral clip filename** generator that inspects the finished clip’s audio-energy arc and combines it with the VOD/upload title or creator-entered center text.
+- An optional **Original viral title** generator that listens to the exported clip, extracts its strongest spoken phrase, reads the audio-energy arc, and avoids recently recommended titles.
 - A **Publish directly** panel for connecting YouTube, Instagram, and TikTok accounts through their official OAuth sign-in flows.
 - Multi-platform publishing of the finished MP4 with a reusable title, caption/hashtags, visibility choice, per-platform success/error results, and direct links to successful posts.
 - Responsive layouts for desktop, phone, and tablet browsers, plus home-screen installation.
@@ -156,17 +156,17 @@ Optional `CLIPFARMPILOT_OAUTH_REDIRECT_BASE` can point all OAuth callbacks at a 
 
 For a public release, keep Meta and TikTok client secrets on a small Clip Farm Pilot web service rather than embedding them in the Mac app. The included local integration is suitable for development and testing with accounts authorized in each provider’s developer dashboard.
 
-## Automatic viral filenames
+## Original viral title recommendations
 
-The **Viral clip filename** switch is enabled by default. After rendering, Clip Farm Pilot analyzes the finished clip and suggests a short title such as:
+The **Original viral title** switch is enabled by default. During export, Clip Farm Pilot privately transcribes the selected clip, finds a concrete phrase that was actually spoken, combines it with the clip's energy pattern, and suggests a concise curiosity-driven title such as:
 
 ```text
-FC 26 Weekend League — Wait for the Ending.mp4
+The Craziest Goal I Have Ever Scored — Wait for the Payoff.mp4
 ```
 
-The generated title appears in the editor and becomes the default filename in the desktop **Save As** window. You can edit that filename before saving, or turn the switch off to use Clip Farm Pilot’s standard filename.
+The recommendation appears in the editor, becomes the default filename in the desktop **Save As** window, and is copied into the direct-publishing title field. The app rotates through a large set of truthful hook structures and remembers its recent recommendations, so exporting again produces a different title instead of recycling the same line. You can edit it before saving or publishing, or turn the switch off to use Clip Farm Pilot’s standard filename.
 
-This filename generator uses the source/VOD title, creator-entered square caption, and changes in audio intensity. It does not yet reuse the live-caption transcript or understand the exact game event, and no title can guarantee virality. Transcript-aware title generation is a natural next production upgrade.
+Title analysis uses the same bundled offline English speech engine as live captions and never sends the clip to a third-party AI service. Creator-entered square text takes priority when present, then the spoken transcript, VOD title, and energy pattern. A strong title can improve packaging, but no title can guarantee virality.
 
 ## Live captions
 
@@ -322,7 +322,7 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On Windows x64 with Python 3.12 and Node.js installed:
 
 ```powershell
-./build_windows.ps1 -Version 1.7.0
+./build_windows.ps1 -Version 1.8.0
 ```
 
 On Ubuntu 24.04 x64 with Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installed:
@@ -340,7 +340,7 @@ The GitHub Actions **Build Windows and Linux releases** workflow runs both build
 3. **Caption customization** — custom fonts, placement, safe-area presets, and multilingual speech models.
 4. **Smart gameplay reframing** — track important game HUD/action instead of always center-cropping.
 5. **Face tracking** — keep the streamer centered when the source webcam moves.
-6. **Clip title/hook generation** — generate Shorts titles, on-screen hooks, captions, and descriptions.
+6. **Publishing copy generation** — generate platform-specific descriptions, hashtags, and on-screen hooks from the title transcript.
 7. **Multiple clip lengths** — 15 sec / 30 sec / 45 sec / 60 sec with platform-specific scoring.
 8. **Creator profiles** — remember each creator's face-cam position, caption style, font, watermark, game, and preferred layout.
 9. **Batch mode** — upload a 4-hour stream and receive 10–20 ranked clips.

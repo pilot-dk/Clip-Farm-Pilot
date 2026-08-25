@@ -5,10 +5,12 @@ import binascii
 import hashlib
 import hmac
 import io
+import json
 import os
 import secrets
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from html import escape
@@ -48,6 +50,8 @@ WEB_PASSWORD = str(env("WEB_PASSWORD", ""))
 SESSION_SECRET = str(env("SESSION_SECRET") or secrets.token_urlsafe(32))
 SESSION_COOKIE = f"{APP_SLUG}_session"
 SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 30
+TITLE_HISTORY_PATH = STORAGE / "viral-title-history.json"
+_TITLE_HISTORY_LOCK = threading.RLock()
 
 app = FastAPI(title=f"{APP_NAME} API", version=APP_VERSION)
 CORS_ORIGINS = [value.strip() for value in str(env("CORS_ORIGINS", "")).split(",") if value.strip()]
@@ -59,6 +63,41 @@ if CORS_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+def _unique_viral_title(
+    clip_path: Path,
+    source_title: str,
+    caption_text: str,
+    transcript_text: str,
+    export_id: str,
+) -> dict:
+    """Claim a fresh recommendation and remember it across app restarts."""
+    with _TITLE_HISTORY_LOCK:
+        history: list[str] = []
+        try:
+            payload = json.loads(TITLE_HISTORY_PATH.read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                history = [str(item) for item in payload if str(item).strip()][-200:]
+        except (OSError, ValueError, TypeError):
+            pass
+        result = generate_viral_title(
+            clip_path=clip_path,
+            source_title=source_title,
+            caption_text=caption_text,
+            transcript_text=transcript_text,
+            variation_seed=export_id,
+            excluded_titles=set(history),
+        )
+        history.append(str(result["title"]))
+        try:
+            temporary = TITLE_HISTORY_PATH.with_suffix(".tmp")
+            temporary.write_text(json.dumps(history[-200:], ensure_ascii=False) + "\n", encoding="utf-8")
+            temporary.replace(TITLE_HISTORY_PATH)
+        except OSError:
+            # A read-only deployment can still return the export-specific variant.
+            pass
+        return result
 
 
 class AnalyzeRequest(BaseModel):
@@ -346,6 +385,7 @@ def export(video_id: str, req: ExportRequest):
             visual_strength=req.visual_strength,
             live_captions=req.live_captions,
             live_caption_scheme=req.live_caption_scheme,
+            title_transcript=req.viral_title,
             export_metadata=export_metadata,
         )
     except ValueError as exc:
@@ -363,10 +403,12 @@ def export(video_id: str, req: ExportRequest):
     }
     if req.viral_title:
         try:
-            title_result = generate_viral_title(
+            title_result = _unique_viral_title(
                 clip_path=target,
                 source_title=VIDEO_LIBRARY.title_for(video_id),
                 caption_text=req.caption_text,
+                transcript_text=str(export_metadata.get("title_transcript", "")),
+                export_id=export_id,
             )
         except Exception:
             # A title suggestion should never prevent a completed render from saving.

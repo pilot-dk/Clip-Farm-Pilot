@@ -32,6 +32,7 @@ class WebPortTests(unittest.TestCase):
     def test_live_caption_options_are_validated_and_default_off(self):
         request = main.ExportRequest(start=0, end=12)
         self.assertFalse(request.live_captions)
+        self.assertTrue(request.viral_title)
         self.assertEqual(request.live_caption_scheme, "pilot-lime")
         with self.assertRaises(ValueError):
             main.ExportRequest(start=0, end=12, live_caption_scheme="invisible")

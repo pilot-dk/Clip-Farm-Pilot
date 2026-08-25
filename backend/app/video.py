@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -641,26 +642,372 @@ def safe_export_filename(title: str, fallback: str = "Clip Farm Pilot Viral Mome
     return f"{stem}.mp4"
 
 
-def generate_viral_title(clip_path: Path, source_title: str = "", caption_text: str = "") -> dict:
-    """Generate a concise filename title from the rendered clip and known context.
+_TITLE_EDGE_WORDS = {
+    "a", "an", "and", "are", "as", "at", "because", "but", "for", "from", "in", "is",
+    "it", "like", "of", "on", "or", "so", "that", "the", "then", "this", "to", "uh",
+    "um", "was", "well", "were", "with", "you", "your",
+}
+_TITLE_FILLER_STARTS = {
+    "actually", "and", "basically", "but", "honestly", "like", "okay", "right", "seriously",
+    "so", "uh", "um", "well", "yeah",
+}
+_TITLE_SIGNAL_WORDS = {
+    "best", "broke", "changed", "craziest", "crazy", "finally", "first", "goal", "impossible",
+    "insane", "last", "never", "secret", "shocked", "truth", "unexpected", "wild", "win", "won", "worst",
+}
 
-    The MVP deliberately avoids pretending to understand speech. It inspects the
-    finished clip's audio-energy arc and combines that signal with trustworthy
-    context already available from the VOD title or creator-provided caption.
-    """
+
+def _title_case_phrase(value: str) -> str:
+    """Title-case ordinary words without breaking apostrophes, acronyms, or emoji."""
+    small_words = {"a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"}
+    tokens = value.split()
+    result: list[str] = []
+    for index, token in enumerate(tokens):
+        match = re.match(r"^([^\w]*)([\w'’.-]+)([^\w]*)$", token, flags=re.UNICODE)
+        if not match:
+            result.append(token)
+            continue
+        prefix, word, suffix = match.groups()
+        lowered = word.lower()
+        if word.isupper() and len(word) <= 5:
+            rendered = word
+        elif 0 < index < len(tokens) - 1 and lowered in small_words:
+            rendered = lowered
+        else:
+            rendered = lowered[:1].upper() + lowered[1:]
+        result.append(f"{prefix}{rendered}{suffix}")
+    return " ".join(result)
+
+
+def _clean_title_subject(value: str, word_limit: int = 9, character_limit: int = 58) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or ""))
+    normalized = re.sub(r"\[(?:music|applause|laughter|noise)\]", " ", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"[/|]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" \t\r\n,.;:!?—–-\"“”")
+    words = normalized.split()
+    while words and words[0].lower().strip(".,!?") in _TITLE_FILLER_STARTS:
+        words.pop(0)
+    superlatives = {"best", "biggest", "craziest", "fastest", "greatest", "wildest", "worst"}
+    for index, word in enumerate(words):
+        if word.lower().strip(".,!?") in superlatives and index > 0:
+            earlier = {item.lower().strip(".,!?") for item in words[:index]}
+            if words[index - 1].lower().strip(".,!?") == "the":
+                words = words[index - 1:]
+            elif earlier <= {"actually", "i", "is", "it", "that", "that's", "this", "was"}:
+                words = words[index:]
+            break
+    words = words[:word_limit]
+    while len(words) > 2 and words[-1].lower().strip(".,!?") in _TITLE_EDGE_WORDS:
+        words.pop()
+    subject = " ".join(words).strip(" ,.;:!?—–-\"“”")
+    if len(subject) > character_limit:
+        subject = subject[: character_limit + 1].rsplit(" ", 1)[0].strip(" ,.;:!?—–-")
+    rendered = _title_case_phrase(subject)
+    first_word = re.sub(r"[^\w]", "", rendered.split()[0]).casefold() if rendered else ""
+    if first_word in superlatives:
+        rendered = f"The {rendered}"
+    return rendered
+
+
+def _transcript_title_subject(transcript_text: str) -> str:
+    """Choose a short, concrete phrase from the actual words in the exported clip."""
+    normalized = unicodedata.normalize("NFKC", str(transcript_text or ""))
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return ""
+    chunks = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\s*[;:]\s*", normalized) if part.strip()]
+    candidates: list[tuple[float, str]] = []
+    for chunk_index, chunk in enumerate(chunks):
+        raw_words = chunk.split()
+        windows: list[tuple[list[str], int]] = []
+        if len(raw_words) <= 10:
+            windows.append((raw_words, 0))
+        else:
+            windows.extend(((raw_words[:9], 0), (raw_words[-9:], max(0, len(raw_words) - 9))))
+            for start in range(3, max(4, len(raw_words) - 5), 5):
+                windows.append((raw_words[start:start + 9], start))
+        for window, window_start in windows:
+            subject = _clean_title_subject(" ".join(window))
+            words = re.findall(r"[\w'’]+", subject.lower(), flags=re.UNICODE)
+            meaningful = [word for word in words if word not in _TITLE_EDGE_WORDS]
+            if len(words) < 3 or len(meaningful) < 2:
+                continue
+            generic = subject.casefold().strip(" .!?") in {
+                "thank you", "like and subscribe", "subscribe to the channel",
+            }
+            if generic:
+                continue
+            signal_bonus = sum(word in _TITLE_SIGNAL_WORDS for word in meaningful) * 2.4
+            diversity = len(set(meaningful)) / max(1, len(meaningful))
+            length_fit = 2.0 - abs(len(words) - 6) * 0.25
+            punctuation_bonus = 0.45 if re.search(r"[!?]", chunk) else 0.0
+            position_bonus = chunk_index / max(1, len(chunks) - 1) * 0.20
+            opening_bonus = 0.70 if window_start == 0 else 0.0
+            connective_penalty = 1.25 if any(word in {"because", "although", "unless", "while"} for word in words[1:-1]) else 0.0
+            score = len(meaningful) * 0.34 + signal_bonus + diversity + length_fit + punctuation_bonus + position_bonus + opening_bonus - connective_penalty
+            candidates.append((score, subject))
+    if not candidates:
+        generic_chunks = {"thank you", "like and subscribe", "subscribe to the channel"}
+        if all(_clean_title_subject(chunk).casefold().strip(" .!?") in generic_chunks for chunk in chunks):
+            return ""
+        return _clean_title_subject(normalized)
+    return max(candidates, key=lambda item: (item[0], len(item[1])))[1]
+
+
+_TITLE_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "big_finish": (
+        "{subject} — Wait for the Payoff",
+        "How {subject} Built to That Ending",
+        "{subject} Was Only the Beginning",
+        "The Payoff After {subject}",
+        "{subject}: The Ending Made It Worth It",
+        "Everything Changed After {subject}",
+        "The Final Seconds of {subject}",
+        "{subject} — It All Comes Down to This",
+        "What Happened After {subject}",
+        "{subject}: One Last Twist",
+        "The Ending Nobody Saw in {subject}",
+        "{subject} Saved Its Best Moment for Last",
+    ),
+    "fast_start": (
+        "{subject} and Instant Chaos",
+        "{subject}: Zero to Chaos in Seconds",
+        "How {subject} Kicked Everything Off",
+        "{subject} Started at Full Speed",
+        "No Warm-Up — Just {subject}",
+        "{subject} Went Off Immediately",
+        "The Fastest Start to {subject}",
+        "{subject}: It Got Wild Instantly",
+        "From the First Second: {subject}",
+        "{subject} Did Not Waste Any Time",
+        "The Chaos Started With {subject}",
+        "{subject} Hit Different From the Start",
+    ),
+    "escalation": (
+        "How {subject} Escalated So Fast",
+        "{subject} — Then It Got Even Wilder",
+        "The Moment {subject} Went Off the Rails",
+        "{subject}: A Normal Moment Until It Wasn’t",
+        "How Did {subject} Turn Into This?",
+        "{subject} Kept Getting More Intense",
+        "The Exact Second {subject} Changed",
+        "{subject} Took a Wild Turn",
+        "It Started With {subject} and Kept Going",
+        "{subject}: This Escalated Quickly",
+        "The Build-Up to {subject} Was Unreal",
+        "{subject} Got Wilder by the Second",
+    ),
+    "sustained": (
+        "{subject} Was Pure Intensity",
+        "The Most Intense Part of {subject}",
+        "{subject}: No Breaks, Just Chaos",
+        "Why {subject} Had Everyone Locked In",
+        "{subject} Never Let Up",
+        "Every Second of {subject} Mattered",
+        "{subject} at Maximum Intensity",
+        "The Pressure Never Dropped During {subject}",
+        "{subject}: The Clip That Never Slowed Down",
+        "Inside the Wildest Part of {subject}",
+        "{subject} Was Nonstop",
+        "The Energy Around {subject} Was Different",
+    ),
+    "surprise": (
+        "{subject} — I Did Not See That Coming",
+        "The Twist After {subject}",
+        "{subject}: That Took a Turn",
+        "What Just Happened With {subject}?",
+        "{subject} Changed in One Second",
+        "The Unexpected Side of {subject}",
+        "{subject} Was Not Going How I Expected",
+        "One Moment Changed Everything About {subject}",
+        "{subject}: Watch What Happens Next",
+        "The Part of {subject} I Had to Replay",
+        "{subject} Came Out of Nowhere",
+        "I Was Not Ready for {subject}",
+    ),
+}
+
+_SPOKEN_TITLE_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "big_finish": (
+        "“{subject}” — Wait for the Payoff",
+        "What Happened After “{subject}”",
+        "The Ending After “{subject}” Says It All",
+        "“{subject}” Was Only the Beginning",
+        "The Final Seconds After “{subject}”",
+        "Why “{subject}” Was the Turning Point",
+        "“{subject}” — Then Came the Best Part",
+        "The Payoff Behind “{subject}”",
+        "Everything Led Back to “{subject}”",
+        "“{subject}” Set Up the Perfect Ending",
+        "The Moment After “{subject}” Changed Everything",
+        "“{subject}” — One Last Twist",
+    ),
+    "fast_start": (
+        "“{subject}” — And We Were Off",
+        "Everything Started With “{subject}”",
+        "“{subject}” Set the Tone Instantly",
+        "The Chaos Started Right After “{subject}”",
+        "“{subject}” — Zero Warm-Up",
+        "How “{subject}” Kicked Everything Off",
+        "“{subject}” Changed the Energy Immediately",
+        "The First Seconds After “{subject}”",
+        "“{subject}” — Straight Into the Action",
+        "It All Started With “{subject}”",
+        "“{subject}” Hit From the First Second",
+        "Why “{subject}” Was the Perfect Opener",
+    ),
+    "escalation": (
+        "“{subject}” — Then Everything Escalated",
+        "What Happened Right After “{subject}”",
+        "How “{subject}” Changed the Whole Moment",
+        "“{subject}” Was Just the Start",
+        "The Moment After “{subject}” Got Wilder",
+        "“{subject}” — And It Kept Building",
+        "Why “{subject}” Became the Turning Point",
+        "Everything Shifted After “{subject}”",
+        "“{subject}” Took This Somewhere Unexpected",
+        "The Build-Up After “{subject}” Was Unreal",
+        "“{subject}” — Watch the Energy Change",
+        "It Started With “{subject}” and Did Not Stop",
+    ),
+    "sustained": (
+        "“{subject}” — Every Second Mattered",
+        "Why “{subject}” Had Everyone Locked In",
+        "The Intensity Behind “{subject}”",
+        "“{subject}” Never Let the Energy Drop",
+        "The Full Story Behind “{subject}”",
+        "“{subject}” — No Breaks, Just Momentum",
+        "What Made “{subject}” So Intense",
+        "“{subject}” Kept the Pressure On",
+        "The Moment Built Around “{subject}”",
+        "“{subject}” — The Energy Never Stopped",
+        "Why “{subject}” Hit Different",
+        "Every Part of “{subject}” Counted",
+    ),
+    "surprise": (
+        "“{subject}” — Then the Clip Took a Turn",
+        "What Happened After “{subject}”",
+        "The Unexpected Part of “{subject}”",
+        "“{subject}” Changed the Whole Moment",
+        "Why “{subject}” Caught Me Off Guard",
+        "“{subject}” — I Had to Replay This",
+        "The Twist Hidden Inside “{subject}”",
+        "“{subject}” Was Not Going Where I Expected",
+        "One Second Changed Everything After “{subject}”",
+        "The Part After “{subject}” Nobody Expected",
+        "“{subject}” — Watch What Happens Next",
+        "I Was Not Ready for “{subject}”",
+    ),
+    "explainer": (
+        "Why “{subject}” Matters More Than You Think",
+        "The Bigger Story Behind “{subject}”",
+        "What Most People Miss About “{subject}”",
+        "“{subject}” Explained in One Clip",
+        "The Key Detail Behind “{subject}”",
+        "Why “{subject}” Changes the Bigger Picture",
+        "The Truth Behind “{subject}”",
+        "“{subject}” Changes How You See This",
+        "One Fact About “{subject}” That Sticks",
+        "Why “{subject}” Is So Important",
+        "The Hidden Meaning of “{subject}”",
+        "What “{subject}” Really Means",
+    ),
+}
+
+
+def _bounded_viral_title(value: str, limit: int = 86) -> str:
+    title = re.sub(r"\s+", " ", value).strip(" .—–-")
+    if len(title) <= limit:
+        return title
+    shortened = title[: limit + 1].rsplit(" ", 1)[0].rstrip(" ,.;:—–-")
+    return shortened or title[:limit].rstrip(" ,.;:—–-")
+
+
+def generate_viral_title(
+    clip_path: Path,
+    source_title: str = "",
+    caption_text: str = "",
+    transcript_text: str = "",
+    variation_seed: str = "",
+    excluded_titles: set[str] | tuple[str, ...] | list[str] = (),
+) -> dict:
+    """Create a fresh, truthful hook from spoken words, creator context, and clip energy."""
     try:
-        pattern, hook = _classify_clip_energy(_audio_rms_per_second(clip_path))
+        pattern, _ = _classify_clip_energy(_audio_rms_per_second(clip_path))
     except (OSError, subprocess.SubprocessError, RuntimeError):
-        pattern, hook = "surprise", "The Moment I Didn’t See Coming"
+        pattern = "surprise"
 
-    caption = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", caption_text or "")).strip()
-    if caption:
-        title = caption[:92].strip()
-        strategy = "creator_caption"
+    caption_subject = _clean_title_subject(caption_text)
+    transcript_subject = _transcript_title_subject(transcript_text)
+    context_subject = _clean_title_subject(_clean_title_context(source_title), word_limit=8)
+    subject = caption_subject or transcript_subject or context_subject
+    semantic_source = "creator_caption" if caption_subject else "transcript" if transcript_subject else "source_context"
+    if not caption_subject and transcript_subject and context_subject:
+        first_transcript_word = transcript_subject.split()[0].casefold().strip(".,!?")
+        if first_transcript_word in {"he", "her", "his", "it", "its", "she", "that", "their", "they", "this"}:
+            subject = re.sub(r"^(?:How|What|Why)\s+", "", context_subject, flags=re.IGNORECASE).strip()
+    transcript_terms = set(re.findall(r"[\w'’]+", transcript_text.casefold(), flags=re.UNICODE))
+    explainer_cues = {
+        "because", "causes", "ecosystem", "effects", "explains", "fact", "important", "keystone",
+        "means", "reason", "role", "science", "species", "system", "works",
+    }
+    title_pattern = "explainer" if transcript_subject and len(transcript_terms & explainer_cues) >= 2 else pattern
+
+    if subject:
+        templates = _SPOKEN_TITLE_TEMPLATES[title_pattern] if semantic_source in {"creator_caption", "transcript"} else _TITLE_TEMPLATES[pattern]
+        candidates = [_bounded_viral_title(template.format(subject=subject)) for template in templates]
+        if context_subject and context_subject.casefold() != subject.casefold():
+            if semantic_source == "source_context":
+                candidates.extend([
+                    _bounded_viral_title(f"{context_subject}: {subject}"),
+                    _bounded_viral_title(f"The {context_subject} Moment Built Around {subject}"),
+                ])
+            else:
+                candidates.extend([
+                    _bounded_viral_title(f"{context_subject} — The Detail Most People Miss"),
+                    _bounded_viral_title(f"Why {context_subject} Matters Here"),
+                    _bounded_viral_title(f"{context_subject} Through One Powerful Moment"),
+                ])
     else:
-        context = _clean_title_context(source_title)
-        title = f"{context} — {hook}" if context else hook
-        strategy = pattern
+        candidates = [
+            "The Moment Everything Changed",
+            "This Escalated Faster Than Expected",
+            "The Ending Is Worth the Wait",
+            "One Second Changed the Whole Clip",
+            "The Part I Had to Replay",
+            "It Got Wilder With Every Second",
+            "This Turned Into Something Else",
+            "The Payoff Came Out of Nowhere",
+        ]
+        semantic_source = "energy"
+
+    # A unique export id changes the order; recent-history exclusions guarantee
+    # that repeated exports receive a different recommendation while good hooks
+    # stay attached to truthful clip context.
+    seed = variation_seed or f"{clip_path}:{source_title}:{caption_text}:{transcript_text}"
+    candidates = list(dict.fromkeys(candidates))
+    candidates.sort(key=lambda candidate: hashlib.sha256(f"{seed}\0{candidate}".encode("utf-8")).digest())
+    excluded = {title.casefold() for title in excluded_titles}
+    title = next((candidate for candidate in candidates if candidate.casefold() not in excluded), "")
+    if not title:
+        adjectives = (
+            "Clutch", "Chaotic", "Electric", "Epic", "Fearless", "Iconic", "Intense", "Legendary",
+            "Raw", "Relentless", "Unfiltered", "Unexpected", "Unreal", "Untamed", "Wild", "Zero-Chill",
+        )
+        moments = (
+            "Breakdown", "Ending", "Energy", "Finish", "Moment", "Payoff", "Reaction", "Replay",
+            "Sequence", "Showdown", "Surprise", "Turn", "Twist", "Vibe", "Win", "Wildcard",
+        )
+        fallback_variants = [
+            _bounded_viral_title(f"{subject or 'The Clip'} — {adjective} {moment}")
+            for adjective in adjectives
+            for moment in moments
+        ]
+        fallback_variants.sort(
+            key=lambda candidate: hashlib.sha256(f"{seed}\0fallback\0{candidate}".encode("utf-8")).digest()
+        )
+        title = next(candidate for candidate in fallback_variants if candidate.casefold() not in excluded)
+    strategy = f"{semantic_source}_{title_pattern}"
 
     return {
         "title": title,
@@ -1442,6 +1789,7 @@ def export_clip(
     visual_strength: float = 1.0,
     live_captions: bool = False,
     live_caption_scheme: LiveCaptionScheme = "pilot-lime",
+    title_transcript: bool = False,
     export_metadata: dict[str, object] | None = None,
 ) -> list[float]:
     info = probe_video(source)
@@ -1465,9 +1813,17 @@ def export_clip(
 
     live_caption_ass: Path | None = None
     live_caption_word_count = 0
+    transcript_words = []
+    if live_captions or title_transcript:
+        try:
+            transcript_words = transcribe_words(source, start, end, ffmpeg_executable())
+        except (OSError, RuntimeError, ValueError):
+            if live_captions:
+                raise
+            transcript_words = []
     if live_captions:
-        words = transcribe_words(source, start, end, ffmpeg_executable())
-        live_caption_word_count = len(words)
+        live_caption_word_count = len(transcript_words)
+        words = transcript_words
         if words:
             caption_file = tempfile.NamedTemporaryFile(
                 prefix=f"{APP_SLUG}-live-captions-", suffix=".ass", delete=False
@@ -1478,6 +1834,7 @@ def export_clip(
             write_live_caption_ass(words, live_caption_ass, width, height, live_caption_scheme)
     if export_metadata is not None:
         export_metadata["live_caption_word_count"] = live_caption_word_count
+        export_metadata["title_transcript"] = " ".join(word.text for word in transcript_words)[:2_000]
 
     has_effects = sound_effect != "none" or visual_effect != "none"
     has_postprocessing = has_effects or live_caption_ass is not None

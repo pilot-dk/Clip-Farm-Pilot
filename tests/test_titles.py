@@ -9,6 +9,7 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
+from backend.app import main
 from backend.app.video import _emoji_font, _render_square_caption, generate_viral_title, safe_export_filename
 
 
@@ -19,11 +20,12 @@ class ViralTitleTests(unittest.TestCase):
             result = generate_viral_title(
                 Path("rendered.mp4"),
                 source_title="FC 26 Weekend League Livestream.mp4",
+                variation_seed="export-one",
             )
 
-        self.assertEqual(result["strategy"], "big_finish")
-        self.assertEqual(result["title"], "FC 26 Weekend League — Wait for the Ending")
-        self.assertEqual(result["filename"], "FC 26 Weekend League — Wait for the Ending.mp4")
+        self.assertEqual(result["strategy"], "source_context_big_finish")
+        self.assertIn("FC 26 Weekend League", result["title"])
+        self.assertEqual(result["filename"], f'{result["title"]}.mp4')
 
     def test_creator_caption_is_used_as_the_strongest_semantic_signal(self):
         with patch("backend.app.video._audio_rms_per_second", return_value=np.array([0.1, 0.5, 0.2])):
@@ -31,11 +33,67 @@ class ViralTitleTests(unittest.TestCase):
                 Path("rendered.mp4"),
                 source_title="Long stream",
                 caption_text="W shave ❤️ / best reaction",
+                variation_seed="caption-export",
             )
 
-        self.assertEqual(result["strategy"], "creator_caption")
-        self.assertEqual(result["title"], "W shave ❤️ / best reaction")
-        self.assertEqual(result["filename"], "W shave ❤️ best reaction.mp4")
+        self.assertEqual(result["strategy"], "creator_caption_escalation")
+        self.assertIn("W Shave ❤️ Best Reaction", result["title"])
+        self.assertNotIn("/", result["filename"])
+
+    def test_transcript_creates_a_content_aware_title(self):
+        energy = np.array([0.08, 0.09, 0.10, 0.12, 0.24, 0.62, 0.94], dtype=np.float32)
+        with patch("backend.app.video._audio_rms_per_second", return_value=energy):
+            result = generate_viral_title(
+                Path("rendered.mp4"),
+                source_title="Ranked Match Livestream.mp4",
+                transcript_text="Um yeah, that was actually the craziest goal I have ever scored!",
+                variation_seed="transcript-export",
+            )
+
+        self.assertEqual(result["strategy"], "transcript_big_finish")
+        self.assertIn("The Craziest Goal I Have Ever Scored", result["title"])
+
+    def test_explainer_transcript_uses_an_informative_curiosity_hook(self):
+        with patch("backend.app.video._audio_rms_per_second", return_value=np.array([0.2, 0.3, 0.4])):
+            result = generate_viral_title(
+                Path("rendered.mp4"),
+                source_title="Why Tigers Matter.mp4",
+                transcript_text="Tigers are also a keystone species.",
+                variation_seed="explainer-export",
+            )
+
+        self.assertEqual(result["strategy"], "transcript_explainer")
+        self.assertIn("Tigers", result["title"])
+
+    def test_repeated_exports_receive_original_recommendations(self):
+        energy = np.array([0.1, 0.3, 0.8, 0.4], dtype=np.float32)
+        used: set[str] = set()
+        with patch("backend.app.video._audio_rms_per_second", return_value=energy):
+            for index in range(25):
+                result = generate_viral_title(
+                    Path("rendered.mp4"),
+                    transcript_text="That was the craziest goal I have ever scored!",
+                    variation_seed=f"export-{index}",
+                    excluded_titles=used,
+                )
+                self.assertNotIn(result["title"], used)
+                used.add(result["title"])
+
+        self.assertEqual(len(used), 25)
+
+    def test_recent_title_history_persists_between_recommendations(self):
+        energy = np.array([0.1, 0.3, 0.8, 0.4], dtype=np.float32)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            main, "TITLE_HISTORY_PATH", Path(temporary) / "title-history.json"
+        ), patch("backend.app.video._audio_rms_per_second", return_value=energy):
+            first = main._unique_viral_title(
+                Path("rendered.mp4"), "Ranked match", "", "That goal was completely impossible!", "one"
+            )
+            second = main._unique_viral_title(
+                Path("rendered.mp4"), "Ranked match", "", "That goal was completely impossible!", "two"
+            )
+
+        self.assertNotEqual(first["title"], second["title"])
 
     def test_filename_removes_unsafe_characters(self):
         self.assertEqual(

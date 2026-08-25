@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -13,7 +14,7 @@ from backend.app.captions import (
     parse_whisper_words,
     write_live_caption_ass,
 )
-from backend.app.video import _apply_effects, _run, ffmpeg_executable
+from backend.app.video import VideoInfo, _apply_effects, _run, export_clip, ffmpeg_executable
 
 
 class LiveCaptionTests(unittest.TestCase):
@@ -100,6 +101,27 @@ class LiveCaptionTests(unittest.TestCase):
             difference = np.abs(first_pixels - second_pixels)
             self.assertGreater(int(np.count_nonzero(difference > 25)), 300)
             self.assertGreater(int(np.count_nonzero((first_pixels[:, :, 2] > 180) & (first_pixels[:, :, 0] < 120))), 30)
+
+    def test_title_transcript_is_captured_without_burning_live_captions(self):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            source = root / "source.mp4"
+            source.touch()
+            metadata: dict[str, object] = {}
+            words = [CaptionWord("Fresh", 0.1, 0.4), CaptionWord("hook", 0.4, 0.8)]
+            with patch("backend.app.video.probe_video", return_value=VideoInfo(1920, 1080, 2.0)), patch(
+                "backend.app.video.transcribe_words", return_value=words
+            ) as transcribe, patch("backend.app.video.ffmpeg_executable", return_value="ffmpeg"), patch(
+                "backend.app.video._run"
+            ):
+                export_clip(
+                    source, root / "export.mp4", 0, 2, "16:9",
+                    title_transcript=True, export_metadata=metadata,
+                )
+
+        transcribe.assert_called_once()
+        self.assertEqual(metadata["title_transcript"], "Fresh hook")
+        self.assertEqual(metadata["live_caption_word_count"], 0)
 
 
 if __name__ == "__main__":
