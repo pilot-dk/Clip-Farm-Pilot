@@ -2,17 +2,22 @@
   "expo": {
     "name": "Clip Farm Pilot",
     "slug": "clipfarmpilot",
-    "version": "1.8.0",
+    "version": "1.9.0",
+    "scheme": "clipfarmpilot",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.clipfarmpilot.mobile",
+      "buildNumber": "190",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Clip Farm Pilot needs access to your videos so it can create clips."
       }
     },
     "android": {
+      "package": "com.clipfarmpilot.mobile",
+      "versionCode": 190,
       "permissions": ["READ_MEDIA_VIDEO"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

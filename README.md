@@ -6,6 +6,24 @@ Official website: [clipfarmpilot.com](https://clipfarmpilot.com)
 
 This updated build includes a simple, polished browser editor connected directly to the existing FastAPI and FFmpeg processing engine. It is a functional local app, not a visual mockup.
 
+## Fully local iPhone, iPad, and Android sideload builds
+
+Version 1.9 adds separate native mobile apps that do not connect to the hosted web backend. They have no account screen, analytics, upload client, cloud endpoint, or remote VOD importer. Video selection, preview, moment analysis, captions/effects, rendering, filenames, saving, and sharing are performed on the device. The Android manifest intentionally does not request `android.permission.INTERNET`; the iOS privacy manifest declares no tracking or collected data. Live speech recognition on iPhone/iPad is allowed only when Apple's on-device recognizer is available and never falls back to a server.
+
+Downloads:
+
+- `Clip-Farm-Pilot-iOS-v1.9.0-Local-Unsigned.ipa` — arm64 iPhone/iPad, iOS 17 or newer. Install with AltStore, SideStore, or Sideloadly; the IPA must be signed to your Apple ID during installation.
+- `Clip-Farm-Pilot-Android-v1.9.0-Local.apk` — Android 8 or newer. Enable installation from the app you use to open the APK, then install it.
+
+The local mobile editor includes local-file import, video preview, clip-range controls, local Auto-Find Clips, 16:9/9:16/1:1 export, square caption text with emoji/size/placement controls, filters, bundled Vine Boom placement, fresh local title filenames, MP4 export, and the device share sheet. The iPhone/iPad build also includes the gaming face-cam layout, moment visual effects, and optional on-device live captions. Direct YouTube/Twitch link import and direct social publishing are intentionally omitted because those features require internet access and would violate the offline-only guarantee.
+
+Build the packages from source with:
+
+```bash
+./build_mobile_local_ios.sh
+./build_mobile_local_android.sh
+```
+
 ## Web app for iPhone, iPad, Android, and desktop
 
 Clip Farm Pilot v1.8 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.

@@ -1,12 +1,13 @@
 {
   "name": "clipfarmpilot-mobile",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios"
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "expo": "~53.0.20",

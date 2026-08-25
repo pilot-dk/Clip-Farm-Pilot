@@ -14,6 +14,8 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 
+// Legacy connected-client development fallback. Published mobile releases use
+// the separate native, offline-only apps in mobile-local/.
 const API = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 
 type Ratio = '16:9' | '9:16' | '1:1';

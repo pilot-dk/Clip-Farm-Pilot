@@ -1,0 +1,71 @@
+name: Build iPhone and Android sideload releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag, such as v1.9.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - name: Build and privacy-check local Android APK
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          chmod +x build_mobile_local_android.sh mobile-local/android/gradlew
+          CLIPFARMPILOT_VERSION="${RELEASE_TAG#v}" ./build_mobile_local_android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-sideload-release
+          path: |
+            outputs/Clip-Farm-Pilot-Android-*.apk
+            outputs/Clip-Farm-Pilot-Android-*.apk.sha256
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and privacy-check local unsigned iPhone/iPad IPA
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          chmod +x build_mobile_local_ios.sh
+          CLIPFARMPILOT_VERSION="${RELEASE_TAG#v}" ./build_mobile_local_ios.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-sideload-release
+          path: |
+            outputs/Clip-Farm-Pilot-iOS-*.ipa
+            outputs/Clip-Farm-Pilot-iOS-*.ipa.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-sideload-release"
+          path: release-assets
+          merge-multiple: true
+      - name: Upload mobile downloads to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber

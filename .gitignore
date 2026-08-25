@@ -9,6 +9,12 @@ backend/storage/exports/*
 !backend/storage/exports/.gitkeep
 mobile/node_modules/
 mobile/.expo/
+mobile/android/
+mobile/ios/
+mobile-local/android/.gradle/
+mobile-local/android/app/build/
+mobile-local/android/build/
+mobile-local/ios/build/
 .build-venv/
 .build-venv-windows/
 .build-venv-linux/
