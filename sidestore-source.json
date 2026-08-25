@@ -1,0 +1,43 @@
+{
+  "name": "Clip Farm Pilot",
+  "identifier": "com.clipfarmpilot.source",
+  "sourceURL": "https://raw.githubusercontent.com/pilot-dk/Clip-Farm-Pilot/main/sidestore-source.json",
+  "apps": [
+    {
+      "name": "Clip Farm Pilot",
+      "bundleIdentifier": "com.clipfarmpilot.local",
+      "developerName": "Pilot DK",
+      "subtitle": "Turn livestreams into clips entirely on-device.",
+      "localizedDescription": "Clip Farm Pilot finds strong moments in livestream recordings and turns them into social clips without uploading the source video. Import a local video, choose or automatically detect a clip range, add square or live captions, apply filters and effects, then export the MP4 directly on your iPhone or iPad.",
+      "iconURL": "https://raw.githubusercontent.com/pilot-dk/Clip-Farm-Pilot/main/mobile-local/ios/ClipFarmPilotLocal/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tintColor": "#06101A",
+      "beta": true,
+      "permissions": [
+        {
+          "type": "photos",
+          "usageDescription": "Choose livestream videos to edit entirely on this device."
+        },
+        {
+          "type": "speech-recognition",
+          "usageDescription": "Create optional live captions using only the speech model installed on this device."
+        }
+      ],
+      "version": "1.9.0",
+      "versionDate": "2026-08-24",
+      "versionDescription": "First fully local iPhone and iPad sideload release.",
+      "downloadURL": "https://github.com/pilot-dk/Clip-Farm-Pilot/releases/download/v1.9.0/Clip-Farm-Pilot-iOS-v1.9.0-Local-Unsigned.ipa",
+      "size": 325032,
+      "versions": [
+        {
+          "version": "1.9.0",
+          "date": "2026-08-24",
+          "downloadURL": "https://github.com/pilot-dk/Clip-Farm-Pilot/releases/download/v1.9.0/Clip-Farm-Pilot-iOS-v1.9.0-Local-Unsigned.ipa",
+          "localizedDescription": "First fully local iPhone and iPad sideload release.",
+          "size": 325032,
+          "minOSVersion": "17.0"
+        }
+      ]
+    }
+  ],
+  "news": []
+}

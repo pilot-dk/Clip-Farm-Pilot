@@ -59,6 +59,9 @@ jobs:
     needs: [android, ios]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/download-artifact@v4
         with:
           pattern: "*-sideload-release"
@@ -69,3 +72,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publish the new version in the SideStore source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          IPA_PATH="release-assets/Clip-Farm-Pilot-iOS-v${VERSION}-Local-Unsigned.ipa"
+          python3 scripts/update_sidestore_source.py \
+            --version "$VERSION" \
+            --ipa "$IPA_PATH" \
+            --date "$(date -u +%F)" \
+            --description "Clip Farm Pilot v${VERSION} fully local iPhone and iPad update."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sidestore-source.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update SideStore source for v${VERSION}"
+            git push origin HEAD:main
+          fi

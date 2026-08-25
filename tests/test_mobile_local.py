@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -52,3 +53,27 @@ def test_release_workflow_uses_native_local_builds():
     assert "build_mobile_local_ios.sh" in workflow
     assert "onrender.com" not in workflow
     assert "EXPO_PUBLIC_API_BASE_URL" not in workflow
+    assert "update_sidestore_source.py" in workflow
+
+
+def test_sidestore_source_matches_the_local_ios_app():
+    source = json.loads((ROOT / "sidestore-source.json").read_text(encoding="utf-8"))
+    assert source["identifier"] == "com.clipfarmpilot.source"
+    assert source["sourceURL"].endswith("/main/sidestore-source.json")
+    app = source["apps"][0]
+    assert app["bundleIdentifier"] == "com.clipfarmpilot.local"
+    assert app["permissions"] == [
+        {
+            "type": "photos",
+            "usageDescription": "Choose livestream videos to edit entirely on this device.",
+        },
+        {
+            "type": "speech-recognition",
+            "usageDescription": "Create optional live captions using only the speech model installed on this device.",
+        },
+    ]
+    latest = app["versions"][0]
+    assert latest["version"] == "1.9.0"
+    assert latest["minOSVersion"] == "17.0"
+    assert latest["downloadURL"].endswith("/v1.9.0/Clip-Farm-Pilot-iOS-v1.9.0-Local-Unsigned.ipa")
+    assert latest["size"] == 325032

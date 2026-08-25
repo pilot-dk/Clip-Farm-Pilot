@@ -17,6 +17,15 @@ Downloads:
 
 The local mobile editor includes local-file import, video preview, clip-range controls, local Auto-Find Clips, 16:9/9:16/1:1 export, square caption text with emoji/size/placement controls, filters, bundled Vine Boom placement, fresh local title filenames, MP4 export, and the device share sheet. The iPhone/iPad build also includes the gaming face-cam layout, moment visual effects, and optional on-device live captions. Direct YouTube/Twitch link import and direct social publishing are intentionally omitted because those features require internet access and would violate the offline-only guarantee.
 
+### Install and update with SideStore
+
+Add the Clip Farm Pilot source to SideStore once, then SideStore can show each newer version as an update:
+
+- Source URL: `https://raw.githubusercontent.com/pilot-dk/Clip-Farm-Pilot/main/sidestore-source.json`
+- One-tap link on iPhone/iPad: `sidestore://source?url=https://raw.githubusercontent.com/pilot-dk/Clip-Farm-Pilot/main/sidestore-source.json`
+
+The source identifier and app bundle identifier are intentionally stable. Every iOS release must increase `CFBundleShortVersionString`, publish the matching IPA to a GitHub release, and place that version first in `sidestore-source.json`. The mobile release workflow performs the feed update automatically after uploading a new IPA.
+
 Build the packages from source with:
 
 ```bash
