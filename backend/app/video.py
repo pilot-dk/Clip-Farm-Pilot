@@ -1529,6 +1529,14 @@ def _smart_sound_times_from_signals(
     if sound_effect == "none":
         return []
 
+    # Leave enough tail after a smart trigger for the audible part of the
+    # effect to land. Previously a fallback could be scheduled only 0.20s
+    # before the end of the clip, which made effects with a short lead-in
+    # effectively silent after the finished MP4 was trimmed.
+    target_tail = 0.90 if sound_effect == "vine-boom" else 0.65
+    tail_room = min(target_tail, max(0.10, clip_duration * 0.25))
+    latest_trigger = max(0.0, clip_duration - tail_room)
+
     values = np.asarray(envelope, dtype=np.float32)
     values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
     candidates: list[tuple[float, float, str]] = []
@@ -1575,9 +1583,9 @@ def _smart_sound_times_from_signals(
     max_hits = min(6, max(1, int(clip_duration // 9) + 1))
     ranked = sorted(
         (
-            (score * weights[kind], min(max(0.35, time_value), max(0.35, clip_duration - 0.20)))
+            (score * weights[kind], min(max(0.10, time_value), latest_trigger))
             for time_value, score, kind in candidates
-            if 0.30 <= time_value <= clip_duration - 0.15
+            if 0.10 <= time_value <= latest_trigger
         ),
         reverse=True,
     )
@@ -1592,7 +1600,7 @@ def _smart_sound_times_from_signals(
             break
 
     if not selected:
-        fallback = min(max(0.35, float(fallback_time)), max(0.35, clip_duration - 0.20))
+        fallback = min(max(0.0, float(fallback_time)), latest_trigger)
         selected = [fallback]
     return [round(value, 2) for value in sorted(selected)]
 
@@ -1725,8 +1733,31 @@ def _apply_effects(
                 effect_labels.append(effect_label)
             effect_inputs = "".join(f"[{label}]" for label in effect_labels)
             if _has_audio(source):
+                duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
+                base_audio = "0:a"
+                if duck_gain < 0.999:
+                    duck_expressions: list[str] = []
+                    for sound_trigger in sound_triggers:
+                        attack_start = max(0.0, sound_trigger - 0.08)
+                        attack_end = min(duration, max(sound_trigger, attack_start + 0.01))
+                        release_start = min(duration, max(attack_end, sound_trigger + 0.82))
+                        release_end = min(duration, max(release_start + 0.01, sound_trigger + 1.10))
+                        attack_duration = max(0.01, attack_end - attack_start)
+                        release_duration = max(0.01, release_end - release_start)
+                        duck_expressions.append(
+                            f"if(between(t\\,{attack_start:.3f}\\,{attack_end:.3f})\\,"
+                            f"1-(1-{duck_gain:.3f})*(t-{attack_start:.3f})/{attack_duration:.3f}\\,"
+                            f"if(between(t\\,{attack_end:.3f}\\,{release_start:.3f})\\,{duck_gain:.3f}\\,"
+                            f"if(between(t\\,{release_start:.3f}\\,{release_end:.3f})\\,"
+                            f"{duck_gain:.3f}+(1-{duck_gain:.3f})*(t-{release_start:.3f})/{release_duration:.3f}\\,1)))"
+                        )
+                    filters.append(
+                        f"[0:a]volume='{'*'.join(f'({expression})' for expression in duck_expressions)}':"
+                        "eval=frame[ducked]"
+                    )
+                    base_audio = "ducked"
                 filters.append(
-                    f"[0:a]{effect_inputs}amix=inputs={len(effect_labels) + 1}:"
+                    f"[{base_audio}]{effect_inputs}amix=inputs={len(effect_labels) + 1}:"
                     "duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]"
                 )
             else:

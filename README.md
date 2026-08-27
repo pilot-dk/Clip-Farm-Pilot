@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.8 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.9.1 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.8.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.9.1-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.8.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.9.1-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -90,7 +90,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.8.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.9.1-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
