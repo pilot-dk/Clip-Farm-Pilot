@@ -19,12 +19,13 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .brand import APP_SLUG, env
-from .captions import LIVE_CAPTION_SCHEMES, LiveCaptionScheme, transcribe_words, write_live_caption_ass
+from .captions import CaptionWord, LIVE_CAPTION_SCHEMES, LiveCaptionScheme, transcribe_words, write_live_caption_ass
 
 Aspect = Literal["16:9", "9:16", "1:1"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 CaptionPosition = Literal["top", "center", "bottom"]
-SoundEffect = Literal["none", "vine-boom"]
+SoundEffect = Literal["none", "vine-boom", "check-sound"]
+SelectedSoundEffect = Literal["vine-boom", "check-sound"]
 VisualEffect = Literal["none", "lens-flare", "punch-zoom", "white-flash"]
 VideoFilter = Literal[
     "none",
@@ -1338,12 +1339,17 @@ def _render_square_caption(
 
 
 def _render_sound_effect(effect: SoundEffect, destination: Path) -> None:
-    """Copy the one bundled sound supported by the editor."""
-    if effect != "vine-boom":
+    """Copy one of the bundled creator-supplied sound effects."""
+    asset_names = {
+        "vine-boom": "vine-boom.wav",
+        "check-sound": "check-sound.wav",
+    }
+    asset_name = asset_names.get(effect)
+    if asset_name is None:
         raise ValueError("Unknown sound effect.")
-    source = EFFECT_ASSETS_DIR / "vine-boom.wav"
+    source = EFFECT_ASSETS_DIR / asset_name
     if not source.is_file():
-        raise RuntimeError("The bundled Vine Boom sound asset is missing.")
+        raise RuntimeError(f"The bundled {effect} sound asset is missing.")
     shutil.copyfile(source, destination)
 
 
@@ -1482,6 +1488,8 @@ def _smart_sound_times_from_signals(
     sound_effect: SoundEffect,
     scene_times: list[float] | tuple[float, ...] = (),
     fallback_time: float = 1.0,
+    semantic_cues: list[tuple[float, str]] | tuple[tuple[float, str], ...] = (),
+    blocked_times: list[float] | tuple[float, ...] = (),
 ) -> list[float]:
     """Rank likely punchline endings, reactions, and cuts for one selected sound.
 
@@ -1497,7 +1505,7 @@ def _smart_sound_times_from_signals(
     # effect to land. Previously a fallback could be scheduled only 0.20s
     # before the end of the clip, which made effects with a short lead-in
     # effectively silent after the finished MP4 was trimmed.
-    target_tail = 0.90
+    target_tail = 0.90 if sound_effect == "vine-boom" else 0.65
     tail_room = min(target_tail, max(0.10, clip_duration * 0.25))
     latest_trigger = max(0.0, clip_duration - tail_room)
 
@@ -1532,8 +1540,30 @@ def _smart_sound_times_from_signals(
     for scene_time in scene_times:
         candidates.append((float(scene_time) + 0.03, 0.78, "scene"))
 
-    weights = {"phrase-end": 1.30, "reaction": 0.72, "peak": 0.40, "scene": 0.24}
-    spacing = 3.2
+    for cue_time, cue_kind in semantic_cues:
+        if cue_kind in {"vine-cue", "check-cue"}:
+            candidates.append((float(cue_time), 1.0, cue_kind))
+
+    if sound_effect == "check-sound":
+        weights = {
+            "phrase-end": 0.34,
+            "reaction": 1.28,
+            "peak": 0.96,
+            "scene": 0.58,
+            "vine-cue": 0.08,
+            "check-cue": 2.70,
+        }
+        spacing = 2.6
+    else:
+        weights = {
+            "phrase-end": 1.30,
+            "reaction": 0.72,
+            "peak": 0.40,
+            "scene": 0.24,
+            "vine-cue": 2.70,
+            "check-cue": 0.08,
+        }
+        spacing = 3.2
     max_hits = min(6, max(1, int(clip_duration // 9) + 1))
     ranked = sorted(
         (
@@ -1547,16 +1577,113 @@ def _smart_sound_times_from_signals(
     best_score = ranked[0][0] if ranked else 0.0
     quality_floor = max(0.34, best_score * 0.48)
     for score, time_value in ranked:
-        if score < quality_floor or any(abs(time_value - existing) < spacing for existing in selected):
+        if (
+            score < quality_floor
+            or any(abs(time_value - existing) < spacing for existing in selected)
+            or any(abs(time_value - blocked) < 1.15 for blocked in blocked_times)
+        ):
             continue
         selected.append(time_value)
         if len(selected) >= max_hits:
             break
 
     if not selected:
-        fallback = min(max(0.0, float(fallback_time)), latest_trigger)
+        fallback_choices = [
+            min(max(0.0, float(fallback_time)), latest_trigger),
+            latest_trigger * 0.28,
+            latest_trigger * 0.56,
+            latest_trigger * 0.84,
+        ]
+        fallback = max(
+            fallback_choices,
+            key=lambda value: min((abs(value - blocked) for blocked in blocked_times), default=clip_duration),
+        )
         selected = [fallback]
     return [round(value, 2) for value in sorted(selected)]
+
+
+CHECK_SOUND_CUES = {
+    "yes", "yeah", "nice", "perfect", "done", "win", "won", "winner", "clutch",
+    "finally", "success", "correct", "great", "good", "easy", "complete", "completed",
+    "nailed it", "got it", "lets go", "let us go", "there it is", "we did it",
+}
+VINE_BOOM_CUES = {
+    "what", "why", "bro", "bruh", "ayo", "huh", "weird", "sus", "wait", "pause",
+    "excuse me", "no way", "what the", "who said", "did he", "did she", "you said what",
+}
+
+
+def _semantic_sound_cues(words: list[CaptionWord] | tuple[CaptionWord, ...]) -> list[tuple[float, str]]:
+    """Map local transcript words to positive-payoff and awkward-emphasis cues."""
+    normalized = [re.sub(r"[^a-z0-9']+", " ", word.text.lower()).strip() for word in words]
+    cues: list[tuple[float, str]] = []
+    last_by_kind = {"check-cue": -10.0, "vine-cue": -10.0}
+    for index, word in enumerate(words):
+        cue_kind = None
+        cue_length = 1
+        for length in (3, 2, 1):
+            if index + length > len(normalized):
+                continue
+            phrase = " ".join(normalized[index:index + length]).strip()
+            if phrase in CHECK_SOUND_CUES:
+                cue_kind, cue_length = "check-cue", length
+                break
+            if phrase in VINE_BOOM_CUES:
+                cue_kind, cue_length = "vine-cue", length
+                break
+        if cue_kind is None:
+            continue
+        cue_time = round(min(words[index + cue_length - 1].end + 0.08, words[-1].end + 0.08), 3)
+        if cue_time - last_by_kind[cue_kind] < 0.8:
+            continue
+        cues.append((cue_time, cue_kind))
+        last_by_kind[cue_kind] = cue_time
+    return cues
+
+
+def suggest_sound_effect_placements(
+    source: Path,
+    start: float,
+    end: float,
+    sound_effects: list[SelectedSoundEffect] | tuple[SelectedSoundEffect, ...],
+    transcript_words: list[CaptionWord] | tuple[CaptionWord, ...] = (),
+    fallback_time: float = 1.0,
+) -> dict[SelectedSoundEffect, list[float]]:
+    """Analyze a clip once and assign each selected sound to different fitting moments."""
+    selected = list(dict.fromkeys(effect for effect in sound_effects if effect in {"vine-boom", "check-sound"}))
+    if not selected:
+        return {}
+    duration = max(0.1, float(end) - float(start))
+    try:
+        envelope, hop_seconds = _clip_audio_envelope(source, start, end)
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        envelope, hop_seconds = np.zeros(1, dtype=np.float32), 0.10
+    try:
+        scenes = _clip_scene_change_times(source, start, end)
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        scenes = []
+    semantic_cues = _semantic_sound_cues(transcript_words)
+    cue_kind_for = {"vine-boom": "vine-cue", "check-sound": "check-cue"}
+    selected.sort(
+        key=lambda effect: sum(kind == cue_kind_for[effect] for _, kind in semantic_cues),
+        reverse=True,
+    )
+    placements: dict[SelectedSoundEffect, list[float]] = {}
+    occupied: list[float] = []
+    for effect in selected:
+        times = _smart_sound_times_from_signals(
+            envelope,
+            hop_seconds,
+            duration,
+            effect,
+            scenes,
+            fallback_time,
+            semantic_cues,
+            occupied,
+        )
+        placements[effect] = times
+        occupied.extend(times)
+    return placements
 
 
 def suggest_sound_effect_times(
@@ -1567,23 +1694,15 @@ def suggest_sound_effect_times(
     fallback_time: float = 1.0,
 ) -> list[float]:
     """Analyze a selected clip and return smart, repeat-capable SFX timestamps."""
-    duration = max(0.1, float(end) - float(start))
-    try:
-        envelope, hop_seconds = _clip_audio_envelope(source, start, end)
-    except (OSError, subprocess.SubprocessError, RuntimeError):
-        envelope, hop_seconds = np.zeros(1, dtype=np.float32), 0.10
-    try:
-        scenes = _clip_scene_change_times(source, start, end)
-    except (OSError, subprocess.SubprocessError, RuntimeError):
-        scenes = []
-    return _smart_sound_times_from_signals(
-        envelope,
-        hop_seconds,
-        duration,
-        sound_effect,
-        scenes,
-        fallback_time,
-    )
+    if sound_effect == "none":
+        return []
+    return suggest_sound_effect_placements(
+        source,
+        start,
+        end,
+        [sound_effect],
+        fallback_time=fallback_time,
+    ).get(sound_effect, [])
 
 
 def _apply_effects(
@@ -1599,30 +1718,41 @@ def _apply_effects(
     sound_volume: float,
     visual_strength: float,
     live_caption_ass: Path | None = None,
+    sound_effect_placements: dict[SelectedSoundEffect, list[float]] | None = None,
 ) -> None:
     trigger = min(max(0.0, float(effect_time)), max(0.0, duration - 0.05))
     volume = min(2.0, max(0.0, float(sound_volume)))
     strength = min(1.5, max(0.25, float(visual_strength)))
     temporary_paths: list[Path] = []
     inputs = [ffmpeg_executable(require_ass=live_caption_ass is not None), "-y", "-v", "error", "-i", str(source)]
-    sound_index: int | None = None
+    sound_indexes: dict[SelectedSoundEffect, int] = {}
     overlay_index: int | None = None
-    sound_triggers = []
-    if sound_effect != "none":
+    placement_map: dict[SelectedSoundEffect, list[float]] = {}
+    if sound_effect_placements is not None:
+        for effect, supplied in sound_effect_placements.items():
+            if effect not in {"vine-boom", "check-sound"}:
+                raise ValueError("Unknown sound effect.")
+            placement_map[effect] = sorted({
+                round(min(max(0.0, float(value)), max(0.0, duration - 0.05)), 3)
+                for value in supplied
+            })
+    elif sound_effect != "none":
         supplied = [trigger] if sound_effect_times is None else sound_effect_times
-        sound_triggers = sorted({
+        placement_map[sound_effect] = sorted({
             round(min(max(0.0, float(value)), max(0.0, duration - 0.05)), 3)
             for value in supplied
         })
 
     try:
-        if sound_triggers:
+        for effect, sound_triggers in placement_map.items():
+            if not sound_triggers:
+                continue
             sound_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-sfx-", suffix=".wav", delete=False)
             sound_path = Path(sound_file.name)
             sound_file.close()
             temporary_paths.append(sound_path)
-            _render_sound_effect(sound_effect, sound_path)
-            sound_index = 1
+            _render_sound_effect(effect, sound_path)
+            sound_indexes[effect] = 1 + len(sound_indexes)
             inputs += ["-i", str(sound_path)]
 
         if visual_effect in {"lens-flare", "white-flash"}:
@@ -1631,7 +1761,7 @@ def _apply_effects(
             overlay_file.close()
             temporary_paths.append(overlay_path)
             _render_visual_overlay(visual_effect, overlay_path, width, height, strength)
-            overlay_index = 1 + (1 if sound_index is not None else 0)
+            overlay_index = 1 + len(sound_indexes)
             inputs += ["-loop", "1", "-i", str(overlay_path)]
 
         filters: list[str] = []
@@ -1668,34 +1798,40 @@ def _apply_effects(
             video_label = "captioned"
 
         audio_label: str | None = None
-        if sound_index is not None:
-            source_labels = [f"sfxsource{index}" for index in range(len(sound_triggers))]
-            if len(source_labels) > 1:
-                filters.append(
-                    f"[{sound_index}:a]asplit={len(source_labels)}"
-                    + "".join(f"[{label}]" for label in source_labels)
-                )
-            else:
-                source_labels = [f"{sound_index}:a"]
+        if sound_indexes:
             effect_labels: list[str] = []
-            for index, (source_label, sound_trigger) in enumerate(zip(source_labels, sound_triggers)):
-                delay_ms = round(sound_trigger * 1000)
-                effect_label = f"sfx{index}"
-                filters.append(
-                    f"[{source_label}]adelay={delay_ms}:all=1,volume={volume:.3f}[{effect_label}]"
-                )
-                effect_labels.append(effect_label)
+            duck_events: list[tuple[SelectedSoundEffect, float]] = []
+            for effect_number, (effect, sound_index) in enumerate(sound_indexes.items()):
+                sound_triggers = placement_map[effect]
+                source_labels = [f"sfxsource{effect_number}_{index}" for index in range(len(sound_triggers))]
+                if len(source_labels) > 1:
+                    filters.append(
+                        f"[{sound_index}:a]asplit={len(source_labels)}"
+                        + "".join(f"[{label}]" for label in source_labels)
+                    )
+                else:
+                    source_labels = [f"{sound_index}:a"]
+                for index, (source_label, sound_trigger) in enumerate(zip(source_labels, sound_triggers)):
+                    delay_ms = round(sound_trigger * 1000)
+                    effect_label = f"sfx{effect_number}_{index}"
+                    filters.append(
+                        f"[{source_label}]adelay={delay_ms}:all=1,volume={volume:.3f}[{effect_label}]"
+                    )
+                    effect_labels.append(effect_label)
+                    duck_events.append((effect, sound_trigger))
             effect_inputs = "".join(f"[{label}]" for label in effect_labels)
             if _has_audio(source):
                 duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
                 base_audio = "0:a"
                 if duck_gain < 0.999:
                     duck_expressions: list[str] = []
-                    for sound_trigger in sound_triggers:
+                    for effect, sound_trigger in duck_events:
+                        hold_seconds = 0.68 if effect == "check-sound" else 0.82
+                        release_seconds = 0.96 if effect == "check-sound" else 1.10
                         attack_start = max(0.0, sound_trigger - 0.08)
                         attack_end = min(duration, max(sound_trigger, attack_start + 0.01))
-                        release_start = min(duration, max(attack_end, sound_trigger + 0.82))
-                        release_end = min(duration, max(release_start + 0.01, sound_trigger + 1.10))
+                        release_start = min(duration, max(attack_end, sound_trigger + hold_seconds))
+                        release_end = min(duration, max(release_start + 0.01, sound_trigger + release_seconds))
                         attack_duration = max(0.01, attack_end - attack_start)
                         release_duration = max(0.01, release_end - release_start)
                         duck_expressions.append(
@@ -1767,6 +1903,7 @@ def export_clip(
     caption_overlay_path: Path | None = None,
     video_filter: VideoFilter = "none",
     sound_effect: SoundEffect = "none",
+    sound_effects: list[SelectedSoundEffect] | tuple[SelectedSoundEffect, ...] | None = None,
     visual_effect: VisualEffect = "none",
     effect_time: float = 1.0,
     auto_sound_effect: bool = True,
@@ -1776,36 +1913,48 @@ def export_clip(
     live_caption_scheme: LiveCaptionScheme = "pilot-lime",
     title_transcript: bool = False,
     export_metadata: dict[str, object] | None = None,
-) -> list[float]:
+) -> dict[SelectedSoundEffect, list[float]]:
     info = probe_video(source)
     start = max(0.0, min(start, info.duration))
     end = max(start + 0.1, min(end, info.duration))
     duration = end - start
     filter_chain = _video_filter_chain(video_filter)
-    if sound_effect not in {"none", "vine-boom"}:
+    if sound_effect not in {"none", "vine-boom", "check-sound"}:
+        raise ValueError("Unknown sound effect.")
+    selected_sound_effects = list(dict.fromkeys(sound_effects or ()))
+    if sound_effect != "none" and sound_effect not in selected_sound_effects:
+        selected_sound_effects.append(sound_effect)
+    if any(effect not in {"vine-boom", "check-sound"} for effect in selected_sound_effects):
         raise ValueError("Unknown sound effect.")
     if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
         raise ValueError("Unknown visual effect.")
     if live_caption_scheme not in LIVE_CAPTION_SCHEMES:
         raise ValueError("Unknown live-caption colour scheme.")
 
-    sound_effect_times: list[float] = []
-    if sound_effect != "none":
-        if auto_sound_effect:
-            sound_effect_times = suggest_sound_effect_times(source, start, end, sound_effect, effect_time)
-        else:
-            sound_effect_times = [round(min(max(0.0, effect_time), max(0.0, duration - 0.05)), 2)]
-
     live_caption_ass: Path | None = None
     live_caption_word_count = 0
     transcript_words = []
-    if live_captions or title_transcript:
+    if live_captions or title_transcript or (auto_sound_effect and selected_sound_effects):
         try:
             transcript_words = transcribe_words(source, start, end, ffmpeg_executable())
         except (OSError, RuntimeError, ValueError):
             if live_captions:
                 raise
             transcript_words = []
+    sound_effect_placements: dict[SelectedSoundEffect, list[float]] = {}
+    if selected_sound_effects:
+        if auto_sound_effect:
+            sound_effect_placements = suggest_sound_effect_placements(
+                source,
+                start,
+                end,
+                selected_sound_effects,
+                transcript_words,
+                effect_time,
+            )
+        else:
+            manual_time = round(min(max(0.0, effect_time), max(0.0, duration - 0.05)), 2)
+            sound_effect_placements = {effect: [manual_time] for effect in selected_sound_effects}
     if live_captions:
         live_caption_word_count = len(transcript_words)
         words = transcript_words
@@ -1821,7 +1970,7 @@ def export_clip(
         export_metadata["live_caption_word_count"] = live_caption_word_count
         export_metadata["title_transcript"] = " ".join(word.text for word in transcript_words)[:2_000]
 
-    has_effects = sound_effect != "none" or visual_effect != "none"
+    has_effects = bool(selected_sound_effects) or visual_effect != "none"
     has_postprocessing = has_effects or live_caption_ass is not None
     base_temporary: Path | None = None
     render_target = output
@@ -1929,17 +2078,18 @@ def export_clip(
                 duration,
                 width,
                 height,
-                sound_effect,
+                selected_sound_effects[0] if selected_sound_effects else "none",
                 visual_effect,
                 effect_time,
-                sound_effect_times,
+                None,
                 sound_volume,
                 visual_strength,
                 live_caption_ass,
+                sound_effect_placements,
             )
     finally:
         if base_temporary is not None:
             base_temporary.unlink(missing_ok=True)
         if live_caption_ass is not None:
             live_caption_ass.unlink(missing_ok=True)
-    return sound_effect_times
+    return sound_effect_placements

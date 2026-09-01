@@ -9,9 +9,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from backend.app.captions import CaptionWord
 from backend.app.video import (
     VIDEO_FILTER_CHAINS,
     _apply_effects,
+    _semantic_sound_cues,
     _run,
     _smart_sound_times_from_signals,
     _video_filter_chain,
@@ -65,6 +67,28 @@ class EffectAssetTests(unittest.TestCase):
 
         self.assertEqual(times, [1.8])
 
+    def test_transcript_cues_distinguish_check_payoffs_from_vine_moments(self):
+        words = [
+            CaptionWord("that", 0.0, 0.3),
+            CaptionWord("was", 0.3, 0.6),
+            CaptionWord("weird", 0.6, 1.0),
+            CaptionWord("we", 4.0, 4.2),
+            CaptionWord("did", 4.2, 4.4),
+            CaptionWord("it", 4.4, 4.7),
+        ]
+        cues = _semantic_sound_cues(words)
+
+        self.assertIn((1.08, "vine-cue"), cues)
+        self.assertIn((4.78, "check-cue"), cues)
+        vine_times = _smart_sound_times_from_signals(
+            np.zeros(80, dtype=np.float32), 0.1, 8.0, "vine-boom", semantic_cues=cues
+        )
+        check_times = _smart_sound_times_from_signals(
+            np.zeros(80, dtype=np.float32), 0.1, 8.0, "check-sound", semantic_cues=cues
+        )
+        self.assertEqual(vine_times, [1.08])
+        self.assertEqual(check_times, [4.78])
+
     def test_repeated_sound_effects_mix_into_one_finished_clip(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -93,6 +117,38 @@ class EffectAssetTests(unittest.TestCase):
 
             self.assertTrue(target.is_file())
             self.assertGreater(target.stat().st_size, source.stat().st_size // 2)
+
+    def test_vine_boom_and_check_sound_mix_at_separate_times(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.mp4"
+            target = root / "both.mp4"
+            _run([
+                ffmpeg_executable(), "-y", "-v", "error",
+                "-f", "lavfi", "-i", "color=c=navy:s=96x64:r=24:d=3.2",
+                "-f", "lavfi", "-i", "sine=frequency=260:sample_rate=48000:duration=3.2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(source),
+            ])
+
+            _apply_effects(
+                source,
+                target,
+                duration=3.2,
+                width=96,
+                height=64,
+                sound_effect="none",
+                visual_effect="none",
+                effect_time=0.5,
+                sound_effect_times=None,
+                sound_volume=0.85,
+                visual_strength=1.0,
+                sound_effect_placements={"vine-boom": [0.35], "check-sound": [1.85]},
+            )
+
+            audio = self._decoded_mono_audio(target).astype(np.int32)
+            self.assertTrue(target.is_file())
+            self.assertGreater(int(np.max(np.abs(audio[round(0.35 * 48_000):round(0.75 * 48_000)]))), 8_000)
+            self.assertGreater(int(np.max(np.abs(audio[round(1.85 * 48_000):round(2.25 * 48_000)]))), 8_000)
 
     def test_vine_boom_is_audible_in_the_finished_mp4_near_the_clip_end(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -227,6 +283,20 @@ class EffectAssetTests(unittest.TestCase):
         self.assertLessEqual(int(np.max(np.abs(samples[:2]))), 100)
         first_50_ms = samples[: round(0.05 * 48_000) * 2]
         self.assertGreater(int(np.max(np.abs(first_50_ms))), 1_000)
+
+    def test_check_sound_sample_is_trimmed_and_audible_immediately(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "check-sound.wav"
+            _render_sound_effect("check-sound", target)
+            with wave.open(str(target), "rb") as audio:
+                samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype=np.int16)
+                self.assertEqual(audio.getframerate(), 48_000)
+                self.assertEqual(audio.getnchannels(), 2)
+                self.assertGreater(audio.getnframes(), 48_000)
+                self.assertLess(audio.getnframes(), 72_000)
+
+        first_80_ms = samples[: round(0.08 * 48_000) * 2]
+        self.assertGreater(int(np.max(np.abs(first_80_ms))), 2_000)
 
     def test_lens_flare_overlay_contains_transparent_and_visible_pixels(self):
         with tempfile.TemporaryDirectory() as temporary:

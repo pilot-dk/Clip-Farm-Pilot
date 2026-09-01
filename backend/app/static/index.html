@@ -734,6 +734,26 @@
     }
     .effects-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .video-filter-field { margin-bottom: 13px; }
+    .sound-effect-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 7px; }
+    .sound-effect-option { cursor: pointer; }
+    .sound-effect-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .sound-effect-option span {
+      min-height: 58px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0c0e12;
+      transition: border-color .16s ease, background .16s ease, transform .16s ease;
+    }
+    .sound-effect-option strong { color: #e7e9ee; font-size: 10px; }
+    .sound-effect-option small { margin-top: 3px; color: var(--muted-2); font-size: 8px; line-height: 1.35; }
+    .sound-effect-option:hover span { border-color: #635738; transform: translateY(-1px); }
+    .sound-effect-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .sound-effect-option input:checked + span { border-color: #806d3d; background: rgba(255,183,77,.09); }
+    .sound-effect-option input:checked + span strong { color: #ffe0a4; }
     .auto-sound-control { margin-top: 13px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
     .auto-sound-control .switch-copy strong { font-size: 11px; }
     .smart-placement-result { display: none; margin-top: 9px; padding: 8px 9px; border: 1px solid rgba(185,243,74,.18); border-radius: 8px; color: #dff6ae; background: rgba(185,243,74,.06); font-size: 9px; line-height: 1.45; }
@@ -1654,23 +1674,28 @@
                   </select>
                   <small class="field-hint">Applies a polished look to the entire clip and updates the preview instantly.</small>
                 </div>
-                <div class="effects-grid">
-                  <div class="field">
-                    <label for="soundEffect">Sound effect</label>
-                    <select id="soundEffect">
-                      <option value="none">None</option>
-                      <option value="vine-boom">Vine Boom</option>
-                    </select>
+                <div class="field sound-effect-field">
+                  <label>Sound effects</label>
+                  <div class="sound-effect-options" role="group" aria-label="Sound effects">
+                    <label class="sound-effect-option">
+                      <input id="vineBoomToggle" type="checkbox" value="vine-boom" />
+                      <span><strong>Vine Boom</strong><small>Awkward lines, questions, and sudden pauses</small></span>
+                    </label>
+                    <label class="sound-effect-option">
+                      <input id="checkSoundToggle" type="checkbox" value="check-sound" />
+                      <span><strong>Check Sound</strong><small>Wins, confirmations, and positive payoffs</small></span>
+                    </label>
                   </div>
-                  <div class="field">
-                    <label for="visualEffect">Visual effect</label>
-                    <select id="visualEffect">
-                      <option value="none">None</option>
-                      <option value="lens-flare">Lens flare</option>
-                      <option value="punch-zoom">Punch zoom</option>
-                      <option value="white-flash">White flash</option>
-                    </select>
-                  </div>
+                  <small class="field-hint">Select either sound or both. Smart placement assigns each one to different moments.</small>
+                </div>
+                <div class="field">
+                  <label for="visualEffect">Visual effect</label>
+                  <select id="visualEffect">
+                    <option value="none">None</option>
+                    <option value="lens-flare">Lens flare</option>
+                    <option value="punch-zoom">Punch zoom</option>
+                    <option value="white-flash">White flash</option>
+                  </select>
                 </div>
                 <div class="auto-sound-control">
                   <div class="switch-row">
@@ -1702,7 +1727,7 @@
                     <input id="visualStrength" type="range" min="25" max="150" value="100" step="5" aria-label="Visual effect strength" />
                   </div>
                 </div>
-                <small class="field-hint">Smart placement can repeat a sound at likely punchline endings, reactions, and scene cuts while keeping hits spaced apart. Turn it off for one manual playhead position.</small>
+                <small class="field-hint">Smart placement uses local speech cues plus audio and scene changes. Check Sound favours successful payoffs; Vine Boom favours awkward or surprising beats. Turn it off to place every selected sound at one manual playhead position.</small>
               </div>
               </div>
             </details>
@@ -2315,8 +2340,15 @@
       return opticallyCenterCanvas(canvas, captionPosition).toDataURL("image/png");
     }
 
+    function selectedSoundEffects() {
+      return [$("vineBoomToggle"), $("checkSoundToggle")]
+        .filter((input) => input.checked)
+        .map((input) => input.value);
+    }
+
     function updateEffectControls() {
-      const hasSound = $("soundEffect").value !== "none";
+      const selectedSounds = selectedSoundEffects();
+      const hasSound = selectedSounds.length > 0;
       const hasVisual = $("visualEffect").value !== "none";
       const autoSound = hasSound && $("autoSoundEffectToggle").checked;
       const hasManualTrigger = hasVisual || (hasSound && !autoSound);
@@ -2331,10 +2363,14 @@
         ? (hasSound && !autoSound ? "Sound / visual trigger after clip starts" : "Visual effect trigger after clip starts")
         : "Manual sound trigger after clip starts";
       $("smartSoundHint").textContent = !hasSound
-        ? "Choose a sound effect to enable automatic timing."
+        ? "Select a sound effect to enable automatic timing."
         : autoSound
-          ? "Scans likely punchline endings, reactions, and cuts; repeats only when it fits."
-          : "Off — the sound will play once at the manual trigger below.";
+          ? selectedSounds.length === 2
+            ? "Classifies wins and confirmations for Check Sound, then keeps Vine Boom for awkward or surprising beats."
+            : selectedSounds[0] === "check-sound"
+              ? "Looks for wins, confirmations, positive reactions, and payoff moments."
+              : "Looks for awkward lines, questions, sudden pauses, and surprising reactions."
+          : `Off — ${selectedSounds.length === 2 ? "both sounds" : "the sound"} will play at the manual trigger below.`;
       $("soundVolumeValue").value = `${soundVolume}%`;
       $("visualStrengthValue").value = `${visualStrength}%`;
       $("soundVolume").style.setProperty("--progress", `${soundVolume / 2}%`);
@@ -2840,7 +2876,7 @@
             caption_position: document.querySelector('input[name="captionPosition"]:checked')?.value || "center",
             caption_overlay_data_url: renderSquareCaptionOverlay(),
             video_filter: $("videoFilter").value,
-            sound_effect: $("soundEffect").value,
+            sound_effects: selectedSoundEffects(),
             visual_effect: $("visualEffect").value,
             effect_time: Number($("effectTime").value) || 0,
             auto_sound_effect: $("autoSoundEffectToggle").checked,
@@ -2855,10 +2891,14 @@
         if (!response.ok) throw new Error(apiError(data, "Export failed."));
         state.exportId = data.export_id;
         state.generatedTitle = data.viral_title || null;
-        const smartTimes = Array.isArray(data.sound_effect_times) ? data.sound_effect_times : [];
-        if (data.sound_effect_mode === "smart" && smartTimes.length) {
-          const effectName = $("soundEffect").selectedOptions[0]?.textContent || "Sound effect";
-          $("smartPlacementResult").textContent = `${effectName} placed ${smartTimes.length} time${smartTimes.length === 1 ? "" : "s"}: ${smartTimes.map((value) => formatTime(Number(value), true)).join(" · ")}`;
+        const placements = data.sound_effect_placements && typeof data.sound_effect_placements === "object"
+          ? data.sound_effect_placements : {};
+        const placementLabels = { "vine-boom": "Vine Boom", "check-sound": "Check Sound" };
+        const placementSummary = Object.entries(placements)
+          .filter(([, values]) => Array.isArray(values) && values.length)
+          .map(([effect, values]) => `${placementLabels[effect] || effect}: ${values.map((value) => formatTime(Number(value), true)).join(" · ")}`);
+        if (data.sound_effect_mode === "smart" && placementSummary.length) {
+          $("smartPlacementResult").textContent = placementSummary.join("  |  ");
           $("smartPlacementResult").classList.add("visible");
         } else {
           $("smartPlacementResult").textContent = "";
@@ -2943,7 +2983,8 @@
       $("liveCaptionsToggle").checked = false;
       $("liveCaptionScheme").value = "pilot-lime";
       $("videoFilter").value = "none";
-      $("soundEffect").value = "none";
+      $("vineBoomToggle").checked = false;
+      $("checkSoundToggle").checked = false;
       $("autoSoundEffectToggle").checked = true;
       $("visualEffect").value = "none";
       $("effectTime").value = "1.0";
@@ -3093,7 +3134,7 @@
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
     document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
     ["liveCaptionsToggle", "liveCaptionScheme"].forEach((id) => $(id).addEventListener("input", updateLiveCaptionControls));
-    ["videoFilter", "soundEffect", "visualEffect", "autoSoundEffectToggle", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
+    ["videoFilter", "vineBoomToggle", "checkSoundToggle", "visualEffect", "autoSoundEffectToggle", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();
       const relativeTime = Math.min(range.end - range.start, Math.max(0, activeVideo().currentTime - range.start));

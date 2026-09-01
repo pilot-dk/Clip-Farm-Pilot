@@ -133,7 +133,8 @@ class ExportRequest(BaseModel):
         "faded",
         "high-contrast",
     ] = "none"
-    sound_effect: Literal["none", "vine-boom"] = "none"
+    sound_effect: Literal["none", "vine-boom", "check-sound"] = "none"
+    sound_effects: list[Literal["vine-boom", "check-sound"]] = Field(default_factory=list, max_length=2)
     visual_effect: Literal["none", "lens-flare", "punch-zoom", "white-flash"] = "none"
     effect_time: float = Field(1.0, ge=0.0, le=86_400.0)
     auto_sound_effect: bool = True
@@ -370,7 +371,7 @@ def export(video_id: str, req: ExportRequest):
     try:
         if req.aspect == "1:1" and req.caption_text.strip() and req.caption_overlay_data_url:
             caption_overlay = _caption_overlay_from_data_url(req.caption_overlay_data_url, req.caption_position)
-        sound_effect_times = export_clip(
+        sound_effect_placements = export_clip(
             source=source,
             output=target,
             start=req.start,
@@ -388,6 +389,7 @@ def export(video_id: str, req: ExportRequest):
             caption_overlay_path=caption_overlay,
             video_filter=req.video_filter,
             sound_effect=req.sound_effect,
+            sound_effects=req.sound_effects,
             visual_effect=req.visual_effect,
             effect_time=req.effect_time,
             auto_sound_effect=req.auto_sound_effect,
@@ -423,16 +425,25 @@ def export(video_id: str, req: ExportRequest):
         except Exception:
             # A title suggestion should never prevent a completed render from saving.
             pass
+    selected_sound_effects = list(dict.fromkeys(req.sound_effects))
+    if req.sound_effect != "none" and req.sound_effect not in selected_sound_effects:
+        selected_sound_effects.append(req.sound_effect)
+    all_sound_times = sorted({
+        float(value)
+        for values in sound_effect_placements.values()
+        for value in values
+    })
     return {
         "export_id": export_id,
         "download_url": f"/api/exports/{export_id}.mp4",
         "viral_title": title_result["title"],
         "suggested_filename": title_result["filename"],
         "title_strategy": title_result["strategy"],
-        "sound_effect_times": sound_effect_times,
+        "sound_effect_times": all_sound_times,
+        "sound_effect_placements": sound_effect_placements,
         "sound_effect_mode": (
-            "smart" if req.sound_effect != "none" and req.auto_sound_effect
-            else "manual" if req.sound_effect != "none"
+            "smart" if selected_sound_effects and req.auto_sound_effect
+            else "manual" if selected_sound_effects
             else "none"
         ),
         "live_captions": req.live_captions,

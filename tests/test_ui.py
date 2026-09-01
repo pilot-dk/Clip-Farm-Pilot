@@ -52,14 +52,16 @@ class SimpleStudioUiTests(unittest.TestCase):
 
     def test_smart_sound_placement_is_enabled_with_manual_override(self):
         self.assertIn('<input id="autoSoundEffectToggle" type="checkbox" checked disabled', self.html)
-        self.assertIn("likely punchline endings, reactions, and cuts", self.html)
+        self.assertIn("uses local speech cues plus audio and scene changes", self.html)
         self.assertIn('auto_sound_effect: $("autoSoundEffectToggle").checked', self.html)
-        self.assertIn("data.sound_effect_times", self.html)
+        self.assertIn("data.sound_effect_placements", self.html)
         self.assertIn("smartPlacementResult", self.html)
 
-    def test_vine_boom_is_the_only_available_sound_effect(self):
-        self.assertIn('<option value="none">None</option>', self.html)
-        self.assertIn('<option value="vine-boom">Vine Boom</option>', self.html)
+    def test_vine_boom_and_check_sound_can_be_selected_together(self):
+        self.assertIn('id="vineBoomToggle" type="checkbox" value="vine-boom"', self.html)
+        self.assertIn('id="checkSoundToggle" type="checkbox" value="check-sound"', self.html)
+        self.assertIn("function selectedSoundEffects()", self.html)
+        self.assertIn("sound_effects: selectedSoundEffects()", self.html)
         for removed in ("impact-boom", "whoosh", "record-scratch"):
             self.assertNotIn(f'<option value="{removed}">', self.html)
 

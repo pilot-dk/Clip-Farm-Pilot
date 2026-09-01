@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.10.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.11.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.10.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.11.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.10.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.11.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -90,7 +90,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.10.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.11.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -128,10 +128,10 @@ The editor now includes:
 - Five live-caption colour schemes: **Pilot Lime**, **Ocean Blue**, **Sunset Gold**, **Neon Pink**, and **Electric Violet**.
 - Seven full-clip looks: **Black & white**, **Cinematic**, **Vivid**, **Warm**, **Cool**, **Faded / Vintage**, and **High contrast**, with an instant preview in every template.
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
-- A single bundled **Vine Boom** sound effect with adjustable volume, keeping the effects menu focused and predictable.
-- **Smart sound placement** that analyzes likely phrase endings, reactions, energy drops, and scene cuts, then adds one or more well-spaced hits automatically.
-- Vine Boom timing favors punchline-like pauses while avoiding crowded or repetitive placement.
-- A manual timing override for creators who want exactly one sound at the playhead.
+- Bundled **Vine Boom** and **Check Sound** effects with adjustable volume. Either sound can be selected alone, or both can be added to the same clip.
+- **Smart sound placement** that combines local speech cues with reactions, energy changes, and scene cuts, then assigns each selected sound to different well-spaced moments.
+- Check Sound favours wins, confirmations, and positive payoffs; Vine Boom favours awkward lines, questions, sudden pauses, and surprising beats.
+- A manual timing override for creators who want every selected sound at one exact playhead position.
 - Lens flare, punch zoom, and white flash visual effects with adjustable strength and precise playhead-based timing.
 - **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection.
 - **Export Clip** actions in the toolbar and editor panel.
@@ -203,11 +203,11 @@ Caption transcription stays on the machine or hosted Clip Farm Pilot server runn
 
 ## Filters, sound, and visual effects
 
-The **Effects** panel can apply a classic post-processing filter across the complete clip. When a sound is selected, **Smart sound placement** is enabled by default: it scores likely phrase endings, reaction spikes, abrupt stops, and scene cuts, chooses moments that fit that particular effect, and can repeat the sound while enforcing spacing. The finished editor shows every chosen timestamp. Turn Smart placement off to use exactly one manual trigger from the playhead. Visual effects keep their own manual payoff trigger.
+The **Effects** panel can apply a classic post-processing filter across the complete clip. When one or both sounds are selected, **Smart sound placement** is enabled by default. It scores local transcript cues, phrase endings, reaction spikes, abrupt stops, and scene cuts; assigns Check Sound and Vine Boom independently; prevents the two effects from crowding the same moment; and can repeat either sound while enforcing spacing. The finished editor shows the timestamps chosen for each effect. Turn Smart placement off to trigger every selected sound at one manual playhead position. Visual effects keep their own manual payoff trigger.
 
-Smart placement analyzes local audio and visual structure; it does not transcribe or claim to understand the literal meaning of speech. A pause after an unusual or funny sentence is therefore a strong Vine Boom candidate, while continuous speech without a clear ending may not be. This keeps the feature private, fast, and usable without an AI account or usage fees.
+Smart placement uses the bundled offline speech engine when available. Positive cues such as wins, completion, and confirmation favour Check Sound, while awkward or questioning cues favour Vine Boom. Audio energy and scene structure remain as fallbacks when speech is unclear. The analysis stays on the machine or the Clip Farm Pilot server performing the export; it does not require a third-party AI account or usage fees.
 
-Choose **Vine Boom** to use the bundled sample supplied by the project owner. It is the only sound effect in the desktop editor. Sound and visual effects are applied locally during export and work with landscape, portrait, square-caption, and gaming-overlay renders.
+Select **Vine Boom**, **Check Sound**, or both. Both samples were supplied by the project owner, trimmed for immediate playback, and are applied locally during export in landscape, portrait, square-caption, and gaming-overlay renders.
 
 ## Import a YouTube or Twitch VOD
 

@@ -26,8 +26,9 @@ def png_data_url(size: tuple[int, int] = (1080, 1080), box: tuple[int, int, int,
 
 class WebPortTests(unittest.TestCase):
     def test_smart_sound_placement_is_the_export_default(self):
-        request = main.ExportRequest(start=0, end=12, sound_effect="vine-boom")
+        request = main.ExportRequest(start=0, end=12, sound_effects=["vine-boom", "check-sound"])
         self.assertTrue(request.auto_sound_effect)
+        self.assertEqual(request.sound_effects, ["vine-boom", "check-sound"])
         for removed in ("impact-boom", "whoosh", "record-scratch"):
             with self.assertRaises(ValueError):
                 main.ExportRequest(start=0, end=12, sound_effect=removed)
