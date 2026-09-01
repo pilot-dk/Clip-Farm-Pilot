@@ -11,7 +11,6 @@ import sys
 import tempfile
 import threading
 import unicodedata
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -25,7 +24,7 @@ from .captions import LIVE_CAPTION_SCHEMES, LiveCaptionScheme, transcribe_words,
 Aspect = Literal["16:9", "9:16", "1:1"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 CaptionPosition = Literal["top", "center", "bottom"]
-SoundEffect = Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"]
+SoundEffect = Literal["none", "vine-boom"]
 VisualEffect = Literal["none", "lens-flare", "punch-zoom", "white-flash"]
 VideoFilter = Literal[
     "none",
@@ -1339,48 +1338,13 @@ def _render_square_caption(
 
 
 def _render_sound_effect(effect: SoundEffect, destination: Path) -> None:
-    """Render a bundled sound sample or one of the original synthesized effects."""
-    if effect == "vine-boom":
-        source = EFFECT_ASSETS_DIR / "vine-boom.wav"
-        if not source.is_file():
-            raise RuntimeError("The bundled Vine Boom sound asset is missing.")
-        shutil.copyfile(source, destination)
-        return
-
-    sample_rate = 48_000
-    lengths = {"impact-boom": 1.25, "whoosh": 0.85, "record-scratch": 0.72}
-    duration = lengths.get(effect, 1.0)
-    time_axis = np.arange(round(sample_rate * duration), dtype=np.float64) / sample_rate
-    rng = np.random.default_rng(0xC11F)
-
-    if effect == "impact-boom":
-        sweep_phase = 2 * np.pi * (92 * time_axis - 27 * time_axis * time_axis)
-        sub_phase = 2 * np.pi * 43 * time_axis
-        low_boom = np.sin(sweep_phase) * np.exp(-3.3 * time_axis)
-        sub = 0.48 * np.sin(sub_phase) * np.exp(-4.8 * time_axis)
-        transient = rng.normal(0, 1, time_axis.size) * np.exp(-34 * time_axis) * 0.34
-        samples = low_boom + sub + transient
-    elif effect == "whoosh":
-        noise = rng.normal(0, 1, time_axis.size)
-        smoothed = np.convolve(noise, np.ones(45) / 45, mode="same")
-        envelope = np.sin(np.pi * np.clip(time_axis / duration, 0, 1)) ** 2
-        rising_tone = np.sin(2 * np.pi * (170 * time_axis + 680 * time_axis * time_axis))
-        samples = (smoothed * 3.1 + rising_tone * 0.16) * envelope
-    elif effect == "record-scratch":
-        chirp_phase = 2 * np.pi * (1_050 * time_axis - 690 * time_axis * time_axis)
-        gate = (np.sin(2 * np.pi * 24 * time_axis) > -0.35).astype(np.float64)
-        noise = rng.normal(0, 0.18, time_axis.size)
-        samples = (np.sin(chirp_phase) * 0.72 + noise) * gate * np.exp(-1.9 * time_axis)
-    else:
-        samples = np.zeros_like(time_axis)
-
-    peak = float(np.max(np.abs(samples), initial=1.0))
-    pcm = np.int16(np.clip(samples / max(peak, 1e-6) * 0.88, -1, 1) * 32767)
-    with wave.open(str(destination), "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(sample_rate)
-        wav.writeframes(pcm.tobytes())
+    """Copy the one bundled sound supported by the editor."""
+    if effect != "vine-boom":
+        raise ValueError("Unknown sound effect.")
+    source = EFFECT_ASSETS_DIR / "vine-boom.wav"
+    if not source.is_file():
+        raise RuntimeError("The bundled Vine Boom sound asset is missing.")
+    shutil.copyfile(source, destination)
 
 
 def _render_visual_overlay(
@@ -1522,8 +1486,8 @@ def _smart_sound_times_from_signals(
     """Rank likely punchline endings, reactions, and cuts for one selected sound.
 
     This deliberately relies on local audio/visual structure rather than claiming
-    to understand the words being spoken. Different effects favor different
-    event shapes, and spacing/quality gates prevent repetitive over-editing.
+    to understand the words being spoken. Spacing and quality gates prevent
+    repetitive over-editing.
     """
     clip_duration = max(0.1, float(duration))
     if sound_effect == "none":
@@ -1533,7 +1497,7 @@ def _smart_sound_times_from_signals(
     # effect to land. Previously a fallback could be scheduled only 0.20s
     # before the end of the clip, which made effects with a short lead-in
     # effectively silent after the finished MP4 was trimmed.
-    target_tail = 0.90 if sound_effect == "vine-boom" else 0.65
+    target_tail = 0.90
     tail_room = min(target_tail, max(0.10, clip_duration * 0.25))
     latest_trigger = max(0.0, clip_duration - tail_room)
 
@@ -1568,18 +1532,8 @@ def _smart_sound_times_from_signals(
     for scene_time in scene_times:
         candidates.append((float(scene_time) + 0.03, 0.78, "scene"))
 
-    weights = {
-        "vine-boom": {"phrase-end": 1.30, "reaction": 0.72, "peak": 0.40, "scene": 0.24},
-        "impact-boom": {"phrase-end": 0.65, "reaction": 1.18, "peak": 0.92, "scene": 0.76},
-        "whoosh": {"phrase-end": 0.22, "reaction": 0.42, "peak": 0.35, "scene": 1.85},
-        "record-scratch": {"phrase-end": 1.35, "reaction": 0.42, "peak": 0.24, "scene": 0.58},
-    }[sound_effect]
-    spacing = {
-        "vine-boom": 3.2,
-        "impact-boom": 3.6,
-        "whoosh": 2.8,
-        "record-scratch": 4.2,
-    }[sound_effect]
+    weights = {"phrase-end": 1.30, "reaction": 0.72, "peak": 0.40, "scene": 0.24}
+    spacing = 3.2
     max_hits = min(6, max(1, int(clip_duration // 9) + 1))
     ranked = sorted(
         (
@@ -1828,7 +1782,7 @@ def export_clip(
     end = max(start + 0.1, min(end, info.duration))
     duration = end - start
     filter_chain = _video_filter_chain(video_filter)
-    if sound_effect not in {"none", "impact-boom", "vine-boom", "whoosh", "record-scratch"}:
+    if sound_effect not in {"none", "vine-boom"}:
         raise ValueError("Unknown sound effect.")
     if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
         raise ValueError("Unknown visual effect.")

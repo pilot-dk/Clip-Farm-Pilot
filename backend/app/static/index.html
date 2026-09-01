@@ -948,18 +948,20 @@
     .library-close:hover { color: var(--text); border-color: var(--line-strong); }
     .library-close svg { width: 16px; height: 16px; }
     .library-body { min-height: 220px; overflow: auto; padding: 17px 19px 19px; }
-    .library-location {
-      margin-bottom: 13px;
-      padding: 11px 12px;
+    .library-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
+    .library-search-wrap { position: relative; flex: 1; }
+    .library-search-wrap svg { position: absolute; top: 50%; left: 11px; width: 15px; height: 15px; color: var(--muted-2); pointer-events: none; transform: translateY(-50%); }
+    .library-search {
+      width: 100%;
+      min-height: 39px;
+      padding: 0 12px 0 35px;
       border: 1px solid var(--line);
       border-radius: 10px;
-      color: var(--muted);
+      color: var(--text);
       background: #0c0e12;
-      font-size: 10px;
-      line-height: 1.55;
+      outline: none;
     }
-    .library-location strong { color: #d9dce2; }
-    .library-location code { display: block; overflow: hidden; margin-top: 3px; color: var(--muted-2); text-overflow: ellipsis; white-space: nowrap; }
+    .library-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
     .library-list { display: grid; gap: 9px; }
     .library-empty { padding: 44px 18px; border: 1px dashed var(--line-strong); border-radius: 13px; color: var(--muted); text-align: center; }
     .library-empty strong { display: block; margin-bottom: 5px; color: #dfe2e7; font-size: 13px; }
@@ -973,15 +975,17 @@
       border-radius: 12px;
       background: #0d0f14;
     }
+    .library-item.active { border-color: rgba(91,214,255,.45); background: rgba(91,214,255,.055); }
     .library-item-main { min-width: 0; }
     .library-item-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .library-item-title { overflow: hidden; color: #edf0f3; font-size: 13px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
     .library-source-badge { flex: none; padding: 3px 6px; border-radius: 5px; color: var(--accent); background: var(--accent-soft); font-size: 8px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
     .library-meta { margin-top: 5px; color: var(--muted); font-size: 10px; }
-    .library-path { overflow: hidden; margin-top: 4px; color: var(--muted-2); font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
     .library-original { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 10px; text-decoration: none; }
     .library-original:hover { text-decoration: underline; }
-    .library-actions { display: flex; gap: 7px; }
+    .library-actions { display: grid; grid-template-columns: auto auto; gap: 7px; }
+    .library-select { grid-column: 1 / -1; justify-content: center; }
+    .library-select[disabled] { color: var(--accent); border-color: rgba(91,214,255,.25); opacity: 1; }
     .library-foot { border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 
     /* Flight-deck visual language */
@@ -1655,10 +1659,7 @@
                     <label for="soundEffect">Sound effect</label>
                     <select id="soundEffect">
                       <option value="none">None</option>
-                      <option value="impact-boom">Impact boom</option>
                       <option value="vine-boom">Vine Boom</option>
-                      <option value="whoosh">Whoosh</option>
-                      <option value="record-scratch">Record scratch</option>
                     </select>
                   </div>
                   <div class="field">
@@ -1803,25 +1804,26 @@
     <section class="library-dialog" role="dialog" aria-modal="true" aria-labelledby="libraryTitle">
       <header class="library-head">
         <div>
-          <h2 id="libraryTitle">Imported videos</h2>
-          <p>Review source files and remove them when you are finished clipping.</p>
+          <h2 id="libraryTitle">Your videos</h2>
+          <p>Select any saved upload or VOD and continue clipping instantly.</p>
         </div>
         <button class="library-close" id="closeLibraryButton" type="button" aria-label="Close imported videos">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
         </button>
       </header>
       <div class="library-body">
-        <div class="library-location">
-          <strong>Video storage location</strong>
-          <code id="libraryStoragePath">Loading…</code>
-          URL imports and file uploads are working copies. Moving one to Trash never removes exported clips.
+        <div class="library-toolbar">
+          <label class="library-search-wrap" for="librarySearch">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+            <input class="library-search" id="librarySearch" type="search" placeholder="Search saved videos" autocomplete="off" />
+          </label>
         </div>
         <div class="library-list" id="libraryList">
           <div class="library-empty"><strong>Loading imported videos…</strong></div>
         </div>
       </div>
       <footer class="library-foot">
-        <span id="libraryFootnote">Files are moved to Trash so they can be recovered.</span>
+        <span id="libraryFootnote">Select opens the saved copy directly. Files can be moved to Trash when you are done.</span>
         <button class="button secondary small" id="refreshLibraryButton" type="button">Refresh</button>
       </footer>
     </section>
@@ -1984,10 +1986,20 @@
         return;
       }
 
-      const sourceLabels = { url: "URL import", upload: "File upload", legacy: "Older cache" };
+      const query = $("librarySearch").value.trim().toLocaleLowerCase();
+      const visibleItems = query
+        ? items.filter((item) => `${item.title || ""} ${item.original_url || ""}`.toLocaleLowerCase().includes(query))
+        : items;
+      if (!visibleItems.length) {
+        $("libraryList").innerHTML = '<div class="library-empty"><strong>No matching videos</strong>Try a different title or clear the search.</div>';
+        return;
+      }
+
+      const sourceLabels = { url: "VOD", upload: "Upload", legacy: "Saved" };
       const desktopMode = Boolean(window.pywebview?.api?.reveal_video);
       const deleteLabel = state.deletionMode === "permanent" ? "Delete source" : "Move to Trash";
-      $("libraryList").innerHTML = items.map((item) => {
+      $("libraryList").innerHTML = visibleItems.map((item) => {
+        const active = item.video_id === state.videoId;
         const details = [
           item.duration ? formatTime(Number(item.duration)) : null,
           fileSize(Number(item.size_bytes) || 0),
@@ -1997,18 +2009,18 @@
           ? `<a class="library-original" href="${escapeHtml(item.original_url)}" target="_blank" rel="noopener noreferrer">Open original VOD link ↗</a>`
           : "";
         return `
-          <article class="library-item" data-video-id="${escapeHtml(item.video_id)}">
+          <article class="library-item${active ? " active" : ""}" data-video-id="${escapeHtml(item.video_id)}">
             <div class="library-item-main">
               <div class="library-item-title-row">
                 <div class="library-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
                 <span class="library-source-badge">${escapeHtml(sourceLabels[item.source_type] || "Cached")}</span>
               </div>
               <div class="library-meta">${escapeHtml(details)}</div>
-              <div class="library-path" title="${escapeHtml(item.local_path)}">${escapeHtml(item.display_path)}</div>
               ${originalLink}
             </div>
             <div class="library-actions">
-              <button class="button secondary small" type="button" data-library-action="reveal" data-video-id="${escapeHtml(item.video_id)}">${desktopMode ? "Show in folder" : "Open source"}</button>
+              <button class="button primary small library-select" type="button" data-library-action="select" data-video-id="${escapeHtml(item.video_id)}" ${active ? "disabled" : ""}>${active ? "Selected" : "Select video"}</button>
+              <button class="button secondary small" type="button" data-library-action="reveal" data-video-id="${escapeHtml(item.video_id)}">${desktopMode ? "Show file" : "Open source"}</button>
               <button class="button danger small" type="button" data-library-action="delete" data-video-id="${escapeHtml(item.video_id)}">${deleteLabel}</button>
             </div>
           </article>`;
@@ -2022,8 +2034,7 @@
         if (!response.ok) throw new Error(apiError(data, "The imported video list could not be loaded."));
         state.libraryItems = data.items || [];
         state.deletionMode = data.deletion_mode || "trash";
-        $("libraryStoragePath").textContent = data.storage_path || "Clip Farm Pilot storage";
-        $("libraryFootnote").textContent = data.deletion_note || "Files are moved to Trash so they can be recovered.";
+        $("libraryFootnote").textContent = `Select opens a saved video instantly. ${data.deletion_note || "Files are moved to Trash so they can be recovered."}`;
         renderVideoLibrary();
       } catch (error) {
         if (!quiet) toast(error.message || "Could not load imported videos.");
@@ -2034,8 +2045,8 @@
     async function openVideoLibrary() {
       $("libraryModal").hidden = false;
       document.body.classList.add("modal-open");
-      $("closeLibraryButton").focus();
       await loadVideoLibrary();
+      $("librarySearch").focus();
     }
 
     function closeVideoLibrary() {
@@ -2054,6 +2065,28 @@
         }
       } catch (error) {
         toast(error.message || "The source video could not be opened.");
+      }
+    }
+
+    async function selectLibraryVideo(item, button) {
+      if (item.video_id === state.videoId) {
+        closeVideoLibrary();
+        return;
+      }
+      setBusy(button, true, "Opening…");
+      try {
+        const response = await fetch(`/api/library/videos/${item.video_id}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(apiError(data, "The saved video could not be opened."));
+        resetProject();
+        resetCandidates();
+        loadRemotePreview(data.source_url, data.title || data.filename || "Saved video");
+        finishVideoSetup(data, data.title || data.filename || "Saved video");
+        closeVideoLibrary();
+        toast("Saved video selected. You can continue clipping now.");
+      } catch (error) {
+        toast(error.message || "The saved video could not be opened.");
+        setBusy(button, false);
       }
     }
 
@@ -2383,7 +2416,7 @@
       allVideos().forEach((video) => { video.src = sourceUrl; video.load(); });
       $("emptyPreview").hidden = true;
       $("dropTitle").textContent = title;
-      $("dropHint").textContent = "Imported VOD · Cached locally";
+      $("dropHint").textContent = "Saved locally · Click to replace";
       $("videoMeta").innerHTML = `<strong>${escapeHtml(title)}</strong><span>Preparing…</span>`;
     }
 
@@ -2987,6 +3020,7 @@
     $("libraryButton").addEventListener("click", openVideoLibrary);
     $("closeLibraryButton").addEventListener("click", closeVideoLibrary);
     $("refreshLibraryButton").addEventListener("click", () => loadVideoLibrary());
+    $("librarySearch").addEventListener("input", renderVideoLibrary);
     $("libraryModal").addEventListener("click", (event) => {
       if (event.target === $("libraryModal")) closeVideoLibrary();
     });
@@ -2995,6 +3029,7 @@
       if (!button) return;
       const item = state.libraryItems.find((candidate) => candidate.video_id === button.dataset.videoId);
       if (!item) return;
+      if (button.dataset.libraryAction === "select") selectLibraryVideo(item, button);
       if (button.dataset.libraryAction === "reveal") revealLibraryVideo(item);
       if (button.dataset.libraryAction === "delete") deleteLibraryVideo(item, button);
     });

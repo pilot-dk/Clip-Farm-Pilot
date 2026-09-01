@@ -7,7 +7,7 @@ cd "$PROJECT_DIR"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV="$PROJECT_DIR/.build-venv-linux"
 NODE_BINARY="${CLIPFARMPILOT_NODE_BINARY:-$(command -v node || true)}"
-APP_VERSION="${CLIPFARMPILOT_VERSION:-1.9.1}"
+APP_VERSION="${CLIPFARMPILOT_VERSION:-1.10.0}"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_DIR/.pyinstaller-cache-linux"
 
 if [[ -z "$NODE_BINARY" || ! -x "$NODE_BINARY" ]]; then

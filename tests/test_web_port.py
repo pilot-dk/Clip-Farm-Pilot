@@ -28,6 +28,9 @@ class WebPortTests(unittest.TestCase):
     def test_smart_sound_placement_is_the_export_default(self):
         request = main.ExportRequest(start=0, end=12, sound_effect="vine-boom")
         self.assertTrue(request.auto_sound_effect)
+        for removed in ("impact-boom", "whoosh", "record-scratch"):
+            with self.assertRaises(ValueError):
+                main.ExportRequest(start=0, end=12, sound_effect=removed)
 
     def test_live_caption_options_are_validated_and_default_off(self):
         request = main.ExportRequest(start=0, end=12)

@@ -57,6 +57,18 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("data.sound_effect_times", self.html)
         self.assertIn("smartPlacementResult", self.html)
 
+    def test_vine_boom_is_the_only_available_sound_effect(self):
+        self.assertIn('<option value="none">None</option>', self.html)
+        self.assertIn('<option value="vine-boom">Vine Boom</option>', self.html)
+        for removed in ("impact-boom", "whoosh", "record-scratch"):
+            self.assertNotIn(f'<option value="{removed}">', self.html)
+
+    def test_saved_video_menu_reopens_sources_in_the_editor(self):
+        self.assertIn('id="librarySearch"', self.html)
+        self.assertIn('data-library-action="select"', self.html)
+        self.assertIn("async function selectLibraryVideo(item, button)", self.html)
+        self.assertIn('fetch(`/api/library/videos/${item.video_id}`)', self.html)
+
     def test_live_captions_offer_word_highlighting_and_colour_schemes(self):
         self.assertIn('id="liveCaptionsToggle"', self.html)
         self.assertIn('id="liveCaptionScheme"', self.html)

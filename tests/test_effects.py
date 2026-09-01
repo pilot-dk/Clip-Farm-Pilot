@@ -54,17 +54,6 @@ class EffectAssetTests(unittest.TestCase):
         self.assertTrue(any(abs(value - 8.8) < 0.35 for value in times))
         self.assertTrue(any(abs(value - 16.4) < 0.35 for value in times))
 
-    def test_whoosh_smart_placement_favors_scene_changes_without_audio(self):
-        times = _smart_sound_times_from_signals(
-            np.zeros(120, dtype=np.float32),
-            hop_seconds=0.10,
-            duration=12.0,
-            sound_effect="whoosh",
-            scene_times=[3.0, 8.5],
-        )
-
-        self.assertEqual(times, [3.03, 8.53])
-
     def test_smart_fallback_leaves_an_audible_tail(self):
         times = _smart_sound_times_from_signals(
             np.zeros(24, dtype=np.float32),
@@ -94,7 +83,7 @@ class EffectAssetTests(unittest.TestCase):
                 duration=2.4,
                 width=96,
                 height=64,
-                sound_effect="impact-boom",
+                sound_effect="vine-boom",
                 visual_effect="none",
                 effect_time=0.5,
                 sound_effect_times=[0.35, 1.35],
@@ -217,18 +206,12 @@ class EffectAssetTests(unittest.TestCase):
                     self.assertLess(float(np.abs(rendered[:, :, 0] - rendered[:, :, 1]).mean()), 1.0)
                     self.assertLess(float(np.abs(rendered[:, :, 1] - rendered[:, :, 2]).mean()), 1.0)
 
-    def test_original_effect_sounds_are_valid_and_audible(self):
+    def test_removed_sound_effects_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            target = Path(temporary) / "removed.wav"
             for effect in ("impact-boom", "whoosh", "record-scratch"):
-                target = root / f"{effect}.wav"
-                _render_sound_effect(effect, target)
-                with wave.open(str(target), "rb") as audio:
-                    samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype=np.int16)
-                    self.assertEqual(audio.getframerate(), 48_000)
-                    self.assertEqual(audio.getnchannels(), 1)
-                self.assertGreater(samples.size, 20_000)
-                self.assertGreater(int(np.max(np.abs(samples))), 1_000)
+                with self.assertRaisesRegex(ValueError, "Unknown sound effect"):
+                    _render_sound_effect(effect, target)
 
     def test_vine_boom_sample_is_valid_stereo_audio(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.9.1 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.10.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.9.1-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.10.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.9.1-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.10.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -90,7 +90,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.9.1-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.10.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -111,8 +111,8 @@ The editor now includes:
 
 - Drag-and-drop or file-picker livestream upload with upload progress.
 - YouTube and Twitch VOD link importing with download progress.
-- An **Imported videos** library showing each cached source file, its original VOD link, size, date, and exact local save path.
-- One-click **Show in folder** and recoverable **Move to Trash** controls. Exported clips are never removed with a source video.
+- A searchable **Your videos** library for every cached upload and VOD, with a primary **Select video** action that reopens it directly in the editor—no folder browsing or re-uploading.
+- Secondary **Show file** and recoverable **Move to Trash** controls. Exported clips are never removed with a source video.
 - A responsive video preview that changes shape with the selected export ratio.
 - Clip start/end controls, playhead scrubbing, and clip-range playback.
 - **16:9**, **9:16**, and **1:1** visual presets.
@@ -128,9 +128,9 @@ The editor now includes:
 - Five live-caption colour schemes: **Pilot Lime**, **Ocean Blue**, **Sunset Gold**, **Neon Pink**, and **Electric Violet**.
 - Seven full-clip looks: **Black & white**, **Cinematic**, **Vivid**, **Warm**, **Cool**, **Faded / Vintage**, and **High contrast**, with an instant preview in every template.
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
-- A bundled Vine Boom option plus original impact-boom, whoosh, and record-scratch sound effects with adjustable volume.
+- A single bundled **Vine Boom** sound effect with adjustable volume, keeping the effects menu focused and predictable.
 - **Smart sound placement** that analyzes likely phrase endings, reactions, energy drops, and scene cuts, then adds one or more well-spaced hits automatically.
-- Effect-specific timing: Vine Boom favors punchline-like pauses, Impact Boom favors reaction spikes, Whoosh favors visual cuts, and Record Scratch favors abrupt stops.
+- Vine Boom timing favors punchline-like pauses while avoiding crowded or repetitive placement.
 - A manual timing override for creators who want exactly one sound at the playhead.
 - Lens flare, punch zoom, and white flash visual effects with adjustable strength and precise playhead-based timing.
 - **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection.
@@ -207,7 +207,7 @@ The **Effects** panel can apply a classic post-processing filter across the comp
 
 Smart placement analyzes local audio and visual structure; it does not transcribe or claim to understand the literal meaning of speech. A pause after an unusual or funny sentence is therefore a strong Vine Boom candidate, while continuous speech without a clear ending may not be. This keeps the feature private, fast, and usable without an AI account or usage fees.
 
-Choose **Vine Boom** to use the bundled sample supplied by the project owner, or **Impact boom** for Clip Farm Pilot's original synthesized alternative. All effects are applied locally during export and work with landscape, portrait, square-caption, and gaming-overlay renders.
+Choose **Vine Boom** to use the bundled sample supplied by the project owner. It is the only sound effect in the desktop editor. Sound and visual effects are applied locally during export and work with landscape, portrait, square-caption, and gaming-overlay renders.
 
 ## Import a YouTube or Twitch VOD
 
@@ -218,11 +218,11 @@ Choose **Vine Boom** to use the bundled sample supplied by the project owner, or
 
 Clip Farm Pilot downloads a local working copy because audio analysis and FFmpeg rendering need direct media access. Private, subscriber-only, deleted, region-blocked, age-restricted, or DRM-protected videos may not import without an authenticated integration. Only import videos you own or have permission to download and reuse.
 
-## Remove a cached VOD when you are done
+## Reopen or remove a saved video
 
-1. Press **Imported videos** in the top toolbar.
-2. Use **Show in folder** to reveal Clip Farm Pilot’s local source copy. URL imports also include a link back to the original YouTube or Twitch page.
-3. Press **Move to Trash** and confirm when you no longer need the full VOD.
+1. Press **Videos** in the top toolbar.
+2. Search by title and press **Select video** to reopen the saved upload or VOD immediately in the editor.
+3. Use **Show file** only when you need the source itself, or press **Move to Trash** and confirm when you no longer need the full VOD.
 
 The source copy goes to the operating system’s Trash or Recycle Bin, so it can still be recovered until that is emptied. Finished MP4 exports saved through **Export Clip** remain wherever you saved them and are not touched.
 

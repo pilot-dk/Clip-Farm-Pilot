@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.app.vod import CachedVideoLibrary
+from backend.app.video import VideoInfo
 
 class VideoLibraryApiTests(unittest.TestCase):
     def test_list_and_delete_cached_video_handlers(self):
@@ -32,6 +33,12 @@ class VideoLibraryApiTests(unittest.TestCase):
                 listed = main.list_cached_videos()
                 item = next(value for value in listed["items"] if value["video_id"] == video_id)
                 self.assertEqual(item["original_url"], "https://youtu.be/test")
+
+                with patch("backend.app.vod.probe_video", return_value=VideoInfo(1920, 1080, 123.4)):
+                    selected = main.select_cached_video(video_id)
+                self.assertEqual(selected["video_id"], video_id)
+                self.assertEqual(selected["source_url"], f"/api/videos/{video_id}/source")
+                self.assertEqual(selected["duration"], 123.4)
 
                 deleted = main.delete_cached_video(video_id)
                 self.assertEqual(deleted["disposition"], "trash")

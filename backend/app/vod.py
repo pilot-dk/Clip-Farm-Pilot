@@ -171,6 +171,31 @@ class CachedVideoLibrary:
                 self._save_locked()
         return sorted(items, key=lambda item: float(item.get("created_at") or 0), reverse=True)
 
+    def source_path(self, video_id: str) -> Path:
+        """Return a validated cached source path without accepting arbitrary paths."""
+        if not VIDEO_ID_PATTERN.fullmatch(video_id or ""):
+            raise KeyError(video_id)
+        with self._lock:
+            source = self._source_for(video_id)
+            if video_id not in self._records or source is None:
+                raise KeyError(video_id)
+            return source
+
+    def select_item(self, video_id: str) -> dict:
+        """Return editor-ready metadata for a video selected from the library."""
+        source = self.source_path(video_id)
+        info = probe_video(source)
+        with self._lock:
+            record = self._records.get(video_id)
+            if record is None:
+                raise KeyError(video_id)
+            record.update({"duration": round(info.duration, 2), "width": info.width, "height": info.height})
+            self._save_locked()
+        item = next((value for value in self.list_items() if value["video_id"] == video_id), None)
+        if item is None:
+            raise KeyError(video_id)
+        return item
+
     def title_for(self, video_id: str) -> str:
         if not VIDEO_ID_PATTERN.fullmatch(video_id or ""):
             return ""

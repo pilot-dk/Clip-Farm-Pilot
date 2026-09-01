@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.app.vod import CachedVideoLibrary
+from backend.app.video import VideoInfo
 from desktop_launcher import DesktopApi, _default_storage_dir
 
 
@@ -70,6 +71,27 @@ class CachedVideoLibraryTests(unittest.TestCase):
             library = CachedVideoLibrary(uploads, root / "library.json", root / "trash")
             with self.assertRaises(KeyError):
                 library.move_to_trash("../not-a-video")
+            with self.assertRaises(KeyError):
+                library.source_path("../not-a-video")
+
+    def test_select_item_returns_editor_ready_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            uploads = root / "uploads"
+            uploads.mkdir()
+            video_id = "f" * 32
+            (uploads / f"{video_id}.mp4").write_bytes(b"video")
+            library = CachedVideoLibrary(uploads, root / "library.json", root / "trash")
+            library.register(video_id, "Saved stream", "upload")
+
+            with patch("backend.app.vod.probe_video", return_value=VideoInfo(1280, 720, 91.25)):
+                item = library.select_item(video_id)
+
+            self.assertEqual(item["title"], "Saved stream")
+            self.assertEqual(item["duration"], 91.25)
+            self.assertEqual(item["width"], 1280)
+            self.assertEqual(item["height"], 720)
+            self.assertEqual(item["source_url"], f"/api/videos/{video_id}/source")
 
     def test_default_library_uses_the_operating_system_trash(self):
         with tempfile.TemporaryDirectory() as temporary:

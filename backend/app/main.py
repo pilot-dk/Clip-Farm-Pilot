@@ -133,7 +133,7 @@ class ExportRequest(BaseModel):
         "faded",
         "high-contrast",
     ] = "none"
-    sound_effect: Literal["none", "impact-boom", "vine-boom", "whoosh", "record-scratch"] = "none"
+    sound_effect: Literal["none", "vine-boom"] = "none"
     visual_effect: Literal["none", "lens-flare", "punch-zoom", "white-flash"] = "none"
     effect_time: float = Field(1.0, ge=0.0, le=86_400.0)
     auto_sound_effect: bool = True
@@ -222,10 +222,10 @@ def _caption_overlay_from_data_url(
 
 
 def get_video(video_id: str) -> Path:
-    matches = list(UPLOADS.glob(f"{video_id}.*"))
-    if not matches:
+    try:
+        return VIDEO_LIBRARY.source_path(video_id)
+    except KeyError:
         raise HTTPException(404, "Video not found")
-    return matches[0]
 
 
 @app.get("/api/health")
@@ -326,6 +326,16 @@ def list_cached_videos():
             if permanent_deletion else "Files are moved to Trash. Exported clips are not removed."
         ),
     }
+
+
+@app.get("/api/library/videos/{video_id}")
+def select_cached_video(video_id: str):
+    try:
+        return VIDEO_LIBRARY.select_item(video_id)
+    except KeyError:
+        raise HTTPException(404, "Cached video not found")
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(400, f"Could not open the cached video: {exc}")
 
 
 @app.delete("/api/library/videos/{video_id}")
