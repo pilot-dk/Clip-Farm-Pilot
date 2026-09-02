@@ -112,6 +112,7 @@ class VodImportRequest(BaseModel):
 class ExportRequest(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
+    edit_mode: Literal["clip", "full-length"] = "clip"
     aspect: Literal["16:9", "9:16", "1:1"] = "9:16"
     layout: Literal["standard", "gaming"] = "standard"
     face_corner: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-right"
@@ -143,6 +144,9 @@ class ExportRequest(BaseModel):
     live_captions: bool = False
     live_caption_scheme: Literal["pilot-lime", "ocean", "sunset", "neon-pink", "violet"] = "pilot-lime"
     viral_title: bool = True
+    remove_silence: bool = False
+    remove_filler_words: bool = False
+    subscribe_animation: bool = False
 
 
 class SocialPublishRequest(BaseModel):
@@ -364,6 +368,8 @@ def export(video_id: str, req: ExportRequest):
     source = get_video(video_id)
     if req.end <= req.start:
         raise HTTPException(400, "End time must be after start time.")
+    if req.edit_mode == "full-length" and (req.aspect != "16:9" or req.layout != "standard"):
+        raise HTTPException(400, "Full-length YouTube edits use the 16:9 standard layout.")
     export_id = uuid.uuid4().hex
     target = EXPORTS / f"{export_id}.mp4"
     caption_overlay: Path | None = None
@@ -399,6 +405,10 @@ def export(video_id: str, req: ExportRequest):
             live_caption_scheme=req.live_caption_scheme,
             title_transcript=req.viral_title,
             export_metadata=export_metadata,
+            edit_mode=req.edit_mode,
+            remove_silence=req.remove_silence,
+            remove_filler_words=req.remove_filler_words,
+            subscribe_animation=req.subscribe_animation,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -407,7 +417,8 @@ def export(video_id: str, req: ExportRequest):
     finally:
         if caption_overlay is not None:
             caption_overlay.unlink(missing_ok=True)
-    fallback_filename = f"Clip Farm Pilot-{req.aspect.replace(':', 'x')}-{export_id[:8]}.mp4"
+    fallback_prefix = "Clip Farm Pilot-Full-YouTube" if req.edit_mode == "full-length" else f"Clip Farm Pilot-{req.aspect.replace(':', 'x')}"
+    fallback_filename = f"{fallback_prefix}-{export_id[:8]}.mp4"
     title_result = {
         "title": Path(fallback_filename).stem,
         "filename": fallback_filename,
@@ -449,6 +460,8 @@ def export(video_id: str, req: ExportRequest):
         "live_captions": req.live_captions,
         "live_caption_scheme": req.live_caption_scheme if req.live_captions else "none",
         "live_caption_word_count": int(export_metadata.get("live_caption_word_count", 0)),
+        "edit_mode": req.edit_mode,
+        "full_length_summary": export_metadata.get("full_length_summary", {}),
     }
 
 

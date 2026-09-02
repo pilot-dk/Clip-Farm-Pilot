@@ -41,6 +41,21 @@ class WebPortTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             main.ExportRequest(start=0, end=12, live_caption_scheme="invisible")
 
+    def test_full_length_editor_options_are_independent(self):
+        request = main.ExportRequest(
+            start=0,
+            end=600,
+            edit_mode="full-length",
+            aspect="16:9",
+            remove_silence=True,
+            remove_filler_words=False,
+            subscribe_animation=True,
+        )
+        self.assertEqual(request.edit_mode, "full-length")
+        self.assertTrue(request.remove_silence)
+        self.assertFalse(request.remove_filler_words)
+        self.assertTrue(request.subscribe_animation)
+
     def test_accepts_browser_rendered_square_caption(self):
         overlay = main._caption_overlay_from_data_url(png_data_url())
         self.assertIsNotNone(overlay)

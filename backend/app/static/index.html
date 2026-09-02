@@ -203,6 +203,33 @@
 
     .workspace-kicker { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 
+    .editor-mode-switch {
+      display: inline-flex;
+      gap: 4px;
+      margin-top: 14px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(5, 16, 25, .72);
+    }
+    .editor-mode-button {
+      min-height: 34px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      background: transparent;
+      font: 750 11px/1 inherit;
+      cursor: pointer;
+      transition: color .18s ease, background .18s ease, box-shadow .18s ease;
+    }
+    .editor-mode-button:hover { color: var(--text); }
+    .editor-mode-button.active {
+      color: #07141b;
+      background: var(--accent);
+      box-shadow: 0 5px 18px rgba(91, 214, 255, .18);
+    }
+
     .flight-path {
       display: flex;
       align-items: center;
@@ -473,6 +500,52 @@
     .sidebar { display: grid; gap: 14px; }
     .control-panel { padding: 18px; }
     .section + .section { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+    .section[hidden], .ratio-grid[hidden], .full-length-format[hidden] { display: none !important; }
+
+    .full-length-card {
+      display: grid;
+      gap: 10px;
+    }
+    .full-length-intro {
+      margin: 0 0 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .full-edit-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 58px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: rgba(8, 25, 38, .48);
+    }
+    .full-edit-option.subscribe-option { border-color: rgba(91, 214, 255, .24); }
+    .full-edit-copy { display: grid; gap: 4px; min-width: 0; }
+    .full-edit-copy strong { color: #f1f5f7; font-size: 12px; }
+    .full-edit-copy small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+    .full-length-format {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 12px;
+      border: 1px solid rgba(91, 214, 255, .24);
+      border-radius: 9px;
+      background: rgba(91, 214, 255, .055);
+    }
+    .full-format-shape {
+      width: 48px;
+      aspect-ratio: 16 / 9;
+      border: 2px solid var(--accent);
+      border-radius: 4px;
+      box-shadow: inset 0 0 0 2px rgba(4, 16, 24, .8);
+    }
+    .full-length-format span { display: grid; gap: 3px; }
+    .full-length-format strong { font-size: 12px; }
+    .full-length-format small { color: var(--muted); font-size: 10px; }
 
     .source-tabs {
       display: grid;
@@ -1422,7 +1495,7 @@
         </button>
         <button class="button primary" type="button" id="topExportButton" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-          <span class="top-export-label">Export</span>
+          <span class="top-export-label" id="topExportLabel">Export</span>
         </button>
       </div>
     </header>
@@ -1430,8 +1503,12 @@
     <main class="workspace">
       <div class="workspace-head">
         <div>
-          <div class="workspace-title"><h1>Create a clip</h1><span class="saved-dot" aria-hidden="true"></span></div>
-          <p class="workspace-kicker">Import a stream, pick a moment, choose a format, and export.</p>
+          <div class="workspace-title"><h1 id="workspaceTitle">Create a clip</h1><span class="saved-dot" aria-hidden="true"></span></div>
+          <p class="workspace-kicker" id="workspaceKicker">Import a stream, pick a moment, choose a format, and export.</p>
+          <div class="editor-mode-switch" role="tablist" aria-label="Editor workspace">
+            <button class="editor-mode-button active" id="clipModeButton" type="button" role="tab" aria-selected="true" data-edit-mode="clip">Viral clips</button>
+            <button class="editor-mode-button" id="fullLengthModeButton" type="button" role="tab" aria-selected="false" data-edit-mode="full-length">Full YouTube video</button>
+          </div>
         </div>
         <div class="flight-path" aria-label="Clip workflow">
           <span class="flight-step active"><b>01</b> Source</span>
@@ -1478,16 +1555,16 @@
             </div>
             <div class="clip-range">
               <div class="field">
-                <label for="startTime">Clip start</label>
+                <label for="startTime" id="startTimeLabel">Clip start</label>
                 <div class="time-field"><input id="startTime" type="number" min="0" value="0" step="0.1" disabled /><span class="input-suffix">sec</span></div>
               </div>
               <div class="field">
-                <label for="endTime">Clip end</label>
+                <label for="endTime" id="endTimeLabel">Clip end</label>
                 <div class="time-field"><input id="endTime" type="number" min="0.1" value="30" step="0.1" disabled /><span class="input-suffix">sec</span></div>
               </div>
               <button class="button secondary" type="button" id="playClipButton" disabled>
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="m8 5 11 7-11 7V5Z"/></svg>
-                Play clip
+                <span id="playRangeLabel">Play clip</span>
               </button>
             </div>
           </div>
@@ -1527,7 +1604,7 @@
               </div>
             </div>
 
-            <div class="section">
+            <div class="section" id="clipDiscoverySection">
               <span class="section-label">2. Find a clip</span>
               <div class="auto-find-row">
                 <button class="button secondary" type="button" id="analyzeButton" disabled>
@@ -1542,6 +1619,25 @@
                 </select>
               </div>
               <div class="candidates" id="candidates"><div class="candidate-empty">Load a video to scan for candidate clips.</div></div>
+            </div>
+
+            <div class="section" id="fullLengthSection" hidden>
+              <span class="section-label">2. Tighten the full video</span>
+              <div class="full-length-card">
+                <p class="full-length-intro">Each option runs locally and keeps the video in chronological order. You can use either cleanup option or both.</p>
+                <div class="full-edit-option">
+                  <span class="full-edit-copy"><strong>Remove silent pauses</strong><small>Cuts dead air longer than a natural breath while keeping speech boundaries intact.</small></span>
+                  <label class="switch"><input id="removeSilenceToggle" type="checkbox" checked /><span class="switch-track"></span></label>
+                </div>
+                <div class="full-edit-option">
+                  <span class="full-edit-copy"><strong>Remove filler words</strong><small>Uses offline speech recognition to cut “um”, “uh”, “you know”, and similar filler.</small></span>
+                  <label class="switch"><input id="removeFillerWordsToggle" type="checkbox" /><span class="switch-track"></span></label>
+                </div>
+                <div class="full-edit-option subscribe-option">
+                  <span class="full-edit-copy"><strong>YouTube subscribe animation</strong><small>Shows your complete supplied animation, with sound, at the very start of the finished video.</small></span>
+                  <label class="switch"><input id="subscribeAnimationToggle" type="checkbox" /><span class="switch-track"></span></label>
+                </div>
+              </div>
             </div>
 
             <div class="section">
@@ -1559,6 +1655,10 @@
                   <input type="radio" name="ratio" value="1:1" />
                   <span class="ratio-card"><span class="ratio-shape square"></span><strong>1:1</strong><small>Square</small></span>
                 </label>
+              </div>
+              <div class="full-length-format" id="fullLengthFormat" hidden>
+                <span class="full-format-shape" aria-hidden="true"></span>
+                <span><strong>16:9 YouTube</strong><small>Full HD 1920×1080 · complete timeline</small></span>
               </div>
               <div class="square-caption-controls" id="squareCaptionControls">
                 <div class="caption-head"><label for="captionText">Caption text (optional)</label><span id="captionCount">0 / 160</span></div>
@@ -1579,7 +1679,7 @@
               </div>
             </div>
 
-            <div class="section">
+            <div class="section" id="gamingSection">
               <div class="switch-row">
                 <div class="switch-copy"><strong>Gaming layout</strong><small>Face cam on top, gameplay below</small></div>
                 <label class="switch">
@@ -1735,7 +1835,7 @@
             <div class="section">
               <div class="viral-title-control">
                 <div class="switch-row">
-                  <div class="switch-copy"><strong>Original viral title</strong><small>Uses the clip’s spoken words and energy to create a fresh hook</small></div>
+                    <div class="switch-copy"><strong>Original viral title</strong><small id="viralTitleHint">Uses the clip’s spoken words and energy to create a fresh hook</small></div>
                   <label class="switch">
                     <input id="viralTitleToggle" type="checkbox" checked />
                     <span class="switch-track"></span>
@@ -1748,7 +1848,7 @@
               </div>
               <button class="button primary full" type="button" id="exportButton" disabled>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-                Export Clip
+                <span id="exportButtonLabel">Export Clip</span>
               </button>
             </div>
 
@@ -1865,6 +1965,7 @@
       duration: 0,
       videoWidth: 0,
       videoHeight: 0,
+      editMode: "clip",
       ratio: "16:9",
       layout: "standard",
       clipPlayback: false,
@@ -2108,7 +2209,7 @@
         loadRemotePreview(data.source_url, data.title || data.filename || "Saved video");
         finishVideoSetup(data, data.title || data.filename || "Saved video");
         closeVideoLibrary();
-        toast("Saved video selected. You can continue clipping now.");
+        toast(state.editMode === "full-length" ? "Saved video selected. You can edit the full video now." : "Saved video selected. You can continue clipping now.");
       } catch (error) {
         toast(error.message || "The saved video could not be opened.");
         setBusy(button, false);
@@ -2404,6 +2505,69 @@
       });
     }
 
+    function setEditMode(mode, announce = true) {
+      const fullLength = mode === "full-length";
+      state.editMode = fullLength ? "full-length" : "clip";
+      document.querySelectorAll("[data-edit-mode]").forEach((button) => {
+        const active = button.dataset.editMode === state.editMode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+      });
+      $("clipDiscoverySection").hidden = fullLength;
+      $("fullLengthSection").hidden = !fullLength;
+      $("ratioGrid").hidden = fullLength;
+      $("fullLengthFormat").hidden = !fullLength;
+      $("gamingSection").hidden = fullLength;
+      $("workspaceTitle").textContent = fullLength ? "Edit a full YouTube video" : "Create a clip";
+      $("workspaceKicker").textContent = fullLength
+        ? "Tighten a complete 16:9 video, add finishing touches, and export locally."
+        : "Import a stream, pick a moment, choose a format, and export.";
+      $("startTimeLabel").textContent = fullLength ? "Video start" : "Clip start";
+      $("endTimeLabel").textContent = fullLength ? "Video end" : "Clip end";
+      $("playRangeLabel").textContent = fullLength ? "Play selection" : "Play clip";
+      $("topExportLabel").textContent = fullLength ? "Export full video" : "Export";
+      $("exportButtonLabel").textContent = fullLength ? "Export Full Video" : "Export Clip";
+      $("effectTimeLabel").textContent = fullLength ? "Manual trigger in the edited video" : "Manual trigger after clip starts";
+      $("viralTitleHint").textContent = fullLength
+        ? "Uses the full edit’s spoken content and energy to create a YouTube-ready title"
+        : "Uses the clip’s spoken words and energy to create a fresh hook";
+
+      if (fullLength) {
+        $("gamingToggle").checked = false;
+        state.layout = "standard";
+        $("stage").classList.remove("gaming");
+        $("faceControls").classList.remove("visible");
+        document.querySelectorAll('input[name="ratio"]').forEach((input) => { input.disabled = false; });
+        const landscape = document.querySelector('input[name="ratio"][value="16:9"]');
+        landscape.checked = true;
+        updateRatio("16:9");
+      } else {
+        updateRatio(document.querySelector('input[name="ratio"]:checked')?.value || "16:9");
+      }
+
+      if (state.videoId) {
+        $("startTime").value = "0.0";
+        $("endTime").value = (fullLength ? state.duration : Math.min(30, state.duration)).toFixed(1);
+        validateRange();
+      }
+      state.exportId = null;
+      state.generatedTitle = null;
+      $("downloadLink").classList.remove("visible");
+      updatePublishControls();
+      enableEditor(Boolean(state.videoId));
+      if (announce) {
+        setStatus(
+          "ready",
+          fullLength ? "Full-length editor ready" : "Clip editor ready",
+          state.videoId
+            ? fullLength
+              ? "Choose cleanup options, keep any effects you want, then export the complete 16:9 video."
+              : "Choose a range manually or let Clip Farm Pilot find the strongest moments."
+            : "Add a livestream recording to begin.",
+        );
+      }
+    }
+
     function validateRange(showMessage = false) {
       let start = Number($("startTime").value);
       let end = Number($("endTime").value);
@@ -2414,7 +2578,7 @@
       const clipDuration = Math.max(0, end - start);
       $("effectTime").max = clipDuration.toFixed(1);
       $("effectTime").value = Math.min(Math.max(0, Number($("effectTime").value) || 0), clipDuration).toFixed(1);
-      if (showMessage && end - start < 5) toast("Tip: clips at least 5 seconds long usually work best.");
+      if (showMessage && state.editMode === "clip" && end - start < 5) toast("Tip: clips at least 5 seconds long usually work best.");
       return { start, end };
     }
 
@@ -2428,6 +2592,7 @@
       ["analyzeButton", "exportButton", "topExportButton", "startTime", "endTime", "playhead", "playClipButton"].forEach((id) => {
         $(id).disabled = !enabled;
       });
+      $("analyzeButton").disabled = !enabled || state.editMode === "full-length";
       updateEffectControls();
     }
 
@@ -2466,15 +2631,21 @@
       $("startTime").max = state.duration;
       $("endTime").max = state.duration;
       $("startTime").value = "0.0";
-      $("endTime").value = Math.min(30, state.duration).toFixed(1);
-      $("effectTime").max = Math.min(30, state.duration).toFixed(1);
+      $("endTime").value = (state.editMode === "full-length" ? state.duration : Math.min(30, state.duration)).toFixed(1);
+      $("effectTime").max = (state.editMode === "full-length" ? state.duration : Math.min(30, state.duration)).toFixed(1);
       $("effectTime").value = Math.min(1, state.duration).toFixed(1);
       $("videoMeta").innerHTML = `<strong>${escapeHtml(displayName)}</strong><span>${data.width}×${data.height} · ${formatTime(state.duration)}</span>`;
       $("uploadBar").style.width = "100%";
       $("uploadPercent").textContent = "100%";
       enableEditor(true);
       requestAnimationFrame(updateFacePreview);
-      setStatus("success", "Video ready", "Choose a range manually or let Clip Farm Pilot find the strongest moments.");
+      setStatus(
+        "success",
+        "Video ready",
+        state.editMode === "full-length"
+          ? "The complete timeline is selected. Choose cleanup options and any finishing effects."
+          : "Choose a range manually or let Clip Farm Pilot find the strongest moments.",
+      );
     }
 
     async function selectFile(file) {
@@ -2551,7 +2722,7 @@
         .filter((input) => !input.disabled);
       $("publishButton").disabled = !state.exportId || selected.length === 0;
       if (!state.exportId) {
-        $("publishHint").textContent = "Export a clip first. New integrations and unaudited TikTok clients may be limited to private posts.";
+        $("publishHint").textContent = `${state.editMode === "full-length" ? "Export the full video" : "Export a clip"} first. New integrations and unaudited TikTok clients may be limited to private posts.`;
       } else if (!selected.length) {
         $("publishHint").textContent = "Select at least one connected account to publish this export.";
       } else {
@@ -2839,22 +3010,25 @@
     async function exportClip() {
       if (!state.videoId) return;
       const range = validateRange(true);
+      const isFullLength = state.editMode === "full-length";
       if (range.end <= range.start) {
-        setStatus("error", "Check clip timing", "Clip end must be after clip start.");
+        setStatus("error", isFullLength ? "Check video timing" : "Check clip timing", "The end time must be after the start time.");
         return;
       }
 
       const buttons = [$("exportButton"), $("topExportButton")];
       const wantsLiveCaptions = $("liveCaptionsToggle").checked;
       const wantsViralTitle = $("viralTitleToggle").checked;
-      buttons.forEach((button) => setBusy(button, true, wantsLiveCaptions ? "Captioning…" : wantsViralTitle ? "Writing title…" : "Rendering…"));
+      buttons.forEach((button) => setBusy(button, true, isFullLength ? "Editing…" : wantsLiveCaptions ? "Captioning…" : wantsViralTitle ? "Writing title…" : "Rendering…"));
       $("viralTitleResult").classList.remove("visible");
       $("smartPlacementResult").textContent = "";
       $("smartPlacementResult").classList.remove("visible");
       setStatus(
         "working",
-        wantsLiveCaptions ? "Transcribing and exporting" : wantsViralTitle ? "Creating a fresh viral title" : "Exporting clip",
-        `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}${wantsViralTitle ? " · listening for the strongest hook" : ""}.`,
+        isFullLength ? "Editing the full YouTube video" : wantsLiveCaptions ? "Transcribing and exporting" : wantsViralTitle ? "Creating a fresh viral title" : "Exporting clip",
+        isFullLength
+          ? `${formatTime(range.end - range.start, true)} selected · tightening pauses and applying your finishing options locally.`
+          : `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}${wantsViralTitle ? " · listening for the strongest hook" : ""}.`,
       );
 
       try {
@@ -2864,8 +3038,9 @@
           body: JSON.stringify({
             start: range.start,
             end: range.end,
-            aspect: state.ratio,
-            layout: state.layout,
+            edit_mode: state.editMode,
+            aspect: isFullLength ? "16:9" : state.ratio,
+            layout: isFullLength ? "standard" : state.layout,
             face_corner: $("faceCorner").value,
             face_width_fraction: Number($("faceWidth").value) / 100,
             face_height_fraction: Number($("faceHeight").value) / 100,
@@ -2885,6 +3060,9 @@
             live_captions: $("liveCaptionsToggle").checked,
             live_caption_scheme: $("liveCaptionScheme").value,
             viral_title: $("viralTitleToggle").checked,
+            remove_silence: isFullLength && $("removeSilenceToggle").checked,
+            remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
+            subscribe_animation: isFullLength && $("subscribeAnimationToggle").checked,
           }),
         });
         const data = await response.json();
@@ -2904,7 +3082,7 @@
           $("smartPlacementResult").textContent = "";
           $("smartPlacementResult").classList.remove("visible");
         }
-        $("publishTitle").value = state.generatedTitle || data.viral_title || "New Clip";
+        $("publishTitle").value = state.generatedTitle || data.viral_title || (isFullLength ? "New YouTube Video" : "New Clip");
         if (!$("publishCaption").value.trim() && state.ratio === "1:1") {
           $("publishCaption").value = $("captionText").value.trim();
         }
@@ -2913,7 +3091,27 @@
         $("downloadLink").href = data.download_url;
         $("downloadLink").download = data.suggested_filename || `Clip Farm Pilot-${state.ratio.replace(":", "x")}-${data.export_id.slice(0, 8)}.mp4`;
         $("downloadLink").classList.add("visible");
-        if ($("viralTitleToggle").checked && state.generatedTitle) {
+        if (isFullLength) {
+          if ($("viralTitleToggle").checked && state.generatedTitle) {
+            $("viralTitleText").textContent = $("downloadLink").download;
+            $("viralTitleResult").classList.add("visible");
+          }
+          const summary = data.full_length_summary || {};
+          const removed = Number(summary.removed_seconds) || 0;
+          const fillerCount = Number(summary.filler_words_removed) || 0;
+          const silenceCount = Number(summary.silence_sections_removed) || 0;
+          const improvements = [];
+          if (removed > .05) improvements.push(`${formatTime(removed, true)} removed`);
+          if (silenceCount) improvements.push(`${silenceCount} silent pause${silenceCount === 1 ? "" : "s"}`);
+          if (fillerCount) improvements.push(`${fillerCount} filler word${fillerCount === 1 ? "" : "s"}`);
+          if (summary.subscribe_animation) improvements.push("subscribe animation added at 00:00");
+          if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) improvements.push(`${data.live_caption_word_count} caption words timed`);
+          setStatus(
+            "success",
+            "Full YouTube video ready",
+            improvements.length ? improvements.join(" · ") : "The complete 16:9 MP4 is ready to save.",
+          );
+        } else if ($("viralTitleToggle").checked && state.generatedTitle) {
           $("viralTitleText").textContent = $("downloadLink").download;
           $("viralTitleResult").classList.add("visible");
           if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) {
@@ -2954,14 +3152,15 @@
 
       const link = $("downloadLink");
       link.classList.add("saving");
+      const itemName = state.editMode === "full-length" ? "video" : "clip";
       setStatus("working", "Choose where to save", "Opening the desktop Save As window…");
       try {
         const result = await window.pywebview.api.save_export(state.exportId, link.download || "Clip Farm Pilot-clip.mp4");
         if (result?.status === "saved") {
-          setStatus("success", "Clip saved", `Saved to ${result.path}`);
-          toast("Your clip was saved successfully.");
+          setStatus("success", `${itemName[0].toUpperCase() + itemName.slice(1)} saved`, `Saved to ${result.path}`);
+          toast(`Your ${itemName} was saved successfully.`);
         } else {
-          setStatus("success", "Clip ready", "Saving was cancelled. Press Save exported MP4 when you are ready.");
+          setStatus("success", `${itemName[0].toUpperCase() + itemName.slice(1)} ready`, "Saving was cancelled. Press Save exported MP4 when you are ready.");
         }
       } catch (error) {
         setStatus("error", "Could not save clip", error.message || "Please try exporting the clip again.");
@@ -2985,6 +3184,9 @@
       $("videoFilter").value = "none";
       $("vineBoomToggle").checked = false;
       $("checkSoundToggle").checked = false;
+      $("removeSilenceToggle").checked = true;
+      $("removeFillerWordsToggle").checked = false;
+      $("subscribeAnimationToggle").checked = false;
       $("autoSoundEffectToggle").checked = true;
       $("visualEffect").value = "none";
       $("effectTime").value = "1.0";
@@ -3057,6 +3259,7 @@
     $("authForm").addEventListener("submit", unlockApp);
     $("installAppButton").addEventListener("click", installWebApp);
     $("emptySelectButton").addEventListener("click", () => $("fileInput").click());
+    document.querySelectorAll("[data-edit-mode]").forEach((button) => button.addEventListener("click", () => setEditMode(button.dataset.editMode)));
     $("newProjectButton").addEventListener("click", () => state.videoId ? resetProject() : $("fileInput").click());
     $("libraryButton").addEventListener("click", openVideoLibrary);
     $("closeLibraryButton").addEventListener("click", closeVideoLibrary);
@@ -3207,7 +3410,7 @@
     updateSquareCaption();
     updateLiveCaptionControls();
     updateEffectControls();
-    updateRatio("16:9");
+    setEditMode("clip", false);
     initializeAccess();
     if ("serviceWorker" in navigator && (window.isSecureContext || location.hostname === "localhost")) {
       window.addEventListener("load", () => navigator.serviceWorker.register("/assets/sw.js").catch(() => {}));

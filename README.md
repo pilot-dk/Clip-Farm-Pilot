@@ -1,6 +1,6 @@
 # Clip Farm Pilot MVP — Studio GUI
 
-Clip Farm Pilot turns livestream recordings into export-ready social clips.
+Clip Farm Pilot turns livestream recordings into export-ready social clips and tightened full-length YouTube videos.
 
 Official website: [clipfarmpilot.com](https://clipfarmpilot.com)
 
@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.11.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.12.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.11.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.12.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.11.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.12.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -90,7 +90,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.11.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.12.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -109,6 +109,11 @@ Linux:   ~/.local/share/clipfarmpilot
 
 The editor now includes:
 
+- Separate **Viral clips** and **Full YouTube video** workspaces without leaving the current project.
+- A full-length 16:9 YouTube editor with independent **Remove silent pauses** and **Remove filler words** switches.
+- Conservative pause trimming that keeps a short natural breath at speech boundaries, plus local word-timed removal for “um”, “uh”, “you know”, and similar filler.
+- The supplied transparent YouTube subscribe animation, fully visible and centred at the very start with its original sound.
+- Filters, live captions, smart Vine Boom and Check Sound placement, visual effects, original title suggestions, saving, and direct publishing in the full-length workspace.
 - Drag-and-drop or file-picker livestream upload with upload progress.
 - YouTube and Twitch VOD link importing with download progress.
 - A searchable **Your videos** library for every cached upload and VOD, with a primary **Select video** action that reopens it directly in the editor—no folder browsing or re-uploading.
@@ -141,6 +146,14 @@ The editor now includes:
 - A **Publish directly** panel for connecting YouTube, Instagram, and TikTok accounts through their official OAuth sign-in flows.
 - Multi-platform publishing of the finished MP4 with a reusable title, caption/hashtags, visibility choice, per-platform success/error results, and direct links to successful posts.
 - Responsive layouts for desktop, phone, and tablet browsers, plus home-screen installation.
+
+## Full-Length YouTube Editor
+
+Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and locks the output to Full HD 16:9. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
+
+The full-length editor retains the existing filters, live-caption colours, smart sound effects, visual effects, viral-title recommendation, native Save As flow, and direct-publishing controls. Smart sound placement runs against the cleaned timeline and can distribute effect-specific moments across a long edit without crowding them.
+
+Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the 1920×1080 frame without cropping, vertically centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
 
 ### How Auto-Find Clips ranks moments
 

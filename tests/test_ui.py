@@ -86,6 +86,18 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("spoken words and energy", self.html)
         self.assertIn("A different recommendation is created for every export", self.html)
 
+    def test_full_length_youtube_editor_has_independent_cleanup_toggles(self):
+        self.assertIn('data-edit-mode="full-length"', self.html)
+        self.assertIn('id="removeSilenceToggle" type="checkbox"', self.html)
+        self.assertIn('id="removeFillerWordsToggle" type="checkbox"', self.html)
+        self.assertIn('id="subscribeAnimationToggle" type="checkbox"', self.html)
+        self.assertIn('id="fullLengthFormat"', self.html)
+        self.assertIn('edit_mode: state.editMode', self.html)
+        self.assertIn('remove_silence: isFullLength', self.html)
+        self.assertIn('remove_filler_words: isFullLength', self.html)
+        self.assertIn('subscribe_animation: isFullLength', self.html)
+        self.assertIn("function setEditMode(mode, announce = true)", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
