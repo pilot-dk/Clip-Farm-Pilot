@@ -14,7 +14,9 @@ from backend.app.video import (
     _apply_subscribe_animation,
     _filler_word_cut_intervals,
     _prepare_full_length_source,
+    _remap_transcript_after_cuts,
     _run,
+    _transcribe_words_cached,
     export_clip,
     ffmpeg_executable,
     probe_video,
@@ -70,6 +72,32 @@ class FullLengthEditorTests(unittest.TestCase):
         self.assertEqual(len(intervals), 2)
         self.assertLess(intervals[0][0], words[1].start)
         self.assertGreater(intervals[1][1], words[5].end)
+
+    def test_transcript_timestamps_follow_removed_sections(self):
+        words = [
+            CaptionWord("first", 0.10, 0.35),
+            CaptionWord("um", 1.10, 1.35),
+            CaptionWord("second", 2.10, 2.45),
+        ]
+
+        remapped = _remap_transcript_after_cuts(words, [(0.90, 1.60)], 3.0)
+
+        self.assertEqual([word.text for word in remapped], ["first", "second"])
+        self.assertAlmostEqual(remapped[1].start, 1.40, places=2)
+        self.assertAlmostEqual(remapped[1].end, 1.75, places=2)
+
+    def test_repeated_edit_reuses_the_local_transcript(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source.mp4"
+            self._make_pause_video(source, duration=2.0)
+            transcript = [CaptionWord("hello", 0.10, 0.40)]
+
+            with patch("backend.app.video.transcribe_words", return_value=transcript) as transcribe:
+                first = _transcribe_words_cached(source, 0.0, 2.0)
+                second = _transcribe_words_cached(source, 0.0, 2.0)
+
+            self.assertEqual(first, second)
+            transcribe.assert_called_once()
 
     def test_silence_cleanup_shortens_a_pause_without_losing_the_tones(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -140,9 +168,14 @@ class FullLengthEditorTests(unittest.TestCase):
                 CaptionWord("we", 2.10, 2.28),
                 CaptionWord("did", 2.28, 2.46),
                 CaptionWord("it", 2.46, 2.70),
+                CaptionWord("um", 2.84, 3.06),
+                CaptionWord("great", 3.18, 3.42),
             ]
 
-            with patch("backend.app.video.transcribe_words", return_value=transcript):
+            with (
+                patch("backend.app.video.transcribe_words", return_value=transcript) as transcribe,
+                patch("backend.app.video._run", wraps=_run) as run_command,
+            ):
                 placements = export_clip(
                     source=source,
                     output=output,
@@ -151,12 +184,22 @@ class FullLengthEditorTests(unittest.TestCase):
                     aspect="16:9",
                     edit_mode="full-length",
                     remove_silence=True,
+                    remove_filler_words=True,
                     sound_effects=["vine-boom", "check-sound"],
                     auto_sound_effect=True,
                     video_filter="cinematic",
+                    live_captions=True,
+                    title_transcript=True,
+                    subscribe_animation=True,
                     export_metadata=metadata,
                 )
 
+            transcribe.assert_called_once()
+            video_encodes = [
+                call.args[0] for call in run_command.call_args_list
+                if "-c:v" in call.args[0]
+            ]
+            self.assertEqual(len(video_encodes), 1)
             self.assertEqual(set(placements), {"vine-boom", "check-sound"})
             self.assertTrue(all(placements.values()))
             self.assertTrue(output.is_file())
@@ -164,6 +207,13 @@ class FullLengthEditorTests(unittest.TestCase):
             summary = metadata["full_length_summary"]
             self.assertGreater(summary["removed_seconds"], 0.5)
             self.assertTrue(summary["remove_silence"])
+            self.assertTrue(summary["remove_filler_words"])
+            self.assertEqual(summary["filler_words_removed"], 1)
+            self.assertEqual(summary["render_passes"], 1)
+            self.assertTrue(summary["shared_transcript"])
+            self.assertEqual(summary["quality"], "single-pass-crf18")
+            self.assertNotIn("um", metadata["title_transcript"].split())
+            self.assertGreater(metadata["live_caption_word_count"], 0)
 
 
 if __name__ == "__main__":

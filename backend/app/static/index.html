@@ -1624,7 +1624,7 @@
             <div class="section" id="fullLengthSection" hidden>
               <span class="section-label">2. Tighten the full video</span>
               <div class="full-length-card">
-                <p class="full-length-intro">Each option runs locally and keeps the video in chronological order. You can use either cleanup option or both.</p>
+                <p class="full-length-intro">Each option runs locally and keeps the video in chronological order. Speech is analyzed once, then everything is combined into one high-quality final render.</p>
                 <div class="full-edit-option">
                   <span class="full-edit-copy"><strong>Remove silent pauses</strong><small>Cuts dead air longer than a natural breath while keeping speech boundaries intact.</small></span>
                   <label class="switch"><input id="removeSilenceToggle" type="checkbox" checked /><span class="switch-track"></span></label>
@@ -3027,7 +3027,7 @@
         "working",
         isFullLength ? "Editing the full YouTube video" : wantsLiveCaptions ? "Transcribing and exporting" : wantsViralTitle ? "Creating a fresh viral title" : "Exporting clip",
         isFullLength
-          ? `${formatTime(range.end - range.start, true)} selected · tightening pauses and applying your finishing options locally.`
+          ? `${formatTime(range.end - range.start, true)} selected · analyzing speech once, then creating one high-quality final render locally.`
           : `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}${wantsViralTitle ? " · listening for the strongest hook" : ""}.`,
       );
 

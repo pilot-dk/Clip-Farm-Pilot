@@ -82,6 +82,14 @@ _AUDIO_ANALYSIS_CACHE: dict[tuple[str, int, int, int], AudioAnalysis] = {}
 _AUDIO_ANALYSIS_CACHE_LOCK = threading.RLock()
 _AUDIO_ANALYSIS_CACHE_LIMIT = 4
 _FFMPEG_ASS_SUPPORT: dict[str, bool] = {}
+_TRANSCRIPT_CACHE: dict[tuple[object, ...], tuple[CaptionWord, ...]] = {}
+_TRANSCRIPT_CACHE_LOCK = threading.RLock()
+_TRANSCRIPT_CACHE_LIMIT = 6
+_SILENCE_CUT_CACHE: dict[tuple[object, ...], tuple[tuple[float, float], ...]] = {}
+_CLIP_ENVELOPE_CACHE: dict[tuple[object, ...], tuple[np.ndarray, float]] = {}
+_SCENE_CHANGE_CACHE: dict[tuple[object, ...], tuple[float, ...]] = {}
+_FULL_LENGTH_ANALYSIS_CACHE_LOCK = threading.RLock()
+_FULL_LENGTH_ANALYSIS_CACHE_LIMIT = 6
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -1430,6 +1438,38 @@ def _video_filter_chain(video_filter: VideoFilter) -> str:
         raise ValueError("Unknown video filter.") from exc
 
 
+def _analysis_cache_key(source: Path, start: float, end: float, *settings: object) -> tuple[object, ...]:
+    resolved = Path(source).resolve()
+    stat = resolved.stat()
+    return (
+        str(resolved), int(stat.st_size), int(stat.st_mtime_ns),
+        round(float(start) * 1_000), round(float(end) * 1_000), *settings,
+    )
+
+
+def _store_bounded_cache(cache: dict, key: tuple[object, ...], value: object) -> None:
+    cache[key] = value
+    while len(cache) > _FULL_LENGTH_ANALYSIS_CACHE_LIMIT:
+        cache.pop(next(iter(cache)))
+
+
+def _transcribe_words_cached(source: Path, start: float, end: float) -> list[CaptionWord]:
+    """Reuse one offline transcript across cleanup, captions, sounds, and titles."""
+    resolved = Path(source).resolve()
+    cache_key = _analysis_cache_key(resolved, max(0.0, start), max(start + 0.1, end), "transcript")
+    with _TRANSCRIPT_CACHE_LOCK:
+        cached = _TRANSCRIPT_CACHE.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
+    words = transcribe_words(resolved, start, end, ffmpeg_executable())
+    with _TRANSCRIPT_CACHE_LOCK:
+        _TRANSCRIPT_CACHE[cache_key] = tuple(words)
+        while len(_TRANSCRIPT_CACHE) > _TRANSCRIPT_CACHE_LIMIT:
+            _TRANSCRIPT_CACHE.pop(next(iter(_TRANSCRIPT_CACHE)))
+    return list(words)
+
+
 def _clip_audio_envelope(
     source: Path,
     start: float,
@@ -1437,31 +1477,66 @@ def _clip_audio_envelope(
     sample_rate: int = 8_000,
     hop_seconds: float = 0.10,
 ) -> tuple[np.ndarray, float]:
-    """Decode a short clip into a fine-grained loudness envelope."""
+    """Decode a clip into a fine-grained, memory-bounded loudness envelope."""
     duration = max(0.1, float(end) - float(start))
-    result = _run([
+    cache_key = _analysis_cache_key(
+        source, max(0.0, start), max(start + 0.1, end), "envelope", sample_rate, round(hop_seconds, 4)
+    )
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        cached = _CLIP_ENVELOPE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    command = [
         ffmpeg_executable(), "-v", "error",
         "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
         "-t", f"{duration:.3f}", "-vn", "-ac", "1", "-ar", str(sample_rate),
         "-f", "s16le", "pipe:1",
-    ])
-    samples = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+    ]
     frame_size = max(1, round(sample_rate * hop_seconds))
-    if samples.size == 0:
-        return np.zeros(max(1, math.ceil(duration / hop_seconds)), dtype=np.float32), hop_seconds
-    frame_count = math.ceil(samples.size / frame_size)
-    padded = np.pad(samples, (0, frame_count * frame_size - samples.size))
-    frames = padded.reshape(frame_count, frame_size)
-    envelope = np.sqrt(np.mean(np.square(frames), axis=1)).astype(np.float32)
-    return envelope, frame_size / sample_rate
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if process.stdout is None:
+        raise RuntimeError("FFmpeg did not provide decoded audio.")
+    envelope_values: list[float] = []
+    bytes_per_frame = frame_size * np.dtype(np.int16).itemsize
+    try:
+        while True:
+            raw = _read_exactly(process.stdout, bytes_per_frame)
+            if not raw:
+                break
+            usable = len(raw) - (len(raw) % 2)
+            samples = np.frombuffer(raw[:usable], dtype=np.int16).astype(np.float32) / 32768.0
+            if samples.size < frame_size:
+                samples = np.pad(samples, (0, frame_size - samples.size))
+            envelope_values.append(float(np.sqrt(np.mean(np.square(samples)))))
+        return_code = process.wait()
+        if return_code != 0:
+            raise RuntimeError("FFmpeg could not analyze the selected audio.")
+    finally:
+        process.stdout.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    if not envelope_values:
+        result = (np.zeros(max(1, math.ceil(duration / hop_seconds)), dtype=np.float32), hop_seconds)
+    else:
+        result = (np.asarray(envelope_values, dtype=np.float32), frame_size / sample_rate)
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        _store_bounded_cache(_CLIP_ENVELOPE_CACHE, cache_key, result)
+    return result
 
 
 def _clip_scene_change_times(source: Path, start: float, end: float) -> list[float]:
     """Return hard-cut timestamps relative to a short selected clip."""
     duration = max(0.1, float(end) - float(start))
+    cache_key = _analysis_cache_key(source, max(0.0, start), max(start + 0.1, end), "scenes")
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        cached = _SCENE_CHANGE_CACHE.get(cache_key)
+        if cached is not None:
+            return list(cached)
     result = subprocess.run(
         [
             ffmpeg_executable(), "-v", "info",
+            "-skip_frame", "nokey",
             "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
             "-t", f"{duration:.3f}", "-an",
             "-vf", "scale=160:-2,select=gt(scene\\,0.30),showinfo",
@@ -1474,11 +1549,14 @@ def _clip_scene_change_times(source: Path, start: float, end: float) -> list[flo
     if result.returncode != 0:
         return []
     output = result.stderr.decode("utf-8", errors="replace")
-    return [
+    scenes = [
         value
         for value in (float(match) for match in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", output))
         if 0.35 <= value <= duration - 0.20
     ]
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        _store_bounded_cache(_SCENE_CHANGE_CACHE, cache_key, tuple(scenes))
+    return scenes
 
 
 def _smart_sound_times_from_signals(
@@ -1652,12 +1730,14 @@ def suggest_sound_effect_placements(
     sound_effects: list[SelectedSoundEffect] | tuple[SelectedSoundEffect, ...],
     transcript_words: list[CaptionWord] | tuple[CaptionWord, ...] = (),
     fallback_time: float = 1.0,
+    timeline_cuts: list[tuple[float, float]] | tuple[tuple[float, float], ...] = (),
 ) -> dict[SelectedSoundEffect, list[float]]:
     """Analyze a clip once and assign each selected sound to different fitting moments."""
     selected = list(dict.fromkeys(effect for effect in sound_effects if effect in {"vine-boom", "check-sound"}))
     if not selected:
         return {}
-    duration = max(0.1, float(end) - float(start))
+    original_duration = max(0.1, float(end) - float(start))
+    duration = original_duration
     try:
         envelope, hop_seconds = _clip_audio_envelope(source, start, end)
     except (OSError, subprocess.SubprocessError, RuntimeError):
@@ -1666,6 +1746,19 @@ def suggest_sound_effect_placements(
         scenes = _clip_scene_change_times(source, start, end)
     except (OSError, subprocess.SubprocessError, RuntimeError):
         scenes = []
+    merged_cuts = _merge_cut_intervals(list(timeline_cuts), original_duration)
+    if merged_cuts:
+        envelope = _cut_audio_envelope(envelope, hop_seconds, merged_cuts, original_duration)
+        scenes = [
+            _collapsed_timeline_time(scene, merged_cuts)
+            for scene in scenes
+            if not _time_is_removed(scene, merged_cuts)
+        ]
+        transcript_words = _remap_transcript_after_cuts(
+            list(transcript_words), merged_cuts, original_duration
+        )
+        fallback_time = _collapsed_timeline_time(fallback_time, merged_cuts)
+        duration = max(0.1, original_duration - sum(end - start for start, end in merged_cuts))
     semantic_cues = _semantic_sound_cues(transcript_words)
     cue_kind_for = {"vine-boom": "vine-cue", "check-sound": "check-cue"}
     selected.sort(
@@ -1974,6 +2067,18 @@ def _silence_cut_intervals(
 ) -> list[tuple[float, float]]:
     """Find removable pauses while preserving a short natural breath at each edge."""
     duration = max(0.1, float(end) - float(start))
+    cache_key = _analysis_cache_key(
+        source,
+        max(0.0, start),
+        max(start + 0.1, end),
+        "silence",
+        round(minimum_silence, 3),
+        round(threshold_db, 2),
+    )
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        cached = _SILENCE_CUT_CACHE.get(cache_key)
+        if cached is not None:
+            return list(cached)
     command = [
         ffmpeg_executable(), "-hide_banner", "-nostats", "-ss", f"{start:.3f}",
         "-t", f"{duration:.3f}", "-i", str(source), "-vn",
@@ -2001,7 +2106,10 @@ def _silence_cut_intervals(
         cut_end = silence_end - right_keep
         if cut_end - cut_start >= 0.20:
             cuts.append((cut_start, cut_end))
-    return _merge_cut_intervals(cuts, duration)
+    merged = _merge_cut_intervals(cuts, duration)
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        _store_bounded_cache(_SILENCE_CUT_CACHE, cache_key, tuple(merged))
+    return merged
 
 
 def _kept_segments(cuts: list[tuple[float, float]], duration: float) -> list[tuple[float, float]]:
@@ -2016,6 +2124,58 @@ def _kept_segments(cuts: list[tuple[float, float]], duration: float) -> list[tup
     if not segments:
         return [(0.0, duration)]
     return [(round(start, 3), round(end, 3)) for start, end in segments]
+
+
+def _collapsed_timeline_time(value: float, cuts: list[tuple[float, float]]) -> float:
+    """Map an original relative timestamp onto the timeline after cuts."""
+    timestamp = max(0.0, float(value))
+    removed = sum(max(0.0, min(timestamp, end) - start) for start, end in cuts if timestamp > start)
+    return max(0.0, timestamp - removed)
+
+
+def _time_is_removed(value: float, cuts: list[tuple[float, float]]) -> bool:
+    timestamp = float(value)
+    return any(start <= timestamp <= end for start, end in cuts)
+
+
+def _remap_transcript_after_cuts(
+    words: list[CaptionWord] | tuple[CaptionWord, ...],
+    cuts: list[tuple[float, float]],
+    duration: float,
+) -> list[CaptionWord]:
+    """Keep spoken-word timing aligned with the single-pass cleaned timeline."""
+    merged = _merge_cut_intervals(cuts, duration)
+    output_duration = max(0.0, duration - sum(end - start for start, end in merged))
+    remapped: list[CaptionWord] = []
+    for word in words:
+        new_start = min(output_duration, _collapsed_timeline_time(word.start, merged))
+        new_end = min(output_duration, _collapsed_timeline_time(word.end, merged))
+        if new_end - new_start < 0.025:
+            continue
+        if remapped and new_start < remapped[-1].start:
+            continue
+        remapped.append(CaptionWord(word.text, round(new_start, 3), round(new_end, 3)))
+    return remapped
+
+
+def _cut_audio_envelope(
+    envelope: np.ndarray,
+    hop_seconds: float,
+    cuts: list[tuple[float, float]],
+    duration: float,
+) -> np.ndarray:
+    """Collapse analysis samples without decoding a second temporary video."""
+    if not cuts:
+        return envelope
+    pieces: list[np.ndarray] = []
+    for segment_start, segment_end in _kept_segments(cuts, duration):
+        first = max(0, int(math.floor(segment_start / hop_seconds)))
+        last = min(len(envelope), int(math.ceil(segment_end / hop_seconds)))
+        if last > first:
+            pieces.append(envelope[first:last])
+    if not pieces:
+        return np.zeros(1, dtype=np.float32)
+    return np.concatenate(pieces).astype(np.float32, copy=False)
 
 
 def _render_kept_segments(
@@ -2085,7 +2245,7 @@ def _prepare_full_length_source(
     filler_count = 0
     if remove_filler_words:
         try:
-            transcript_words = transcribe_words(source, start, end, ffmpeg_executable())
+            transcript_words = _transcribe_words_cached(source, start, end)
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
         filler_cuts, filler_count = _filler_word_cut_intervals(transcript_words, duration)
@@ -2107,6 +2267,338 @@ def _prepare_full_length_source(
         "filler_words_removed": filler_count,
         "cut_count": len(cuts),
     }
+
+
+def _export_full_length_single_pass(
+    source: Path,
+    output: Path,
+    start: float,
+    end: float,
+    video_filter: VideoFilter,
+    sound_effect: SoundEffect,
+    sound_effects: list[SelectedSoundEffect] | tuple[SelectedSoundEffect, ...] | None,
+    visual_effect: VisualEffect,
+    effect_time: float,
+    auto_sound_effect: bool,
+    sound_volume: float,
+    visual_strength: float,
+    live_captions: bool,
+    live_caption_scheme: LiveCaptionScheme,
+    title_transcript: bool,
+    remove_silence: bool,
+    remove_filler_words: bool,
+    subscribe_animation: bool,
+    export_metadata: dict[str, object] | None,
+) -> dict[SelectedSoundEffect, list[float]]:
+    """Analyze once and render a complete YouTube edit in one generation."""
+    info = probe_video(source)
+    selection_start = max(0.0, min(float(start), info.duration))
+    selection_end = max(selection_start + 0.1, min(float(end), info.duration))
+    selection_duration = max(0.1, selection_end - selection_start)
+    filter_chain = _video_filter_chain(video_filter)
+    if sound_effect not in {"none", "vine-boom", "check-sound"}:
+        raise ValueError("Unknown sound effect.")
+    selected_sound_effects = list(dict.fromkeys(sound_effects or ()))
+    if sound_effect != "none" and sound_effect not in selected_sound_effects:
+        selected_sound_effects.append(sound_effect)
+    if any(effect not in {"vine-boom", "check-sound"} for effect in selected_sound_effects):
+        raise ValueError("Unknown sound effect.")
+    if visual_effect not in {"none", "lens-flare", "punch-zoom", "white-flash"}:
+        raise ValueError("Unknown visual effect.")
+    if live_caption_scheme not in LIVE_CAPTION_SCHEMES:
+        raise ValueError("Unknown live-caption colour scheme.")
+
+    needs_transcript = bool(
+        remove_filler_words
+        or live_captions
+        or title_transcript
+        or (auto_sound_effect and selected_sound_effects)
+    )
+    transcript_words: list[CaptionWord] = []
+    if needs_transcript:
+        try:
+            transcript_words = _transcribe_words_cached(source, selection_start, selection_end)
+        except (OSError, RuntimeError, ValueError) as exc:
+            if remove_filler_words:
+                raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
+            if live_captions:
+                raise
+
+    silence_cuts = (
+        _silence_cut_intervals(source, selection_start, selection_end)
+        if remove_silence
+        else []
+    )
+    filler_cuts: list[tuple[float, float]] = []
+    filler_count = 0
+    if remove_filler_words:
+        filler_cuts, filler_count = _filler_word_cut_intervals(transcript_words, selection_duration)
+    cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts], selection_duration)
+    segments = _kept_segments(cuts, selection_duration)
+    output_duration = sum(segment_end - segment_start for segment_start, segment_end in segments)
+    if output_duration < min(0.5, selection_duration * 0.10):
+        cuts = []
+        segments = [(0.0, selection_duration)]
+        output_duration = selection_duration
+        silence_cuts = []
+        filler_count = 0
+    output_duration = round(output_duration, 3)
+    cleaned_words = _remap_transcript_after_cuts(transcript_words, cuts, selection_duration)
+
+    placements: dict[SelectedSoundEffect, list[float]] = {}
+    if selected_sound_effects:
+        if auto_sound_effect:
+            placements = suggest_sound_effect_placements(
+                source,
+                selection_start,
+                selection_end,
+                selected_sound_effects,
+                transcript_words,
+                effect_time,
+                timeline_cuts=cuts,
+            )
+        else:
+            manual_time = round(min(max(0.0, effect_time), max(0.0, output_duration - 0.05)), 2)
+            placements = {effect: [manual_time] for effect in selected_sound_effects}
+
+    temporary_paths: list[Path] = []
+    live_caption_ass: Path | None = None
+    try:
+        if live_captions and cleaned_words:
+            caption_file = tempfile.NamedTemporaryFile(
+                prefix=f"{APP_SLUG}-live-captions-", suffix=".ass", delete=False
+            )
+            live_caption_ass = Path(caption_file.name)
+            caption_file.close()
+            temporary_paths.append(live_caption_ass)
+            write_live_caption_ass(cleaned_words, live_caption_ass, 1920, 1080, live_caption_scheme)
+
+        ffmpeg = ffmpeg_executable(require_ass=live_caption_ass is not None)
+        inputs = [
+            ffmpeg, "-y", "-v", "error",
+            "-ss", f"{selection_start:.3f}", "-t", f"{selection_duration:.3f}",
+            "-i", str(source),
+        ]
+        next_input = 1
+        sound_indexes: dict[SelectedSoundEffect, int] = {}
+        for effect in selected_sound_effects:
+            if not placements.get(effect):
+                continue
+            sound_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-sfx-", suffix=".wav", delete=False)
+            sound_path = Path(sound_file.name)
+            sound_file.close()
+            temporary_paths.append(sound_path)
+            _render_sound_effect(effect, sound_path)
+            sound_indexes[effect] = next_input
+            inputs += ["-i", str(sound_path)]
+            next_input += 1
+
+        overlay_index: int | None = None
+        if visual_effect in {"lens-flare", "white-flash"}:
+            overlay_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-vfx-", suffix=".png", delete=False)
+            overlay_path = Path(overlay_file.name)
+            overlay_file.close()
+            temporary_paths.append(overlay_path)
+            _render_visual_overlay(visual_effect, overlay_path, 1920, 1080, visual_strength)
+            overlay_index = next_input
+            inputs += ["-loop", "1", "-i", str(overlay_path)]
+            next_input += 1
+
+        subscribe_index: int | None = None
+        if subscribe_animation:
+            subscribe_asset = EFFECT_ASSETS_DIR / "youtube-subscribe.mov"
+            if not subscribe_asset.is_file():
+                raise RuntimeError("The bundled YouTube subscribe animation is missing.")
+            subscribe_index = next_input
+            inputs += ["-i", str(subscribe_asset)]
+            next_input += 1
+
+        has_audio = _has_audio(source)
+        filters: list[str] = []
+        video_labels: list[str] = []
+        audio_labels: list[str] = []
+        for index, (segment_start, segment_end) in enumerate(segments):
+            segment_duration = max(0.001, segment_end - segment_start)
+            filters.append(
+                f"[0:v]trim=start={segment_start:.3f}:end={segment_end:.3f},"
+                f"setpts=PTS-STARTPTS[v{index}]"
+            )
+            video_labels.append(f"[v{index}]")
+            if has_audio:
+                fade = min(0.012, segment_duration / 4)
+                filters.append(
+                    f"[0:a]atrim=start={segment_start:.3f}:end={segment_end:.3f},"
+                    f"asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade:.3f},"
+                    f"afade=t=out:st={max(0.0, segment_duration - fade):.3f}:d={fade:.3f}[a{index}]"
+                )
+                audio_labels.append(f"[a{index}]")
+
+        if has_audio:
+            concat_inputs = "".join(
+                video + audio for video, audio in zip(video_labels, audio_labels)
+            )
+            filters.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=1[joinedv][joineda]")
+            base_audio_label: str | None = "joineda"
+        else:
+            filters.append(f"{''.join(video_labels)}concat=n={len(segments)}:v=1:a=0[joinedv]")
+            base_audio_label = None
+
+        base_video_filter = (
+            "[joinedv]scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,"
+            "crop=1920:1080,setsar=1"
+        )
+        if filter_chain:
+            base_video_filter += f",{filter_chain}"
+        filters.append(f"{base_video_filter}[basev]")
+        video_label = "basev"
+        trigger = min(max(0.0, float(effect_time)), max(0.0, output_duration - 0.05))
+        strength = min(1.5, max(0.25, float(visual_strength)))
+        if visual_effect == "punch-zoom":
+            zoom_duration = min(0.70, max(0.25, output_duration - trigger))
+            amount = 0.10 * strength
+            zoom_end = trigger + zoom_duration
+            scale = (
+                f"if(between(t\\,{trigger:.3f}\\,{zoom_end:.3f})\\,"
+                f"1+{amount:.4f}*sin(PI*(t-{trigger:.3f})/{zoom_duration:.3f})\\,1)"
+            )
+            filters.append(
+                f"[{video_label}]scale=w='iw*{scale}':h='ih*{scale}':eval=frame,"
+                "crop=1920:1080:(in_w-out_w)/2:(in_h-out_h)/2[vfx]"
+            )
+            video_label = "vfx"
+        elif overlay_index is not None:
+            if visual_effect == "lens-flare":
+                fade_out_start, fade_out_duration = trigger + 0.18, 0.58
+            else:
+                fade_out_start, fade_out_duration = trigger + 0.07, 0.24
+            filters.append(
+                f"[{overlay_index}:v]format=rgba,"
+                f"fade=t=in:st={trigger:.3f}:d=0.08:alpha=1,"
+                f"fade=t=out:st={fade_out_start:.3f}:d={fade_out_duration:.3f}:alpha=1[overlayfx]"
+            )
+            filters.append(f"[{video_label}][overlayfx]overlay=0:0:eof_action=pass[vfx]")
+            video_label = "vfx"
+
+        if live_caption_ass is not None:
+            caption_path = str(live_caption_ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            filters.append(f"[{video_label}]ass=filename='{caption_path}'[captioned]")
+            video_label = "captioned"
+        if subscribe_index is not None:
+            filters.append(
+                f"[{subscribe_index}:v]setpts=PTS-STARTPTS,"
+                "scale=1920:-2:flags=lanczos,format=rgba[subscribe]"
+            )
+            filters.append(
+                f"[{video_label}][subscribe]overlay=0:(H-h)/2:eof_action=pass:"
+                "shortest=0:format=auto[withsubscribe]"
+            )
+            video_label = "withsubscribe"
+
+        volume = min(2.0, max(0.0, float(sound_volume)))
+        effect_labels: list[str] = []
+        duck_events: list[tuple[SelectedSoundEffect, float]] = []
+        for effect_number, (effect, sound_index) in enumerate(sound_indexes.items()):
+            effect_times = placements[effect]
+            split_labels = [f"sfxsource{effect_number}_{index}" for index in range(len(effect_times))]
+            if len(split_labels) > 1:
+                filters.append(
+                    f"[{sound_index}:a]asplit={len(split_labels)}"
+                    + "".join(f"[{label}]" for label in split_labels)
+                )
+            else:
+                split_labels = [f"{sound_index}:a"]
+            for index, (split_label, effect_trigger) in enumerate(zip(split_labels, effect_times)):
+                delayed_label = f"sfx{effect_number}_{index}"
+                filters.append(
+                    f"[{split_label}]adelay={round(effect_trigger * 1000)}:all=1,"
+                    f"volume={volume:.3f}[{delayed_label}]"
+                )
+                effect_labels.append(delayed_label)
+                duck_events.append((effect, effect_trigger))
+
+        extra_audio_labels = list(effect_labels)
+        if subscribe_index is not None:
+            filters.append(f"[{subscribe_index}:a]asetpts=PTS-STARTPTS[subscribeaudio]")
+            extra_audio_labels.append("subscribeaudio")
+        if base_audio_label is None and extra_audio_labels:
+            filters.append(
+                f"anullsrc=r=48000:cl=stereo,atrim=0:{output_duration:.3f},"
+                "asetpts=PTS-STARTPTS[silentbase]"
+            )
+            base_audio_label = "silentbase"
+
+        audio_label = base_audio_label
+        if base_audio_label is not None and extra_audio_labels:
+            volume_expressions: list[str] = []
+            if subscribe_index is not None:
+                volume_expressions.append("if(lt(t\\,3.717)\\,0.82\\,1)")
+            if effect_labels and volume > 0:
+                duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
+                for effect, effect_trigger in duck_events:
+                    hold_seconds = 0.68 if effect == "check-sound" else 0.82
+                    release_seconds = 0.96 if effect == "check-sound" else 1.10
+                    attack_start = max(0.0, effect_trigger - 0.08)
+                    attack_end = min(output_duration, max(effect_trigger, attack_start + 0.01))
+                    release_start = min(output_duration, max(attack_end, effect_trigger + hold_seconds))
+                    release_end = min(output_duration, max(release_start + 0.01, effect_trigger + release_seconds))
+                    attack_duration = max(0.01, attack_end - attack_start)
+                    release_duration = max(0.01, release_end - release_start)
+                    volume_expressions.append(
+                        f"if(between(t\\,{attack_start:.3f}\\,{attack_end:.3f})\\,"
+                        f"1-(1-{duck_gain:.3f})*(t-{attack_start:.3f})/{attack_duration:.3f}\\,"
+                        f"if(between(t\\,{attack_end:.3f}\\,{release_start:.3f})\\,{duck_gain:.3f}\\,"
+                        f"if(between(t\\,{release_start:.3f}\\,{release_end:.3f})\\,"
+                        f"{duck_gain:.3f}+(1-{duck_gain:.3f})*(t-{release_start:.3f})/{release_duration:.3f}\\,1)))"
+                    )
+            mixed_base = base_audio_label
+            if volume_expressions:
+                filters.append(
+                    f"[{base_audio_label}]volume='{'*'.join(f'({value})' for value in volume_expressions)}':"
+                    "eval=frame[duckedbase]"
+                )
+                mixed_base = "duckedbase"
+            mix_inputs = f"[{mixed_base}]" + "".join(f"[{label}]" for label in extra_audio_labels)
+            filters.append(
+                f"{mix_inputs}amix=inputs={len(extra_audio_labels) + 1}:"
+                "duration=first:dropout_transition=0:normalize=0,"
+                "alimiter=limit=0.95[outa]"
+            )
+            audio_label = "outa"
+
+        command = inputs + ["-filter_complex", ";".join(filters), "-map", f"[{video_label}]"]
+        if audio_label is not None:
+            command += ["-map", f"[{audio_label}]"]
+        command += [
+            "-t", f"{output_duration:.3f}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-profile:v", "high", "-pix_fmt", "yuv420p",
+        ]
+        if audio_label is not None:
+            command += ["-c:a", "aac", "-b:a", "192k"]
+        command += ["-movflags", "+faststart", str(output)]
+        _run(command)
+
+        if export_metadata is not None:
+            export_metadata["live_caption_word_count"] = len(cleaned_words) if live_captions else 0
+            export_metadata["title_transcript"] = " ".join(word.text for word in cleaned_words)[:2_000]
+            export_metadata["full_length_summary"] = {
+                "original_duration": round(selection_duration, 3),
+                "output_duration": output_duration,
+                "removed_seconds": round(max(0.0, selection_duration - output_duration), 3),
+                "silence_sections_removed": len(silence_cuts),
+                "filler_words_removed": filler_count,
+                "cut_count": len(cuts),
+                "remove_silence": bool(remove_silence),
+                "remove_filler_words": bool(remove_filler_words),
+                "subscribe_animation": bool(subscribe_animation),
+                "render_passes": 1,
+                "shared_transcript": bool(needs_transcript),
+                "quality": "single-pass-crf18",
+            }
+        return placements
+    finally:
+        for temporary_path in temporary_paths:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _apply_subscribe_animation(source: Path, output: Path) -> None:
@@ -2181,84 +2673,27 @@ def export_clip(
     if edit_mode == "full-length":
         if aspect != "16:9" or layout != "standard":
             raise ValueError("Full-length YouTube edits use the 16:9 standard layout.")
-        info = probe_video(source)
-        full_start = max(0.0, min(start, info.duration))
-        full_end = max(full_start + 0.1, min(end, info.duration))
-        cleaned_file: Path | None = None
-        prepared_source = source
-        prepared_start = full_start
-        prepared_end = full_end
-        cleanup_summary: dict[str, object] = {
-            "original_duration": round(full_end - full_start, 3),
-            "output_duration": round(full_end - full_start, 3),
-            "removed_seconds": 0.0,
-            "silence_sections_removed": 0,
-            "filler_words_removed": 0,
-            "cut_count": 0,
-        }
-        subscribe_file: Path | None = None
-        try:
-            if remove_silence or remove_filler_words:
-                temporary = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-full-edit-", suffix=".mp4", delete=False)
-                cleaned_file = Path(temporary.name)
-                temporary.close()
-                cleanup_summary = _prepare_full_length_source(
-                    source, cleaned_file, full_start, full_end, remove_silence, remove_filler_words
-                )
-                prepared_source = cleaned_file
-                prepared_start = 0.0
-                prepared_end = float(cleanup_summary["output_duration"])
-
-            placements = export_clip(
-                source=prepared_source,
-                output=output,
-                start=prepared_start,
-                end=prepared_end,
-                aspect="16:9",
-                layout="standard",
-                face_corner=face_corner,
-                face_width_fraction=face_width_fraction,
-                face_height_fraction=face_height_fraction,
-                face_inset_x_fraction=face_inset_x_fraction,
-                face_inset_y_fraction=face_inset_y_fraction,
-                caption_text="",
-                caption_font_scale=caption_font_scale,
-                caption_position=caption_position,
-                caption_overlay_path=None,
-                video_filter=video_filter,
-                sound_effect=sound_effect,
-                sound_effects=sound_effects,
-                visual_effect=visual_effect,
-                effect_time=effect_time,
-                auto_sound_effect=auto_sound_effect,
-                sound_volume=sound_volume,
-                visual_strength=visual_strength,
-                live_captions=live_captions,
-                live_caption_scheme=live_caption_scheme,
-                title_transcript=title_transcript,
-                export_metadata=export_metadata,
-                edit_mode="clip",
-            )
-            if subscribe_animation:
-                rendered = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-subscribe-", suffix=".mp4", delete=False)
-                subscribe_file = Path(rendered.name)
-                rendered.close()
-                _apply_subscribe_animation(output, subscribe_file)
-                os.replace(subscribe_file, output)
-                subscribe_file = None
-            if export_metadata is not None:
-                export_metadata["full_length_summary"] = {
-                    **cleanup_summary,
-                    "remove_silence": bool(remove_silence),
-                    "remove_filler_words": bool(remove_filler_words),
-                    "subscribe_animation": bool(subscribe_animation),
-                }
-            return placements
-        finally:
-            if cleaned_file is not None:
-                cleaned_file.unlink(missing_ok=True)
-            if subscribe_file is not None:
-                subscribe_file.unlink(missing_ok=True)
+        return _export_full_length_single_pass(
+            source=source,
+            output=output,
+            start=start,
+            end=end,
+            video_filter=video_filter,
+            sound_effect=sound_effect,
+            sound_effects=sound_effects,
+            visual_effect=visual_effect,
+            effect_time=effect_time,
+            auto_sound_effect=auto_sound_effect,
+            sound_volume=sound_volume,
+            visual_strength=visual_strength,
+            live_captions=live_captions,
+            live_caption_scheme=live_caption_scheme,
+            title_transcript=title_transcript,
+            remove_silence=remove_silence,
+            remove_filler_words=remove_filler_words,
+            subscribe_animation=subscribe_animation,
+            export_metadata=export_metadata,
+        )
 
     info = probe_video(source)
     start = max(0.0, min(start, info.duration))
@@ -2282,7 +2717,7 @@ def export_clip(
     transcript_words = []
     if live_captions or title_transcript or (auto_sound_effect and selected_sound_effects):
         try:
-            transcript_words = transcribe_words(source, start, end, ffmpeg_executable())
+            transcript_words = _transcribe_words_cached(source, start, end)
         except (OSError, RuntimeError, ValueError):
             if live_captions:
                 raise

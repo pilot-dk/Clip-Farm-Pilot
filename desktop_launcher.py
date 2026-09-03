@@ -267,7 +267,8 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         or 'id="libraryModal"' not in html
         or 'id="viralTitleToggle"' not in html
         or 'id="publishButton"' not in html
-        or 'id="soundEffect"' not in html
+        or 'id="vineBoomToggle"' not in html
+        or 'id="checkSoundToggle"' not in html
         or 'id="visualEffect"' not in html
         or 'id="effectTime"' not in html
         or 'id="autoSoundEffectToggle"' not in html
@@ -316,7 +317,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         end=clip_end,
         aspect="16:9",
         video_filter="cinematic",
-        sound_effect="record-scratch",
+        sound_effect="vine-boom",
         visual_effect="white-flash",
         effect_time=0.6,
         auto_sound_effect=False,
@@ -328,9 +329,10 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         end=clip_end,
         aspect="9:16",
         video_filter="black-white",
-        sound_effect="impact-boom",
+        sound_effect="check-sound",
         visual_effect="punch-zoom",
         effect_time=0.6,
+        auto_sound_effect=False,
         live_captions=True,
         live_caption_scheme="neon-pink",
         title_transcript=True,
@@ -349,6 +351,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         sound_effect="vine-boom",
         visual_effect="lens-flare",
         effect_time=0.6,
+        auto_sound_effect=False,
     )
     gaming_sound_times = export_clip(
         source=cached_source,
@@ -359,12 +362,17 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         layout="gaming",
         face_corner="bottom-right",
         video_filter="vivid",
-        sound_effect="impact-boom",
+        sound_effect="check-sound",
         visual_effect="lens-flare",
         effect_time=0.6,
+        auto_sound_effect=False,
     )
-    if landscape_sound_times != [0.6] or not all(
-        times for times in (portrait_sound_times, square_sound_times, gaming_sound_times)
+    expected_manual_time = [0.6]
+    if (
+        landscape_sound_times.get("vine-boom") != expected_manual_time
+        or portrait_sound_times.get("check-sound") != expected_manual_time
+        or square_sound_times.get("vine-boom") != expected_manual_time
+        or gaming_sound_times.get("check-sound") != expected_manual_time
     ):
         raise RuntimeError("The bundled smart/manual sound placement test did not return timestamps.")
     title_result = generate_viral_title(

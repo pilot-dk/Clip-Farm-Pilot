@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.12.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.13.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.12.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.13.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.12.0-x64.zip`.
+1. Unzip `Clip-Farm-Pilot-Windows-v1.13.0-x64.zip`.
 2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 3. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
@@ -90,7 +90,7 @@ The Windows build is currently unsigned. It uses the WebView2 runtime included w
 
 ### Linux — x64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.12.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.13.0-x64.tar.gz`.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -152,6 +152,8 @@ The editor now includes:
 Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and locks the output to Full HD 16:9. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
 
 The full-length editor retains the existing filters, live-caption colours, smart sound effects, visual effects, viral-title recommendation, native Save As flow, and direct-publishing controls. Smart sound placement runs against the cleaned timeline and can distribute effect-specific moments across a long edit without crowding them.
+
+Version 1.13 uses a single-pass render pipeline for full-length edits. Silence and filler cleanup, resizing, filters, captions, visual effects, smart sound mixing, and the subscribe animation are combined into one high-quality H.264 encode instead of repeatedly encoding the whole video. One cached offline transcript is shared by filler removal, live captions, smart sounds, and title generation, and long-video sound analysis now streams audio in bounded memory.
 
 Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the 1920×1080 frame without cropping, vertically centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
 
