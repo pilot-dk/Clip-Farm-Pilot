@@ -65,7 +65,7 @@ jobs:
           Remove-Item Env:\CLIPFARMPILOT_TEST_SOURCE
           $env:CLIPFARMPILOT_TEST_WINDOW = "1"
           & "dist\ClipFarmPilot\ClipFarmPilot.exe"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.architecture }}-release
           path: outputs/Clip-Farm-Pilot-Windows-*-${{ matrix.architecture }}.zip
@@ -105,7 +105,7 @@ jobs:
           ffmpeg -y -v error -f lavfi -i "color=c=navy:s=160x90:r=24:d=3.2" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=3.2" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$SOURCE"
           CLIPFARMPILOT_STORAGE_DIR="$RUNNER_TEMP/clipfarmpilot-data" CLIPFARMPILOT_DELETE_PERMANENT=1 CLIPFARMPILOT_TEST_SOURCE="$SOURCE" dist/ClipFarmPilot/ClipFarmPilot
           CLIPFARMPILOT_STORAGE_DIR="$RUNNER_TEMP/clipfarmpilot-data" CLIPFARMPILOT_TEST_WINDOW=1 xvfb-run -a dist/ClipFarmPilot/ClipFarmPilot
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.architecture }}-release
           path: outputs/Clip-Farm-Pilot-Linux-*-${{ matrix.architecture }}.tar.gz
@@ -115,7 +115,7 @@ jobs:
     needs: [windows, linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: "*-release"
           path: release-assets
