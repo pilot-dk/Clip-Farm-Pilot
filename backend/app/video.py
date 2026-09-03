@@ -1918,8 +1918,14 @@ def _apply_effects(
                     duck_events.append((effect, sound_trigger))
             effect_inputs = "".join(f"[{label}]" for label in effect_labels)
             if _has_audio(source):
+                # AAC inputs can end a fraction of a second before the video on
+                # some FFmpeg builds. Pad the source before mixing so a sound
+                # placed near the end never truncates the finished audio track.
+                filters.append(
+                    f"[0:a]apad=whole_dur={duration:.3f},atrim=0:{duration:.3f}[paddedbase]"
+                )
                 duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
-                base_audio = "0:a"
+                base_audio = "paddedbase"
                 if duck_gain < 0.999:
                     duck_expressions: list[str] = []
                     for effect, sound_trigger in duck_events:
@@ -1939,7 +1945,7 @@ def _apply_effects(
                             f"{duck_gain:.3f}+(1-{duck_gain:.3f})*(t-{release_start:.3f})/{release_duration:.3f}\\,1)))"
                         )
                     filters.append(
-                        f"[0:a]volume='{'*'.join(f'({expression})' for expression in duck_expressions)}':"
+                        f"[{base_audio}]volume='{'*'.join(f'({expression})' for expression in duck_expressions)}':"
                         "eval=frame[ducked]"
                     )
                     base_audio = "ducked"
@@ -2529,6 +2535,10 @@ def _export_full_length_single_pass(
 
         audio_label = base_audio_label
         if base_audio_label is not None and extra_audio_labels:
+            filters.append(
+                f"[{base_audio_label}]apad=whole_dur={output_duration:.3f},"
+                f"atrim=0:{output_duration:.3f}[mixbase]"
+            )
             volume_expressions: list[str] = []
             if subscribe_index is not None:
                 volume_expressions.append("if(lt(t\\,3.717)\\,0.82\\,1)")
@@ -2550,10 +2560,10 @@ def _export_full_length_single_pass(
                         f"if(between(t\\,{release_start:.3f}\\,{release_end:.3f})\\,"
                         f"{duck_gain:.3f}+(1-{duck_gain:.3f})*(t-{release_start:.3f})/{release_duration:.3f}\\,1)))"
                     )
-            mixed_base = base_audio_label
+            mixed_base = "mixbase"
             if volume_expressions:
                 filters.append(
-                    f"[{base_audio_label}]volume='{'*'.join(f'({value})' for value in volume_expressions)}':"
+                    f"[{mixed_base}]volume='{'*'.join(f'({value})' for value in volume_expressions)}':"
                     "eval=frame[duckedbase]"
                 )
                 mixed_base = "duckedbase"

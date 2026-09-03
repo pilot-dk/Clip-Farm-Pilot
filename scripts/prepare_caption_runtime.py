@@ -64,11 +64,19 @@ def detected_platform() -> str:
     raise RuntimeError(f"Unsupported caption runtime platform: {system}")
 
 
-def prepare_macos(cache: Path, binary_dir: Path) -> None:
+def detected_architecture() -> str:
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        return "arm64"
+    if machine in {"amd64", "x86_64"}:
+        return "x64"
+    raise RuntimeError(f"Unsupported caption runtime architecture: {machine}")
+
+
+def source_tree(cache: Path) -> Path:
     archive = cache / f"whisper-{WHISPER_RELEASE}-source.tar.gz"
     download(SOURCE_URL, archive, SOURCE_SHA256)
     source = cache / f"whisper.cpp-{WHISPER_RELEASE}"
-    build = cache / f"whisper.cpp-{WHISPER_RELEASE}-build-arm64"
     if not source.is_dir():
         source.mkdir(parents=True)
         with tarfile.open(archive, "r:gz") as package:
@@ -79,19 +87,58 @@ def prepare_macos(cache: Path, binary_dir: Path) -> None:
                     continue
                 member.name = member.name[len(prefix):]
                 package.extract(member, source, filter="data")
+    return source
+
+
+def prepare_macos(cache: Path, binary_dir: Path, architecture: str) -> None:
+    source = source_tree(cache)
+    cmake_architecture = "arm64" if architecture == "arm64" else "x86_64"
+    build = cache / f"whisper.cpp-{WHISPER_RELEASE}-build-macos-{architecture}"
     executable = build / "bin" / "whisper-cli"
     if not executable.is_file():
         subprocess.run(
             [
                 "cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
-                "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_OSX_ARCHITECTURES=arm64",
-                "-DCMAKE_SYSTEM_PROCESSOR=arm64", "-DGGML_NATIVE=OFF",
+                "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_OSX_ARCHITECTURES={cmake_architecture}",
+                f"-DCMAKE_SYSTEM_PROCESSOR={cmake_architecture}", "-DGGML_NATIVE=OFF",
+                "-DBUILD_SHARED_LIBS=ON",
                 "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_SERVER=OFF", "-DWHISPER_SDL2=OFF",
             ],
             check=True,
         )
         subprocess.run(["cmake", "--build", str(build), "--target", "whisper-cli", "-j", "6"], check=True)
     shutil.copytree(build / "bin", binary_dir, dirs_exist_ok=True, symlinks=True)
+
+
+def prepare_source_runtime(target_platform: str, architecture: str, cache: Path, binary_dir: Path) -> None:
+    """Build native whisper.cpp tools when an upstream archive is unavailable."""
+    source = source_tree(cache)
+    build = cache / f"whisper.cpp-{WHISPER_RELEASE}-build-{target_platform}-{architecture}"
+    if target_platform == "windows":
+        executable = build / "bin" / "Release" / "whisper-cli.exe"
+        configure = [
+            "cmake", "-S", str(source), "-B", str(build), "-A", "ARM64",
+            "-DCMAKE_BUILD_TYPE=Release", "-DGGML_NATIVE=OFF", "-DBUILD_SHARED_LIBS=ON",
+            "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_SERVER=OFF", "-DWHISPER_SDL2=OFF",
+        ]
+        build_command = [
+            "cmake", "--build", str(build), "--config", "Release",
+            "--target", "whisper-cli", "--parallel", "4",
+        ]
+        output_dir = build / "bin" / "Release"
+    else:
+        executable = build / "bin" / "whisper-cli"
+        configure = [
+            "cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release", "-DGGML_NATIVE=OFF", "-DBUILD_SHARED_LIBS=ON",
+            "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_SERVER=OFF", "-DWHISPER_SDL2=OFF",
+        ]
+        build_command = ["cmake", "--build", str(build), "--target", "whisper-cli", "-j", "4"]
+        output_dir = build / "bin"
+    if not executable.is_file():
+        subprocess.run(configure, check=True)
+        subprocess.run(build_command, check=True)
+    shutil.copytree(output_dir, binary_dir, dirs_exist_ok=True, symlinks=True)
 
 
 def prepare_archive_runtime(target_platform: str, cache: Path, binary_dir: Path) -> None:
@@ -114,6 +161,7 @@ def prepare_archive_runtime(target_platform: str, cache: Path, binary_dir: Path)
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare Clip Farm Pilot's offline live-caption runtime.")
     parser.add_argument("--platform", choices=("macos", "windows", "linux"), default=detected_platform())
+    parser.add_argument("--architecture", choices=("x64", "arm64"), default=detected_architecture())
     parser.add_argument("--output", type=Path, default=Path(".caption-runtime"))
     parser.add_argument("--cache", type=Path, default=Path(".caption-runtime-cache"))
     args = parser.parse_args()
@@ -130,7 +178,9 @@ def main() -> None:
     cache.mkdir(parents=True, exist_ok=True)
 
     if args.platform == "macos":
-        prepare_macos(cache, binary_dir)
+        prepare_macos(cache, binary_dir, args.architecture)
+    elif args.architecture == "arm64":
+        prepare_source_runtime(args.platform, args.architecture, cache, binary_dir)
     else:
         prepare_archive_runtime(args.platform, cache, binary_dir)
     model_path = model_dir / MODEL_NAME
@@ -138,7 +188,12 @@ def main() -> None:
     executable = binary_dir / ("whisper-cli.exe" if args.platform == "windows" else "whisper-cli")
     executable.chmod(executable.stat().st_mode | 0o111)
     (output / "runtime.json").write_text(
-        json.dumps({"engine": "whisper.cpp", "release": WHISPER_RELEASE, "model": MODEL_NAME}) + "\n",
+        json.dumps({
+            "engine": "whisper.cpp",
+            "release": WHISPER_RELEASE,
+            "model": MODEL_NAME,
+            "architecture": args.architecture,
+        }) + "\n",
         encoding="utf-8",
     )
     print(f"Prepared offline live captions at {output}")

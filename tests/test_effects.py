@@ -182,6 +182,8 @@ class EffectAssetTests(unittest.TestCase):
             baseline_audio = self._decoded_mono_audio(baseline)
             effected_audio = self._decoded_mono_audio(target)
             start, stop = round(2.16 * 48_000), round(2.36 * 48_000)
+            self.assertGreaterEqual(baseline_audio.size, stop)
+            self.assertGreaterEqual(effected_audio.size, stop)
             baseline_rms = float(np.sqrt(np.mean(baseline_audio[start:stop].astype(np.float64) ** 2)))
             effected_rms = float(np.sqrt(np.mean(effected_audio[start:stop].astype(np.float64) ** 2)))
 

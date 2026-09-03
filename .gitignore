@@ -18,10 +18,15 @@ mobile-local/ios/build/
 .build-venv/
 .build-venv-windows/
 .build-venv-linux/
+.build-venv-windows-*/
+.build-venv-linux-*/
 .pyinstaller-cache/
 .pyinstaller-cache-linux/
+.pyinstaller-cache-windows-*/
+.pyinstaller-cache-linux-*/
 .caption-runtime/
 .caption-runtime-cache/
+.desktop-runtime/
 build/
 dist/
 outputs/

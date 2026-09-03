@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.13.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.13.1 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,28 +74,29 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.13.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.13.1-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
 This build is ad-hoc signed but not Apple-notarized, so macOS may require the right-click **Open** step.
 
-### Windows — x64
+### Windows — x64 or ARM64
 
-1. Unzip `Clip-Farm-Pilot-Windows-v1.13.0-x64.zip`.
-2. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
-3. If Windows SmartScreen appears, choose **More info → Run anyway**.
+1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.13.1-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.13.1-x64.zip` for an Intel/AMD PC.
+2. Unzip the download.
+3. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
+4. If Windows SmartScreen appears, choose **More info → Run anyway**.
 
-The Windows build is currently unsigned. It uses the WebView2 runtime included with current Windows 10 and Windows 11 installations.
+The Windows build is currently unsigned. Both downloads are native packages and use the WebView2 runtime included with current Windows 10 and Windows 11 installations. The ARM64 package includes native ARM64 video tools instead of relying on x64 emulation.
 
-### Linux — x64
+### Linux — x64 or ARM64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.13.0-x64.tar.gz`.
+1. Extract `Clip-Farm-Pilot-Linux-v1.13.1-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.13.1-arm64.tar.gz` on an ARM64 computer.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
-The Linux build targets Ubuntu 24.04 and compatible x64 distributions. It uses the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
+The Linux builds target Ubuntu 24.04 and compatible distributions on their matching architecture. They use the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
 
-All three desktop downloads contain their own Python runtime, FFmpeg engine, JavaScript runtime, and offline Whisper.cpp live-caption engine. No separate transcription account is required.
+All five desktop downloads contain their own Python runtime, FFmpeg engine, JavaScript runtime, and offline Whisper.cpp live-caption engine. No separate transcription account is required.
 
 Clip Farm Pilot saves imported videos and exports under:
 
@@ -361,19 +362,21 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 
 ## Build Windows and Linux apps from source
 
-On Windows x64 with Python 3.12 and Node.js installed:
+On native Windows x64 or ARM64 with matching Python 3.12 and Node.js installations:
 
 ```powershell
-./build_windows.ps1 -Version 1.8.0
+./build_windows.ps1 -Version 1.13.1 -Architecture x64
+./build_windows.ps1 -Version 1.13.1 -Architecture arm64
 ```
 
-On Ubuntu 24.04 x64 with Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installed:
+On Ubuntu 24.04 x64 or ARM64 with matching Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installations:
 
 ```bash
-./build_linux.sh
+CLIPFARMPILOT_ARCHITECTURE=x64 ./build_linux.sh
+CLIPFARMPILOT_ARCHITECTURE=arm64 ./build_linux.sh
 ```
 
-The GitHub Actions **Build Windows and Linux releases** workflow runs both builds on their native operating systems and uploads the verified archives to an existing GitHub release tag.
+The GitHub Actions **Build Windows and Linux releases** workflow builds and GUI-tests native Windows x64, Windows ARM64, Linux x64, and Linux ARM64 packages before uploading them to an existing GitHub release tag.
 
 ## Recommended v0.2 — what makes Clip Farm Pilot truly competitive
 

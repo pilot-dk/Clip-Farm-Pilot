@@ -147,11 +147,19 @@ def _configure_runtime() -> None:
     storage.mkdir(parents=True, exist_ok=True)
     os.environ[f"{ENV_PREFIX}STORAGE_DIR"] = str(storage)
 
-    import imageio_ffmpeg
+    resource_bin = _resource_dir() / "bin"
+    bundled_ffmpeg = resource_bin / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+    bundled_ffprobe = resource_bin / ("ffprobe.exe" if sys.platform == "win32" else "ffprobe")
+    if bundled_ffmpeg.is_file():
+        ffmpeg = str(bundled_ffmpeg)
+    else:
+        import imageio_ffmpeg
 
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg
     os.environ[f"{ENV_PREFIX}FFMPEG_EXE"] = ffmpeg
+    if bundled_ffprobe.is_file():
+        os.environ[f"{ENV_PREFIX}FFPROBE_EXE"] = str(bundled_ffprobe)
 
     for node_name in ("node.exe", "node"):
         bundled_node = _resource_dir() / "bin" / node_name
