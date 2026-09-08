@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub release tag, such as v1.13.1
+        description: Existing GitHub release tag, such as v1.14.0
         required: true
         type: string
 
@@ -23,6 +23,7 @@ jobs:
           - architecture: arm64
             runner: windows-11-vs2026-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -47,6 +48,7 @@ jobs:
           ./build_windows.ps1 -Version $version -Architecture $env:RELEASE_ARCHITECTURE
       - name: Test packaged Windows video pipeline and GUI launch
         shell: pwsh
+        timeout-minutes: 20
         env:
           RELEASE_ARCHITECTURE: ${{ matrix.architecture }}
         run: |
@@ -82,6 +84,7 @@ jobs:
           - architecture: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -100,11 +103,19 @@ jobs:
           chmod +x build_linux.sh
           CLIPFARMPILOT_VERSION="${RELEASE_TAG#v}" CLIPFARMPILOT_ARCHITECTURE="$RELEASE_ARCHITECTURE" ./build_linux.sh
       - name: Test packaged Linux video pipeline and GUI launch
+        timeout-minutes: 20
+        env:
+          # WebKitGTK's accelerated renderer has no GPU on a CI runner, so the
+          # window only reaches its "shown" state with software rendering.
+          GDK_BACKEND: x11
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
         run: |
           SOURCE="$RUNNER_TEMP/clipfarmpilot-smoke.mp4"
           ffmpeg -y -v error -f lavfi -i "color=c=navy:s=160x90:r=24:d=3.2" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=3.2" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$SOURCE"
           CLIPFARMPILOT_STORAGE_DIR="$RUNNER_TEMP/clipfarmpilot-data" CLIPFARMPILOT_DELETE_PERMANENT=1 CLIPFARMPILOT_TEST_SOURCE="$SOURCE" dist/ClipFarmPilot/ClipFarmPilot
-          CLIPFARMPILOT_STORAGE_DIR="$RUNNER_TEMP/clipfarmpilot-data" CLIPFARMPILOT_TEST_WINDOW=1 xvfb-run -a dist/ClipFarmPilot/ClipFarmPilot
+          CLIPFARMPILOT_STORAGE_DIR="$RUNNER_TEMP/clipfarmpilot-data" CLIPFARMPILOT_TEST_WINDOW=1 xvfb-run -a -s "-screen 0 1440x960x24" dist/ClipFarmPilot/ClipFarmPilot
       - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.architecture }}-release

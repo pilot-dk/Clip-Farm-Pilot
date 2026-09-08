@@ -20,6 +20,13 @@ from backend.app.brand import APP_NAME, ENV_PREFIX, env
 
 DEFAULT_CLIP_FILENAME = f"{APP_NAME}-clip.mp4"
 
+# The packaged GUI check opens the real window, waits, then closes it. A desktop
+# toolkit that never finishes starting would otherwise keep the GUI loop running
+# forever, so the check gives up and reports a failure instead of hanging.
+TEST_WINDOW_VISIBLE_SECONDS = 2.0
+TEST_WINDOW_TIMEOUT_SECONDS = 90.0
+TEST_WINDOW_FAILURE_CODE = 70
+
 class DesktopApi:
     """Native helpers exposed only inside the packaged desktop window."""
 
@@ -477,11 +484,28 @@ def main() -> int:
             background_color="#090a0d",
         )
         desktop_api._bind_window(window, webview.FileDialog.SAVE)
+
         def close_test_window():
-            time.sleep(2)
-            window.destroy()
+            time.sleep(TEST_WINDOW_VISIBLE_SECONDS)
+            try:
+                window.destroy()
+            except Exception as error:
+                print(f"{APP_NAME} window check failed: {error}", file=sys.stderr, flush=True)
+                os._exit(TEST_WINDOW_FAILURE_CODE)
+
+        def guard_test_window():
+            time.sleep(TEST_WINDOW_TIMEOUT_SECONDS)
+            print(
+                f"{APP_NAME} window check timed out after "
+                f"{TEST_WINDOW_TIMEOUT_SECONDS:.0f}s.",
+                file=sys.stderr,
+                flush=True,
+            )
+            os._exit(TEST_WINDOW_FAILURE_CODE)
 
         test_window = env("TEST_WINDOW") == "1"
+        if test_window:
+            threading.Thread(target=guard_test_window, name=f"{APP_NAME} window check", daemon=True).start()
         desktop_gui = "cocoa" if sys.platform == "darwin" else "edgechromium" if sys.platform == "win32" else "gtk"
         webview.start(close_test_window if test_window else None, gui=desktop_gui, debug=False, private_mode=False)
         return 0
