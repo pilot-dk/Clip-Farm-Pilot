@@ -24,7 +24,8 @@ DEFAULT_CLIP_FILENAME = f"{APP_NAME}-clip.mp4"
 # toolkit that never finishes starting would otherwise keep the GUI loop running
 # forever, so the check gives up and reports a failure instead of hanging.
 TEST_WINDOW_VISIBLE_SECONDS = 2.0
-TEST_WINDOW_TIMEOUT_SECONDS = 90.0
+TEST_WINDOW_SHOWN_TIMEOUT_SECONDS = 60.0
+TEST_WINDOW_TIMEOUT_SECONDS = 150.0
 TEST_WINDOW_FAILURE_CODE = 70
 
 class DesktopApi:
@@ -486,6 +487,9 @@ def main() -> int:
         desktop_api._bind_window(window, webview.FileDialog.SAVE)
 
         def close_test_window():
+            # A slow desktop toolkit can take far longer than the two seconds the
+            # window stays open, so wait for it to report itself before closing.
+            window.events.shown.wait(TEST_WINDOW_SHOWN_TIMEOUT_SECONDS)
             time.sleep(TEST_WINDOW_VISIBLE_SECONDS)
             try:
                 window.destroy()
