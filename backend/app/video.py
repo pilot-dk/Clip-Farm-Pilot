@@ -2280,6 +2280,11 @@ def _export_full_length_single_pass(
     output: Path,
     start: float,
     end: float,
+    aspect: Aspect,
+    caption_text: str,
+    caption_font_scale: float,
+    caption_position: CaptionPosition,
+    caption_overlay_path: Path | None,
     video_filter: VideoFilter,
     sound_effect: SoundEffect,
     sound_effects: list[SelectedSoundEffect] | tuple[SelectedSoundEffect, ...] | None,
@@ -2296,7 +2301,10 @@ def _export_full_length_single_pass(
     subscribe_animation: bool,
     export_metadata: dict[str, object] | None,
 ) -> dict[SelectedSoundEffect, list[float]]:
-    """Analyze once and render a complete YouTube edit in one generation."""
+    """Analyze once and render a complete landscape or square edit in one generation."""
+    if aspect not in {"16:9", "1:1"}:
+        raise ValueError("Full-length edits support the 16:9 or 1:1 standard layout.")
+    width, height = ASPECT_SIZES[aspect]
     info = probe_video(source)
     selection_start = max(0.0, min(float(start), info.duration))
     selection_end = max(selection_start + 0.1, min(float(end), info.duration))
@@ -2377,7 +2385,7 @@ def _export_full_length_single_pass(
             live_caption_ass = Path(caption_file.name)
             caption_file.close()
             temporary_paths.append(live_caption_ass)
-            write_live_caption_ass(cleaned_words, live_caption_ass, 1920, 1080, live_caption_scheme)
+            write_live_caption_ass(cleaned_words, live_caption_ass, width, height, live_caption_scheme)
 
         ffmpeg = ffmpeg_executable(require_ass=live_caption_ass is not None)
         inputs = [
@@ -2405,7 +2413,7 @@ def _export_full_length_single_pass(
             overlay_path = Path(overlay_file.name)
             overlay_file.close()
             temporary_paths.append(overlay_path)
-            _render_visual_overlay(visual_effect, overlay_path, 1920, 1080, visual_strength)
+            _render_visual_overlay(visual_effect, overlay_path, width, height, visual_strength)
             overlay_index = next_input
             inputs += ["-loop", "1", "-i", str(overlay_path)]
             next_input += 1
@@ -2417,6 +2425,28 @@ def _export_full_length_single_pass(
                 raise RuntimeError("The bundled YouTube subscribe animation is missing.")
             subscribe_index = next_input
             inputs += ["-i", str(subscribe_asset)]
+            next_input += 1
+
+        creator_caption_index: int | None = None
+        if aspect == "1:1" and (caption_text.strip() or caption_overlay_path is not None):
+            owns_caption_overlay = caption_overlay_path is None
+            if owns_caption_overlay:
+                caption_file = tempfile.NamedTemporaryFile(
+                    prefix=f"{APP_SLUG}-caption-", suffix=".png", delete=False
+                )
+                rendered_caption_overlay = Path(caption_file.name)
+                caption_file.close()
+                _render_square_caption(
+                    caption_text,
+                    rendered_caption_overlay,
+                    caption_font_scale,
+                    caption_position,
+                )
+                temporary_paths.append(rendered_caption_overlay)
+            else:
+                rendered_caption_overlay = caption_overlay_path
+            creator_caption_index = next_input
+            inputs += ["-loop", "1", "-i", str(rendered_caption_overlay)]
             next_input += 1
 
         has_audio = _has_audio(source)
@@ -2450,8 +2480,8 @@ def _export_full_length_single_pass(
             base_audio_label = None
 
         base_video_filter = (
-            "[joinedv]scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,"
-            "crop=1920:1080,setsar=1"
+            f"[joinedv]scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{height},setsar=1"
         )
         if filter_chain:
             base_video_filter += f",{filter_chain}"
@@ -2469,7 +2499,7 @@ def _export_full_length_single_pass(
             )
             filters.append(
                 f"[{video_label}]scale=w='iw*{scale}':h='ih*{scale}':eval=frame,"
-                "crop=1920:1080:(in_w-out_w)/2:(in_h-out_h)/2[vfx]"
+                f"crop={width}:{height}:(in_w-out_w)/2:(in_h-out_h)/2[vfx]"
             )
             video_label = "vfx"
         elif overlay_index is not None:
@@ -2492,13 +2522,20 @@ def _export_full_length_single_pass(
         if subscribe_index is not None:
             filters.append(
                 f"[{subscribe_index}:v]setpts=PTS-STARTPTS,"
-                "scale=1920:-2:flags=lanczos,format=rgba[subscribe]"
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba[subscribe]"
             )
             filters.append(
                 f"[{video_label}][subscribe]overlay=0:(H-h)/2:eof_action=pass:"
                 "shortest=0:format=auto[withsubscribe]"
             )
             video_label = "withsubscribe"
+        if creator_caption_index is not None:
+            filters.append(f"[{creator_caption_index}:v]format=rgba[creatorcaption]")
+            filters.append(
+                f"[{video_label}][creatorcaption]overlay=0:0:eof_action=pass[withcreatorcaption]"
+            )
+            video_label = "withcreatorcaption"
 
         volume = min(2.0, max(0.0, float(sound_volume)))
         effect_labels: list[str] = []
@@ -2604,6 +2641,10 @@ def _export_full_length_single_pass(
                 "render_passes": 1,
                 "shared_transcript": bool(needs_transcript),
                 "quality": "single-pass-crf18",
+                "aspect": aspect,
+                "width": width,
+                "height": height,
+                "square_caption": bool(creator_caption_index is not None),
             }
         return placements
     finally:
@@ -2681,13 +2722,18 @@ def export_clip(
     if edit_mode not in {"clip", "full-length"}:
         raise ValueError("Unknown edit mode.")
     if edit_mode == "full-length":
-        if aspect != "16:9" or layout != "standard":
-            raise ValueError("Full-length YouTube edits use the 16:9 standard layout.")
+        if aspect not in {"16:9", "1:1"} or layout != "standard":
+            raise ValueError("Full-length edits use the 16:9 or 1:1 standard layout.")
         return _export_full_length_single_pass(
             source=source,
             output=output,
             start=start,
             end=end,
+            aspect=aspect,
+            caption_text=caption_text,
+            caption_font_scale=caption_font_scale,
+            caption_position=caption_position,
+            caption_overlay_path=caption_overlay_path,
             video_filter=video_filter,
             sound_effect=sound_effect,
             sound_effects=sound_effects,

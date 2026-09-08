@@ -111,7 +111,7 @@ Linux:   ~/.local/share/clipfarmpilot
 The editor now includes:
 
 - Separate **Viral clips** and **Full YouTube video** workspaces without leaving the current project.
-- A full-length 16:9 YouTube editor with independent **Remove silent pauses** and **Remove filler words** switches.
+- A full-length **16:9** or **1:1 square** editor with independent **Remove silent pauses** and **Remove filler words** switches.
 - Conservative pause trimming that keeps a short natural breath at speech boundaries, plus local word-timed removal for “um”, “uh”, “you know”, and similar filler.
 - The supplied transparent YouTube subscribe animation, fully visible and centred at the very start with its original sound.
 - Filters, live captions, smart Vine Boom and Check Sound placement, visual effects, original title suggestions, saving, and direct publishing in the full-length workspace.
@@ -150,13 +150,13 @@ The editor now includes:
 
 ## Full-Length YouTube Editor
 
-Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and locks the output to Full HD 16:9. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
+Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** Full HD (1920×1080) or a **1:1 square** video (1080×1080). Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
 
 The full-length editor retains the existing filters, live-caption colours, smart sound effects, visual effects, viral-title recommendation, native Save As flow, and direct-publishing controls. Smart sound placement runs against the cleaned timeline and can distribute effect-specific moments across a long edit without crowding them.
 
 Version 1.13 uses a single-pass render pipeline for full-length edits. Silence and filler cleanup, resizing, filters, captions, visual effects, smart sound mixing, and the subscribe animation are combined into one high-quality H.264 encode instead of repeatedly encoding the whole video. One cached offline transcript is shared by filler removal, live captions, smart sounds, and title generation, and long-video sound analysis now streams audio in bounded memory.
 
-Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the 1920×1080 frame without cropping, vertically centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
+Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the selected 16:9 or square frame without cropping, centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
 
 ### How Auto-Find Clips ranks moments
 

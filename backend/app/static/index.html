@@ -501,6 +501,7 @@
     .control-panel { padding: 18px; }
     .section + .section { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
     .section[hidden], .ratio-grid[hidden], .full-length-format[hidden] { display: none !important; }
+    .ratio-grid.full-length-ratios .ratio-option[data-full-length-unavailable] { display: none; }
 
     .full-length-card {
       display: grid;
@@ -543,6 +544,7 @@
       border-radius: 4px;
       box-shadow: inset 0 0 0 2px rgba(4, 16, 24, .8);
     }
+    .full-length-format[data-aspect="1:1"] .full-format-shape { width: 38px; aspect-ratio: 1; }
     .full-length-format span { display: grid; gap: 3px; }
     .full-length-format strong { font-size: 12px; }
     .full-length-format small { color: var(--muted); font-size: 10px; }
@@ -1643,22 +1645,22 @@
             <div class="section">
               <span class="section-label">3. Format</span>
               <div class="ratio-grid" id="ratioGrid">
-                <label class="ratio-option">
+                <label class="ratio-option" data-full-length-format="16:9">
                   <input type="radio" name="ratio" value="16:9" checked />
                   <span class="ratio-card"><span class="ratio-shape landscape"></span><strong>16:9</strong><small>YouTube</small></span>
                 </label>
-                <label class="ratio-option">
+                <label class="ratio-option" data-full-length-unavailable>
                   <input type="radio" name="ratio" value="9:16" />
                   <span class="ratio-card"><span class="ratio-shape portrait"></span><strong>9:16</strong><small>Shorts</small></span>
                 </label>
-                <label class="ratio-option">
+                <label class="ratio-option" data-full-length-format="1:1">
                   <input type="radio" name="ratio" value="1:1" />
-                  <span class="ratio-card"><span class="ratio-shape square"></span><strong>1:1</strong><small>Square</small></span>
+                  <span class="ratio-card"><span class="ratio-shape square"></span><strong>1:1</strong><small>Square video</small></span>
                 </label>
               </div>
               <div class="full-length-format" id="fullLengthFormat" hidden>
                 <span class="full-format-shape" aria-hidden="true"></span>
-                <span><strong>16:9 YouTube</strong><small>Full HD 1920×1080 · complete timeline</small></span>
+                <span><strong id="fullLengthFormatTitle">16:9 full video</strong><small id="fullLengthFormatDetail">Full HD 1920×1080 · complete timeline</small></span>
               </div>
               <div class="square-caption-controls" id="squareCaptionControls">
                 <div class="caption-head"><label for="captionText">Caption text (optional)</label><span id="captionCount">0 / 160</span></div>
@@ -2499,6 +2501,14 @@
       $("stage").dataset.aspect = ratio;
       $("ratioLabel").textContent = state.layout === "gaming" ? "9:16 · GAMING" : ratio;
       $("squareCaptionControls").classList.toggle("visible", ratio === "1:1" && state.layout !== "gaming");
+      if (state.editMode === "full-length") {
+        const isSquare = ratio === "1:1";
+        $("fullLengthFormat").dataset.aspect = ratio;
+        $("fullLengthFormatTitle").textContent = isSquare ? "1:1 square full video" : "16:9 full video";
+        $("fullLengthFormatDetail").textContent = isSquare
+          ? "1080×1080 · complete timeline"
+          : "Full HD 1920×1080 · complete timeline";
+      }
       requestAnimationFrame(() => {
         updateFacePreview();
         updateSquareCaption();
@@ -2515,12 +2525,13 @@
       });
       $("clipDiscoverySection").hidden = fullLength;
       $("fullLengthSection").hidden = !fullLength;
-      $("ratioGrid").hidden = fullLength;
+      $("ratioGrid").hidden = false;
+      $("ratioGrid").classList.toggle("full-length-ratios", fullLength);
       $("fullLengthFormat").hidden = !fullLength;
       $("gamingSection").hidden = fullLength;
       $("workspaceTitle").textContent = fullLength ? "Edit a full YouTube video" : "Create a clip";
       $("workspaceKicker").textContent = fullLength
-        ? "Tighten a complete 16:9 video, add finishing touches, and export locally."
+        ? "Tighten a complete 16:9 or 1:1 square video, add finishing touches, and export locally."
         : "Import a stream, pick a moment, choose a format, and export.";
       $("startTimeLabel").textContent = fullLength ? "Video start" : "Clip start";
       $("endTimeLabel").textContent = fullLength ? "Video end" : "Clip end";
@@ -2537,11 +2548,14 @@
         state.layout = "standard";
         $("stage").classList.remove("gaming");
         $("faceControls").classList.remove("visible");
-        document.querySelectorAll('input[name="ratio"]').forEach((input) => { input.disabled = false; });
-        const landscape = document.querySelector('input[name="ratio"][value="16:9"]');
-        landscape.checked = true;
-        updateRatio("16:9");
+        document.querySelectorAll('input[name="ratio"]').forEach((input) => {
+          input.disabled = input.value === "9:16";
+        });
+        const fullLengthRatio = state.ratio === "1:1" ? "1:1" : "16:9";
+        document.querySelector(`input[name="ratio"][value="${fullLengthRatio}"]`).checked = true;
+        updateRatio(fullLengthRatio);
       } else {
+        document.querySelectorAll('input[name="ratio"]').forEach((input) => { input.disabled = false; });
         updateRatio(document.querySelector('input[name="ratio"]:checked')?.value || "16:9");
       }
 
@@ -2560,8 +2574,8 @@
           "ready",
           fullLength ? "Full-length editor ready" : "Clip editor ready",
           state.videoId
-            ? fullLength
-              ? "Choose cleanup options, keep any effects you want, then export the complete 16:9 video."
+              ? fullLength
+              ? "Choose 16:9 or 1:1 square, keep any effects you want, then export the complete video."
               : "Choose a range manually or let Clip Farm Pilot find the strongest moments."
             : "Add a livestream recording to begin.",
         );
@@ -3039,7 +3053,7 @@
             start: range.start,
             end: range.end,
             edit_mode: state.editMode,
-            aspect: isFullLength ? "16:9" : state.ratio,
+            aspect: state.ratio,
             layout: isFullLength ? "standard" : state.layout,
             face_corner: $("faceCorner").value,
             face_width_fraction: Number($("faceWidth").value) / 100,
@@ -3082,7 +3096,7 @@
           $("smartPlacementResult").textContent = "";
           $("smartPlacementResult").classList.remove("visible");
         }
-        $("publishTitle").value = state.generatedTitle || data.viral_title || (isFullLength ? "New YouTube Video" : "New Clip");
+        $("publishTitle").value = state.generatedTitle || data.viral_title || (isFullLength ? (state.ratio === "1:1" ? "New Square Video" : "New YouTube Video") : "New Clip");
         if (!$("publishCaption").value.trim() && state.ratio === "1:1") {
           $("publishCaption").value = $("captionText").value.trim();
         }
@@ -3108,8 +3122,8 @@
           if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) improvements.push(`${data.live_caption_word_count} caption words timed`);
           setStatus(
             "success",
-            "Full YouTube video ready",
-            improvements.length ? improvements.join(" · ") : "The complete 16:9 MP4 is ready to save.",
+            "Full video ready",
+            improvements.length ? improvements.join(" · ") : `The complete ${state.ratio} MP4 is ready to save.`,
           );
         } else if ($("viralTitleToggle").checked && state.generatedTitle) {
           $("viralTitleText").textContent = $("downloadLink").download;

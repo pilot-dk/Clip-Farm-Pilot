@@ -368,8 +368,8 @@ def export(video_id: str, req: ExportRequest):
     source = get_video(video_id)
     if req.end <= req.start:
         raise HTTPException(400, "End time must be after start time.")
-    if req.edit_mode == "full-length" and (req.aspect != "16:9" or req.layout != "standard"):
-        raise HTTPException(400, "Full-length YouTube edits use the 16:9 standard layout.")
+    if req.edit_mode == "full-length" and (req.aspect not in {"16:9", "1:1"} or req.layout != "standard"):
+        raise HTTPException(400, "Full-length edits use the 16:9 or 1:1 standard layout.")
     export_id = uuid.uuid4().hex
     target = EXPORTS / f"{export_id}.mp4"
     caption_overlay: Path | None = None
@@ -417,7 +417,11 @@ def export(video_id: str, req: ExportRequest):
     finally:
         if caption_overlay is not None:
             caption_overlay.unlink(missing_ok=True)
-    fallback_prefix = "Clip Farm Pilot-Full-YouTube" if req.edit_mode == "full-length" else f"Clip Farm Pilot-{req.aspect.replace(':', 'x')}"
+    fallback_prefix = (
+        f"Clip Farm Pilot-Full-{req.aspect.replace(':', 'x')}"
+        if req.edit_mode == "full-length"
+        else f"Clip Farm Pilot-{req.aspect.replace(':', 'x')}"
+    )
     fallback_filename = f"{fallback_prefix}-{export_id[:8]}.mp4"
     title_result = {
         "title": Path(fallback_filename).stem,

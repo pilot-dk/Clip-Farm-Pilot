@@ -317,7 +317,9 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     portrait_id = uuid.uuid4().hex
     square_id = uuid.uuid4().hex
     gaming_id = uuid.uuid4().hex
+    full_square_id = uuid.uuid4().hex
     portrait_metadata: dict[str, object] = {}
+    full_square_metadata: dict[str, object] = {}
     landscape_sound_times = export_clip(
         source=cached_source,
         output=exports_dir / f"{landscape_id}.mp4",
@@ -375,14 +377,41 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         effect_time=0.6,
         auto_sound_effect=False,
     )
+    full_square_sound_times = export_clip(
+        source=cached_source,
+        output=exports_dir / f"{full_square_id}.mp4",
+        start=0,
+        end=clip_end,
+        aspect="1:1",
+        edit_mode="full-length",
+        caption_text="FULL SQUARE ❤️",
+        caption_position="bottom",
+        video_filter="warm",
+        sound_effect="vine-boom",
+        visual_effect="lens-flare",
+        effect_time=0.6,
+        auto_sound_effect=False,
+        subscribe_animation=True,
+        export_metadata=full_square_metadata,
+    )
     expected_manual_time = [0.6]
     if (
         landscape_sound_times.get("vine-boom") != expected_manual_time
         or portrait_sound_times.get("check-sound") != expected_manual_time
         or square_sound_times.get("vine-boom") != expected_manual_time
         or gaming_sound_times.get("check-sound") != expected_manual_time
+        or full_square_sound_times.get("vine-boom") != expected_manual_time
     ):
         raise RuntimeError("The bundled smart/manual sound placement test did not return timestamps.")
+    full_square_info = probe_video(exports_dir / f"{full_square_id}.mp4")
+    full_square_summary = full_square_metadata.get("full_length_summary", {})
+    if (
+        (full_square_info.width, full_square_info.height) != (1080, 1080)
+        or full_square_summary.get("aspect") != "1:1"
+        or not full_square_summary.get("square_caption")
+        or not full_square_summary.get("subscribe_animation")
+    ):
+        raise RuntimeError("The bundled full-length square video test did not produce the expected export.")
     title_result = generate_viral_title(
         exports_dir / f"{gaming_id}.mp4",
         source_title="FC 26 Weekend League Livestream.mp4",
@@ -392,7 +421,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     if not title_result["title"] or title_result["filename"].startswith(f"{APP_NAME}-"):
         raise RuntimeError("The bundled viral filename generator did not produce a content-aware title.")
     library.move_to_trash(video_id)
-    expected_exports = [landscape_id, portrait_id, square_id, gaming_id]
+    expected_exports = [landscape_id, portrait_id, square_id, gaming_id, full_square_id]
     if cached_source.exists() or any(not (exports_dir / f"{item}.mp4").is_file() for item in expected_exports):
         raise RuntimeError("Deleting the bundled test VOD did not preserve its exports.")
     if any(item["video_id"] == video_id for item in library.list_items()):

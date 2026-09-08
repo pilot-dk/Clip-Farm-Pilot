@@ -215,6 +215,63 @@ class FullLengthEditorTests(unittest.TestCase):
             self.assertNotIn("um", metadata["title_transcript"].split())
             self.assertGreater(metadata["live_caption_word_count"], 0)
 
+    def test_full_length_square_export_keeps_square_captions_and_full_frame_effects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.mp4"
+            output = root / "full-square.mp4"
+            early_frame = root / "early.png"
+            late_frame = root / "late.png"
+            metadata: dict[str, object] = {}
+            self._make_pause_video(source)
+            transcript = [CaptionWord("hello", 0.10, 0.42)]
+
+            with patch("backend.app.video.transcribe_words", return_value=transcript):
+                export_clip(
+                    source=source,
+                    output=output,
+                    start=0.0,
+                    end=4.0,
+                    aspect="1:1",
+                    edit_mode="full-length",
+                    caption_text="SQUARE CAPTION ❤️",
+                    caption_position="bottom",
+                    video_filter="warm",
+                    visual_effect="lens-flare",
+                    effect_time=0.70,
+                    live_captions=True,
+                    title_transcript=True,
+                    subscribe_animation=True,
+                    export_metadata=metadata,
+                )
+
+            self.assertTrue(output.is_file())
+            self.assertEqual((probe_video(output).width, probe_video(output).height), (1080, 1080))
+            summary = metadata["full_length_summary"]
+            self.assertEqual(summary["aspect"], "1:1")
+            self.assertEqual((summary["width"], summary["height"]), (1080, 1080))
+            self.assertTrue(summary["square_caption"])
+            self.assertTrue(summary["subscribe_animation"])
+            self.assertGreater(metadata["live_caption_word_count"], 0)
+
+            early = self._frame(output, 1.10, early_frame)
+            late = self._frame(output, 3.85, late_frame)
+            # The subscribe animation is letterboxed onto the square canvas,
+            # while the creator's square caption remains after it finishes.
+            self.assertGreater(int(np.max(early[220:860, 120:960])), 180)
+            self.assertGreater(int(np.max(late[820:1020, 80:1000])), 220)
+
+    def test_full_length_vertical_layout_remains_rejected(self):
+        with self.assertRaisesRegex(ValueError, "16:9 or 1:1"):
+            export_clip(
+                source=Path("unused.mp4"),
+                output=Path("unused-output.mp4"),
+                start=0.0,
+                end=1.0,
+                aspect="9:16",
+                edit_mode="full-length",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,12 @@ class WebPortTests(unittest.TestCase):
         self.assertFalse(request.remove_filler_words)
         self.assertTrue(request.subscribe_animation)
 
+    def test_full_length_square_request_is_allowed(self):
+        request = main.ExportRequest(start=0, end=600, edit_mode="full-length", aspect="1:1")
+
+        self.assertEqual(request.edit_mode, "full-length")
+        self.assertEqual(request.aspect, "1:1")
+
     def test_accepts_browser_rendered_square_caption(self):
         overlay = main._caption_overlay_from_data_url(png_data_url())
         self.assertIsNotNone(overlay)
