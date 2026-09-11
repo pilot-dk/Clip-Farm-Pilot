@@ -26,7 +26,19 @@ LIVE_CAPTION_SCHEMES: dict[LiveCaptionScheme, tuple[str, str]] = {
 
 # Live captions sit this far above the bottom edge before the creator raises them.
 LIVE_CAPTION_BASE_MARGINS = {"landscape": 92, "portrait": 150, "square": 105}
+LIVE_CAPTION_BASE_FONT_SIZES = {"landscape": 72, "portrait": 68, "square": 64}
 DEFAULT_LIVE_CAPTION_HEIGHT = 0.0
+DEFAULT_LIVE_CAPTION_SCALE = 1.0
+MIN_LIVE_CAPTION_SCALE = 0.50
+MAX_LIVE_CAPTION_SCALE = 1.75
+
+
+def _frame_shape(width: int, height: int) -> str:
+    if width > height:
+        return "landscape"
+    if height > width:
+        return "portrait"
+    return "square"
 
 
 def live_caption_margin(width: int, height: int, height_fraction: float = DEFAULT_LIVE_CAPTION_HEIGHT) -> int:
@@ -35,14 +47,16 @@ def live_caption_margin(width: int, height: int, height_fraction: float = DEFAUL
     ``height_fraction`` runs from 0.0, which keeps the captions just above the
     bottom edge, to 1.0, which lifts them to the middle of the frame.
     """
-    if width > height:
-        base = LIVE_CAPTION_BASE_MARGINS["landscape"]
-    elif height > width:
-        base = LIVE_CAPTION_BASE_MARGINS["portrait"]
-    else:
-        base = LIVE_CAPTION_BASE_MARGINS["square"]
+    base = LIVE_CAPTION_BASE_MARGINS[_frame_shape(width, height)]
     lift = max(0.0, min(1.0, float(height_fraction)))
     return base + round(lift * (height / 2 - base))
+
+
+def live_caption_font_size(width: int, height: int, scale: float = DEFAULT_LIVE_CAPTION_SCALE) -> int:
+    """Caption type size for the frame, scaled by the creator's size slider."""
+    base = LIVE_CAPTION_BASE_FONT_SIZES[_frame_shape(width, height)]
+    clamped = max(MIN_LIVE_CAPTION_SCALE, min(MAX_LIVE_CAPTION_SCALE, float(scale)))
+    return max(12, round(base * clamped))
 
 
 @dataclass(frozen=True)
@@ -255,6 +269,7 @@ def write_live_caption_ass(
     height: int,
     scheme: LiveCaptionScheme,
     height_fraction: float = DEFAULT_LIVE_CAPTION_HEIGHT,
+    scale: float = DEFAULT_LIVE_CAPTION_SCALE,
 ) -> None:
     try:
         base_hex, highlight_hex = LIVE_CAPTION_SCHEMES[scheme]
@@ -263,9 +278,11 @@ def write_live_caption_ass(
 
     base_color = _ass_color(base_hex)
     highlight_color = _ass_color(highlight_hex)
-    font_size = 72 if width > height else 68 if height > width else 64
+    font_size = live_caption_font_size(width, height, scale)
     margin_vertical = live_caption_margin(width, height, height_fraction)
-    outline = 5 if min(width, height) >= 1000 else 4
+    # Keep the outline in proportion so scaled-up type does not lose its edge.
+    outline_scale = font_size / LIVE_CAPTION_BASE_FONT_SIZES[_frame_shape(width, height)]
+    outline = max(2, round((5 if min(width, height) >= 1000 else 4) * outline_scale))
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"

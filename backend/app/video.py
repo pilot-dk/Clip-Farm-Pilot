@@ -22,8 +22,10 @@ from .brand import APP_SLUG, env
 from .captions import (
     CaptionWord,
     DEFAULT_LIVE_CAPTION_HEIGHT,
+    DEFAULT_LIVE_CAPTION_SCALE,
     LIVE_CAPTION_SCHEMES,
     LiveCaptionScheme,
+    live_caption_font_size,
     live_caption_margin,
     transcribe_words,
     write_live_caption_ass,
@@ -2304,6 +2306,7 @@ def _export_full_length_single_pass(
     live_captions: bool,
     live_caption_scheme: LiveCaptionScheme,
     live_caption_height: float,
+    live_caption_scale: float,
     title_transcript: bool,
     remove_silence: bool,
     remove_filler_words: bool,
@@ -2395,7 +2398,13 @@ def _export_full_length_single_pass(
             caption_file.close()
             temporary_paths.append(live_caption_ass)
             write_live_caption_ass(
-                cleaned_words, live_caption_ass, width, height, live_caption_scheme, live_caption_height
+                cleaned_words,
+                live_caption_ass,
+                width,
+                height,
+                live_caption_scheme,
+                live_caption_height,
+                live_caption_scale,
             )
 
         ffmpeg = ffmpeg_executable(require_ass=live_caption_ass is not None)
@@ -2657,6 +2666,7 @@ def _export_full_length_single_pass(
                 "height": height,
                 "square_caption": bool(creator_caption_index is not None),
                 "live_caption_margin": live_caption_margin(width, height, live_caption_height),
+                "live_caption_font_size": live_caption_font_size(width, height, live_caption_scale),
             }
         return placements
     finally:
@@ -2725,6 +2735,7 @@ def export_clip(
     live_captions: bool = False,
     live_caption_scheme: LiveCaptionScheme = "pilot-lime",
     live_caption_height: float = DEFAULT_LIVE_CAPTION_HEIGHT,
+    live_caption_scale: float = DEFAULT_LIVE_CAPTION_SCALE,
     title_transcript: bool = False,
     export_metadata: dict[str, object] | None = None,
     edit_mode: Literal["clip", "full-length"] = "clip",
@@ -2758,6 +2769,7 @@ def export_clip(
             live_captions=live_captions,
             live_caption_scheme=live_caption_scheme,
             live_caption_height=live_caption_height,
+            live_caption_scale=live_caption_scale,
             title_transcript=title_transcript,
             remove_silence=remove_silence,
             remove_filler_words=remove_filler_words,
@@ -2817,11 +2829,18 @@ def export_clip(
             caption_file.close()
             width, height = ASPECT_SIZES[aspect]
             write_live_caption_ass(
-                words, live_caption_ass, width, height, live_caption_scheme, live_caption_height
+                words,
+                live_caption_ass,
+                width,
+                height,
+                live_caption_scheme,
+                live_caption_height,
+                live_caption_scale,
             )
     if export_metadata is not None:
         export_metadata["live_caption_word_count"] = live_caption_word_count
         export_metadata["live_caption_margin"] = live_caption_margin(*ASPECT_SIZES[aspect], live_caption_height)
+        export_metadata["live_caption_font_size"] = live_caption_font_size(*ASPECT_SIZES[aspect], live_caption_scale)
         export_metadata["title_transcript"] = " ".join(word.text for word in transcript_words)[:2_000]
 
     has_effects = bool(selected_sound_effects) or visual_effect != "none"

@@ -272,7 +272,12 @@ def _test_save_bridge(
 
 def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path, library, static_dir: Path) -> None:
     """Socket-free packaged-app test for restricted build environments."""
-    from backend.app.captions import caption_engine_self_test, caption_engine_status, live_caption_margin
+    from backend.app.captions import (
+        caption_engine_self_test,
+        caption_engine_status,
+        live_caption_font_size,
+        live_caption_margin,
+    )
     from backend.app.video import analyze_viral_candidates, export_clip, generate_viral_title, probe_video
 
     if not source_path.is_file():
@@ -354,6 +359,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         live_captions=True,
         live_caption_scheme="neon-pink",
         live_caption_height=0.80,
+        live_caption_scale=1.40,
         title_transcript=True,
         export_metadata=portrait_metadata,
     )
@@ -416,6 +422,10 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     raised_margin = portrait_metadata.get("live_caption_margin")
     if raised_margin != live_caption_margin(1080, 1920, 0.80) or raised_margin <= resting_margin:
         raise RuntimeError("The bundled live-caption height slider did not raise the captions.")
+    standard_font = live_caption_font_size(1080, 1920)
+    enlarged_font = portrait_metadata.get("live_caption_font_size")
+    if enlarged_font != live_caption_font_size(1080, 1920, 1.40) or enlarged_font <= standard_font:
+        raise RuntimeError("The bundled live-caption size slider did not enlarge the captions.")
     full_square_info = probe_video(exports_dir / f"{full_square_id}.mp4")
     full_square_summary = full_square_metadata.get("full_length_summary", {})
     if (

@@ -39,6 +39,7 @@ class WebPortTests(unittest.TestCase):
         self.assertTrue(request.viral_title)
         self.assertEqual(request.live_caption_scheme, "pilot-lime")
         self.assertEqual(request.live_caption_height, 0.0)
+        self.assertEqual(request.live_caption_scale, 1.0)
         with self.assertRaises(ValueError):
             main.ExportRequest(start=0, end=12, live_caption_scheme="invisible")
 
@@ -50,6 +51,15 @@ class WebPortTests(unittest.TestCase):
         for value in (-0.2, 1.4):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 main.ExportRequest(start=0, end=12, live_caption_height=value)
+
+    def test_caption_size_is_accepted_across_the_slider_and_rejected_beyond_it(self):
+        for value in (0.50, 1.0, 1.75):
+            with self.subTest(value=value):
+                request = main.ExportRequest(start=0, end=12, live_captions=True, live_caption_scale=value)
+                self.assertEqual(request.live_caption_scale, value)
+        for value in (0.2, 2.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                main.ExportRequest(start=0, end=12, live_caption_scale=value)
 
     def test_full_length_editor_options_are_independent(self):
         request = main.ExportRequest(

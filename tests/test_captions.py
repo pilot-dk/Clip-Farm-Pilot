@@ -11,6 +11,7 @@ from PIL import Image
 from backend.app.captions import (
     CaptionWord,
     group_caption_words,
+    live_caption_font_size,
     live_caption_margin,
     parse_whisper_words,
     write_live_caption_ass,
@@ -115,6 +116,67 @@ class LiveCaptionTests(unittest.TestCase):
                 # Values outside the slider's range stay inside the frame.
                 self.assertEqual(live_caption_margin(width, height, -4.0), resting)
                 self.assertEqual(live_caption_margin(width, height, 9.0), height // 2)
+
+    def test_caption_size_defaults_to_the_standard_type_and_scales_within_range(self):
+        for width, height, standard in ((1920, 1080, 72), (1080, 1920, 68), (1080, 1080, 64)):
+            with self.subTest(shape=(width, height)):
+                self.assertEqual(live_caption_font_size(width, height), standard)
+                self.assertEqual(live_caption_font_size(width, height, 1.0), standard)
+                self.assertEqual(live_caption_font_size(width, height, 0.50), round(standard * 0.50))
+                self.assertEqual(live_caption_font_size(width, height, 1.75), round(standard * 1.75))
+                # Values outside the slider's range stay clamped to its ends.
+                self.assertEqual(live_caption_font_size(width, height, 0.05), round(standard * 0.50))
+                self.assertEqual(live_caption_font_size(width, height, 6.0), round(standard * 1.75))
+
+    def test_requested_caption_size_scales_the_type_and_its_outline(self):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            words = [CaptionWord("Every", 0.1, 0.5)]
+            standard = temporary / "standard.ass"
+            large = temporary / "large.ass"
+            write_live_caption_ass(words, standard, 1920, 1080, "pilot-lime")
+            write_live_caption_ass(words, large, 1920, 1080, "pilot-lime", 0.0, 1.75)
+            standard_fields = self._style_line(standard).split(",")
+            large_fields = self._style_line(large).split(",")
+        # Fontsize is the third style field; Outline is the seventeenth.
+        self.assertEqual(standard_fields[2], "72")
+        self.assertEqual(large_fields[2], "126")
+        self.assertEqual(standard_fields[16], "5")
+        self.assertEqual(large_fields[16], "9")
+        # Raising the size must not move the captions off their resting margin.
+        self.assertEqual(large_fields[-2], "92")
+
+    def test_larger_captions_cover_more_of_the_frame(self):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            source = temporary / "source.mp4"
+            ffmpeg = ffmpeg_executable(require_ass=True)
+            _run([
+                ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+                "-i", "color=c=black:s=640x360:d=1.0:r=24",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", source,
+            ])
+            lit_pixels = {}
+            for label, scale in (("standard", 1.0), ("large", 1.75)):
+                ass = temporary / f"{label}.ass"
+                output = temporary / f"{label}.mp4"
+                frame = temporary / f"{label}.png"
+                write_live_caption_ass(
+                    [CaptionWord("CAPTION", 0.0, 0.9)], ass, 640, 360, "pilot-lime", 0.0, scale
+                )
+                _apply_effects(
+                    source, output, 0.9, 640, 360,
+                    "none", "none", 0.0, [], 1.0, 1.0, ass,
+                )
+                _run([
+                    ffmpeg, "-y", "-v", "error", "-ss", "0.4", "-i", str(output),
+                    "-frames:v", "1", str(frame),
+                ])
+                pixels = np.asarray(Image.open(frame).convert("L"), dtype=np.int16)
+                lit_pixels[label] = int(np.count_nonzero(pixels > 120))
+
+        self.assertGreater(lit_pixels["standard"], 0, "The standard caption was not drawn.")
+        self.assertGreater(lit_pixels["large"], lit_pixels["standard"] * 1.5)
 
     def test_requested_caption_height_reaches_the_rendered_style(self):
         with tempfile.TemporaryDirectory() as temporary_name:

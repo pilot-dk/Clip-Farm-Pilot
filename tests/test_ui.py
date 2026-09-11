@@ -89,6 +89,13 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("LIVE_CAPTION_BASE_PERCENT", self.html)
         self.assertIn("lifts them to the middle of the frame", self.html)
 
+    def test_live_captions_have_a_size_slider_that_previews_the_real_type_size(self):
+        self.assertIn('id="liveCaptionSize" type="range" min="50" max="175"', self.html)
+        self.assertIn('id="liveCaptionSizeValue"', self.html)
+        self.assertIn("live_caption_scale:", self.html)
+        self.assertIn("LIVE_CAPTION_FONT_PERCENT", self.html)
+        self.assertIn("Scales the caption type and its outline", self.html)
+
     def test_original_viral_title_is_enabled_and_explained(self):
         self.assertIn('<input id="viralTitleToggle" type="checkbox" checked', self.html)
         self.assertIn("Original viral title", self.html)
