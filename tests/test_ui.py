@@ -80,6 +80,15 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("live_caption_scheme:", self.html)
         self.assertIn("Automatic word-by-word highlights", self.html)
 
+    def test_live_captions_have_a_height_slider_with_an_on_stage_preview(self):
+        self.assertIn('id="liveCaptionHeight" type="range" min="0" max="100"', self.html)
+        self.assertIn('id="liveCaptionHeightValue"', self.html)
+        self.assertIn("live_caption_height:", self.html)
+        self.assertIn('id="liveCaptionGhost"', self.html)
+        self.assertIn("show-live-captions", self.html)
+        self.assertIn("LIVE_CAPTION_BASE_PERCENT", self.html)
+        self.assertIn("lifts them to the middle of the frame", self.html)
+
     def test_original_viral_title_is_enabled_and_explained(self):
         self.assertIn('<input id="viralTitleToggle" type="checkbox" checked', self.html)
         self.assertIn("Original viral title", self.html)

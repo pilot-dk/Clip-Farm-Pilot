@@ -406,6 +406,30 @@
     .square-caption-preview[data-caption-position="bottom"] { top: auto; bottom: 9%; transform: none; }
     .stage[data-aspect="1:1"]:not(.gaming) .square-caption-preview.has-text { display: block; }
 
+    .live-caption-ghost {
+      display: none;
+      position: absolute;
+      left: 6%;
+      right: 6%;
+      bottom: 8.5%;
+      z-index: 2;
+      color: #fff;
+      font-family: "Arial Black", Arial, Helvetica, sans-serif;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: .01em;
+      text-align: center;
+      text-transform: uppercase;
+      text-shadow: 0 0 5px rgba(0, 0, 0, .95), 0 2px 5px rgba(0, 0, 0, .8);
+      -webkit-text-stroke: 2.2px rgba(6, 8, 11, .92);
+      paint-order: stroke fill;
+      opacity: .92;
+      pointer-events: none;
+      transition: bottom .14s ease;
+    }
+    .live-caption-ghost .active { color: var(--caption-highlight, #b9f34a); }
+    .stage.show-live-captions .live-caption-ghost { display: block; }
+
     .ratio-label {
       position: absolute;
       top: 11px;
@@ -1546,6 +1570,7 @@
                 <video class="gaming-game" id="gamePreview" playsinline preload="metadata"></video>
               </div>
               <div class="square-caption-preview" id="squareCaptionPreview" aria-hidden="true"></div>
+              <div class="live-caption-ghost" id="liveCaptionGhost" aria-hidden="true"><span>Every</span> <span class="active">word</span> <span>lands</span></div>
             </div>
           </div>
 
@@ -1744,6 +1769,11 @@
                         <option value="neon-pink">Neon Pink</option>
                         <option value="violet">Electric Violet</option>
                       </select>
+                    </div>
+                    <div class="field">
+                      <div class="range-head"><span>Caption height</span><output id="liveCaptionHeightValue">0%</output></div>
+                      <input id="liveCaptionHeight" type="range" min="0" max="100" value="0" step="5" aria-label="Live-caption height above the bottom edge" disabled />
+                      <small class="field-hint">0% rests the captions just above the bottom edge. 100% lifts them to the middle of the frame.</small>
                     </div>
                     <div class="live-caption-preview" id="liveCaptionPreview" aria-label="Live-caption colour preview">
                       <span>Every</span><span class="active">word</span><span>lands</span>
@@ -2481,9 +2511,20 @@
       updateVideoFilterPreview();
     }
 
+    // Matches live_caption_margin() in the backend: the resting margin above the
+    // bottom edge, as a percentage of frame height, for each output shape.
+    const LIVE_CAPTION_BASE_PERCENT = { "16:9": 92 / 1080 * 100, "9:16": 150 / 1920 * 100, "1:1": 105 / 1080 * 100 };
+
+    function liveCaptionHeightPercent() {
+      const base = LIVE_CAPTION_BASE_PERCENT[state.ratio] || LIVE_CAPTION_BASE_PERCENT["16:9"];
+      const lift = Math.max(0, Math.min(100, Number($("liveCaptionHeight").value) || 0)) / 100;
+      return base + lift * (50 - base);
+    }
+
     function updateLiveCaptionControls() {
       const enabled = $("liveCaptionsToggle").checked;
       const scheme = $("liveCaptionScheme").value;
+      const heightPercent = Math.max(0, Math.min(100, Number($("liveCaptionHeight").value) || 0));
       const highlights = {
         "pilot-lime": "#b9f34a",
         ocean: "#35dcff",
@@ -2491,9 +2532,18 @@
         "neon-pink": "#ff4fd8",
         violet: "#a98bff",
       };
+      const highlight = highlights[scheme] || highlights["pilot-lime"];
       $("liveCaptionScheme").disabled = !enabled;
+      $("liveCaptionHeight").disabled = !enabled;
       $("liveCaptionOptions").classList.toggle("enabled", enabled);
-      $("liveCaptionPreview").style.setProperty("--caption-highlight", highlights[scheme] || highlights["pilot-lime"]);
+      $("liveCaptionPreview").style.setProperty("--caption-highlight", highlight);
+      $("liveCaptionHeightValue").value = `${heightPercent}%`;
+      $("liveCaptionHeight").style.setProperty("--progress", `${heightPercent}%`);
+      $("stage").classList.toggle("show-live-captions", enabled);
+      const ghost = $("liveCaptionGhost");
+      ghost.style.setProperty("--caption-highlight", highlight);
+      ghost.style.bottom = `${liveCaptionHeightPercent()}%`;
+      ghost.style.fontSize = `${Math.max(11, Math.min(30, $("stage").clientWidth * .026))}px`;
     }
 
     function updateRatio(ratio) {
@@ -2512,6 +2562,7 @@
       requestAnimationFrame(() => {
         updateFacePreview();
         updateSquareCaption();
+        updateLiveCaptionControls();
       });
     }
 
@@ -3073,6 +3124,7 @@
             visual_strength: Number($("visualStrength").value) / 100,
             live_captions: $("liveCaptionsToggle").checked,
             live_caption_scheme: $("liveCaptionScheme").value,
+            live_caption_height: Math.max(0, Math.min(100, Number($("liveCaptionHeight").value) || 0)) / 100,
             viral_title: $("viralTitleToggle").checked,
             remove_silence: isFullLength && $("removeSilenceToggle").checked,
             remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
@@ -3195,6 +3247,7 @@
       document.querySelector('input[name="captionPosition"][value="center"]').checked = true;
       $("liveCaptionsToggle").checked = false;
       $("liveCaptionScheme").value = "pilot-lime";
+      $("liveCaptionHeight").value = "0";
       $("videoFilter").value = "none";
       $("vineBoomToggle").checked = false;
       $("checkSoundToggle").checked = false;
@@ -3350,7 +3403,7 @@
     ["faceCorner", "faceWidth", "faceHeight", "faceInsetX", "faceInsetY"].forEach((id) => $(id).addEventListener("input", updateFacePreview));
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
     document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
-    ["liveCaptionsToggle", "liveCaptionScheme"].forEach((id) => $(id).addEventListener("input", updateLiveCaptionControls));
+    ["liveCaptionsToggle", "liveCaptionScheme", "liveCaptionHeight"].forEach((id) => $(id).addEventListener("input", updateLiveCaptionControls));
     ["videoFilter", "vineBoomToggle", "checkSoundToggle", "visualEffect", "autoSoundEffectToggle", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();

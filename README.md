@@ -35,14 +35,14 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.14.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.15.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
 - A private password screen for hosted copies.
 - Install support for iPhone, iPad, Android, and desktop browsers.
 - Browser-rendered square captions so the exact emoji from the device is carried into the MP4.
-- Offline live captions with word-level speech timing and selectable highlight colours.
+- Offline live captions with word-level speech timing, selectable highlight colours, and an adjustable caption height.
 - Temporary cloud storage behavior, including permanent cleanup of finished VOD working copies.
 - A Docker image, Render Blueprint, and GitHub Actions checks for a GitHub-based deployment.
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.14.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.15.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64 or ARM64
 
-1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.14.0-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.14.0-x64.zip` for an Intel/AMD PC.
+1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.15.0-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.15.0-x64.zip` for an Intel/AMD PC.
 2. Unzip the download.
 3. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 4. If Windows SmartScreen appears, choose **More info → Run anyway**.
@@ -91,7 +91,7 @@ The Windows build is currently unsigned. Both downloads are native packages and 
 
 ### Linux — x64 or ARM64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.14.0-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.14.0-arm64.tar.gz` on an ARM64 computer.
+1. Extract `Clip-Farm-Pilot-Linux-v1.15.0-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.15.0-arm64.tar.gz` on an ARM64 computer.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux builds target Ubuntu 24.04 and compatible distributions on their matching architecture. They use the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -132,6 +132,7 @@ The editor now includes:
 - A live **Caption size** slider for 1:1 clips, adjustable from 50% to 175% with the selected size carried into the rendered MP4.
 - Optional **Live captions** that transcribe English speech locally and keep a readable group of words on screen while highlighting the word currently being spoken.
 - Five live-caption colour schemes: **Pilot Lime**, **Ocean Blue**, **Sunset Gold**, **Neon Pink**, and **Electric Violet**.
+- A **Caption height** slider that lifts live captions off the bottom edge, previewed on the monitor before exporting.
 - Seven full-clip looks: **Black & white**, **Cinematic**, **Vivid**, **Warm**, **Cool**, **Faded / Vintage**, and **High contrast**, with an instant preview in every template.
 - A **Moment effects** editor available in 16:9, 9:16, 1:1, and the gaming layout.
 - Bundled **Vine Boom** and **Check Sound** effects with adjustable volume. Either sound can be selected alone, or both can be added to the same clip.
@@ -213,7 +214,9 @@ Title analysis uses the same bundled offline English speech engine as live capti
 
 ## Live captions
 
-Open **Live captions**, enable the switch, and choose a colour scheme before exporting. Clip Farm Pilot extracts the selected clip's audio, transcribes English speech with the bundled offline `base.en` Whisper.cpp model, groups the result into short readable phrases, and highlights each word for its own spoken time range. The result is burned into the MP4 and works in 16:9, 9:16, 1:1, and gaming layouts.
+Open **Live captions**, enable the switch, then choose a colour scheme and **Caption height** before exporting. Clip Farm Pilot extracts the selected clip's audio, transcribes English speech with the bundled offline `base.en` Whisper.cpp model, groups the result into short readable phrases, and highlights each word for its own spoken time range. The result is burned into the MP4 and works in 16:9, 9:16, 1:1, and gaming layouts.
+
+**Caption height** decides how far up the frame the captions sit. At `0%` they rest just above the bottom edge, where they have always been placed. Moving the slider up raises them proportionally, and `100%` lifts them to the middle of the frame — useful when a game HUD, a webcam, or a platform's own interface covers the lower strip of the video. The preview monitor shows the chosen position while you drag, and the same position is used for clips and full-length edits in every format.
 
 Caption transcription stays on the machine or hosted Clip Farm Pilot server running the export. It does not send audio to a third-party transcription API. Accuracy depends on microphone quality, overlapping speakers, music volume, accents, and game audio. The first live-captioned export takes longer because speech recognition runs before video rendering.
 
@@ -367,8 +370,8 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On native Windows x64 or ARM64 with matching Python 3.12 and Node.js installations:
 
 ```powershell
-./build_windows.ps1 -Version 1.14.0 -Architecture x64
-./build_windows.ps1 -Version 1.14.0 -Architecture arm64
+./build_windows.ps1 -Version 1.15.0 -Architecture x64
+./build_windows.ps1 -Version 1.15.0 -Architecture arm64
 ```
 
 On Ubuntu 24.04 x64 or ARM64 with matching Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installations:

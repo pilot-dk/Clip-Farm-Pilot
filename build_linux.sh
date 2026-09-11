@@ -22,7 +22,7 @@ if [[ "$HOST_ARCH" != "$APP_ARCH" ]]; then
 fi
 BUILD_ENV="$PROJECT_DIR/.build-venv-linux-$APP_ARCH"
 NODE_BINARY="${CLIPFARMPILOT_NODE_BINARY:-$(command -v node || true)}"
-APP_VERSION="${CLIPFARMPILOT_VERSION:-1.14.0}"
+APP_VERSION="${CLIPFARMPILOT_VERSION:-1.15.0}"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_DIR/.pyinstaller-cache-linux-$APP_ARCH"
 
 if [[ -z "$NODE_BINARY" || ! -x "$NODE_BINARY" ]]; then

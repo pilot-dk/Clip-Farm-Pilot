@@ -24,6 +24,26 @@ LIVE_CAPTION_SCHEMES: dict[LiveCaptionScheme, tuple[str, str]] = {
     "violet": ("#FFFFFF", "#A98BFF"),
 }
 
+# Live captions sit this far above the bottom edge before the creator raises them.
+LIVE_CAPTION_BASE_MARGINS = {"landscape": 92, "portrait": 150, "square": 105}
+DEFAULT_LIVE_CAPTION_HEIGHT = 0.0
+
+
+def live_caption_margin(width: int, height: int, height_fraction: float = DEFAULT_LIVE_CAPTION_HEIGHT) -> int:
+    """Vertical margin for the caption block, raised from its resting position.
+
+    ``height_fraction`` runs from 0.0, which keeps the captions just above the
+    bottom edge, to 1.0, which lifts them to the middle of the frame.
+    """
+    if width > height:
+        base = LIVE_CAPTION_BASE_MARGINS["landscape"]
+    elif height > width:
+        base = LIVE_CAPTION_BASE_MARGINS["portrait"]
+    else:
+        base = LIVE_CAPTION_BASE_MARGINS["square"]
+    lift = max(0.0, min(1.0, float(height_fraction)))
+    return base + round(lift * (height / 2 - base))
+
 
 @dataclass(frozen=True)
 class CaptionWord:
@@ -234,6 +254,7 @@ def write_live_caption_ass(
     width: int,
     height: int,
     scheme: LiveCaptionScheme,
+    height_fraction: float = DEFAULT_LIVE_CAPTION_HEIGHT,
 ) -> None:
     try:
         base_hex, highlight_hex = LIVE_CAPTION_SCHEMES[scheme]
@@ -243,7 +264,7 @@ def write_live_caption_ass(
     base_color = _ass_color(base_hex)
     highlight_color = _ass_color(highlight_hex)
     font_size = 72 if width > height else 68 if height > width else 64
-    margin_vertical = 92 if width > height else 150 if height > width else 105
+    margin_vertical = live_caption_margin(width, height, height_fraction)
     outline = 5 if min(width, height) >= 1000 else 4
     header = (
         "[Script Info]\n"

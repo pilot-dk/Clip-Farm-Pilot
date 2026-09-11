@@ -11,6 +11,7 @@ from PIL import Image
 from backend.app.captions import (
     CaptionWord,
     group_caption_words,
+    live_caption_margin,
     parse_whisper_words,
     write_live_caption_ass,
 )
@@ -101,6 +102,75 @@ class LiveCaptionTests(unittest.TestCase):
             difference = np.abs(first_pixels - second_pixels)
             self.assertGreater(int(np.count_nonzero(difference > 25)), 300)
             self.assertGreater(int(np.count_nonzero((first_pixels[:, :, 2] > 180) & (first_pixels[:, :, 0] < 120))), 30)
+
+    def test_caption_height_defaults_to_the_resting_margin_and_lifts_to_the_middle(self):
+        for width, height, resting in ((1920, 1080, 92), (1080, 1920, 150), (1080, 1080, 105)):
+            with self.subTest(shape=(width, height)):
+                self.assertEqual(live_caption_margin(width, height), resting)
+                self.assertEqual(live_caption_margin(width, height, 0.0), resting)
+                self.assertEqual(live_caption_margin(width, height, 1.0), height // 2)
+                middle = live_caption_margin(width, height, 0.5)
+                self.assertGreater(middle, resting)
+                self.assertLess(middle, height // 2)
+                # Values outside the slider's range stay inside the frame.
+                self.assertEqual(live_caption_margin(width, height, -4.0), resting)
+                self.assertEqual(live_caption_margin(width, height, 9.0), height // 2)
+
+    def test_requested_caption_height_reaches_the_rendered_style(self):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            words = [CaptionWord("Every", 0.1, 0.5)]
+            resting = temporary / "resting.ass"
+            raised = temporary / "raised.ass"
+            write_live_caption_ass(words, resting, 1920, 1080, "pilot-lime")
+            write_live_caption_ass(words, raised, 1920, 1080, "pilot-lime", 0.75)
+            resting_style = self._style_line(resting)
+            raised_style = self._style_line(raised)
+        self.assertEqual(resting_style.rsplit(",", 2)[-2], "92")
+        self.assertEqual(raised_style.rsplit(",", 2)[-2], "428")
+
+    @staticmethod
+    def _style_line(path: Path) -> str:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Style: Live,"):
+                return line
+        raise AssertionError("The caption file has no Live style.")
+
+    def test_raised_captions_are_burned_higher_up_the_frame(self):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            source = temporary / "source.mp4"
+            ffmpeg = ffmpeg_executable(require_ass=True)
+            _run([
+                ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+                "-i", "color=c=black:s=640x360:d=1.0:r=24",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", source,
+            ])
+            rows = {}
+            for label, caption_height in (("resting", 0.0), ("raised", 1.0)):
+                ass = temporary / f"{label}.ass"
+                output = temporary / f"{label}.mp4"
+                frame = temporary / f"{label}.png"
+                write_live_caption_ass(
+                    [CaptionWord("CAPTION", 0.0, 0.9)], ass, 640, 360, "pilot-lime", caption_height
+                )
+                _apply_effects(
+                    source, output, 0.9, 640, 360,
+                    "none", "none", 0.0, [], 1.0, 1.0, ass,
+                )
+                _run([
+                    ffmpeg, "-y", "-v", "error", "-ss", "0.4", "-i", str(output),
+                    "-frames:v", "1", str(frame),
+                ])
+                pixels = np.asarray(Image.open(frame).convert("L"), dtype=np.int16)
+                lit = np.nonzero(pixels.max(axis=1) > 120)[0]
+                self.assertGreater(lit.size, 0, f"The {label} caption was not drawn.")
+                rows[label] = int(lit.mean())
+
+        # A full lift puts the caption around the middle of the frame instead of
+        # near the bottom edge, so its pixels move a long way up.
+        self.assertLess(rows["raised"], rows["resting"] - 60)
+        self.assertLess(abs(rows["raised"] - 180), 45)
 
     def test_title_transcript_is_captured_without_burning_live_captions(self):
         with tempfile.TemporaryDirectory() as temporary_name:

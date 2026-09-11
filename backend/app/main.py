@@ -143,6 +143,7 @@ class ExportRequest(BaseModel):
     visual_strength: float = Field(1.0, ge=0.25, le=1.5)
     live_captions: bool = False
     live_caption_scheme: Literal["pilot-lime", "ocean", "sunset", "neon-pink", "violet"] = "pilot-lime"
+    live_caption_height: float = Field(0.0, ge=0.0, le=1.0)
     viral_title: bool = True
     remove_silence: bool = False
     remove_filler_words: bool = False
@@ -403,6 +404,7 @@ def export(video_id: str, req: ExportRequest):
             visual_strength=req.visual_strength,
             live_captions=req.live_captions,
             live_caption_scheme=req.live_caption_scheme,
+            live_caption_height=req.live_caption_height,
             title_transcript=req.viral_title,
             export_metadata=export_metadata,
             edit_mode=req.edit_mode,
