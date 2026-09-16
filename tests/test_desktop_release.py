@@ -113,13 +113,16 @@ class WindowsArm64DotnetLoaderTests(unittest.TestCase):
             (dotnet / "clipfarmpilot.runtimeconfig.json").write_text("{}", encoding="utf-8")
         return dotnet
 
-    def _run_loader(self, platform_name: str, machine: str, resource_dir: Path):
+    def _run_loader(self, platform_name: str, machine: str, resource_dir: Path, clr_module=None):
         fake_pythonnet = types.ModuleType("pythonnet")
         fake_pythonnet.load = mock.Mock()
+        fake_clr = clr_module or types.ModuleType("clr")
+        if not hasattr(fake_clr, "AddReference"):
+            fake_clr.AddReference = mock.Mock()
         with mock.patch.object(desktop_launcher.sys, "platform", platform_name), mock.patch.object(
             desktop_launcher.platform, "machine", return_value=machine
         ), mock.patch.object(desktop_launcher, "_resource_dir", return_value=resource_dir), mock.patch.dict(
-            sys.modules, {"pythonnet": fake_pythonnet}
+            sys.modules, {"pythonnet": fake_pythonnet, "clr": fake_clr}
         ):
             loaded = desktop_launcher._load_windows_arm64_dotnet()
         return loaded, fake_pythonnet.load
@@ -135,6 +138,25 @@ class WindowsArm64DotnetLoaderTests(unittest.TestCase):
             runtime_config=str(dotnet / "clipfarmpilot.runtimeconfig.json"),
             dotnet_root=str(dotnet),
         )
+
+    def test_every_assembly_pywebview_imports_from_is_referenced_after_loading(self):
+        fake_clr = types.ModuleType("clr")
+        fake_clr.AddReference = mock.Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._bundle(root)
+            self._run_loader("win32", "ARM64", root, clr_module=fake_clr)
+        referenced = [call.args[0] for call in fake_clr.AddReference.call_args_list]
+        # Mapped from the .NET 10 metadata of each type pywebview's Windows backend imports.
+        for assembly in (
+            "System.Windows.Forms",
+            "Microsoft.Win32.SystemEvents",
+            "System.Drawing.Primitives",
+            "System.Drawing.Common",
+            "System.Private.Uri",
+            "System.Diagnostics.Process",
+        ):
+            self.assertIn(assembly, referenced)
 
     def test_other_platforms_and_unbundled_runs_leave_pywebview_to_choose(self):
         with tempfile.TemporaryDirectory() as temporary:

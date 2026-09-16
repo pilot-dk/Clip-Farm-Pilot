@@ -136,6 +136,19 @@ def _default_storage_dir() -> Path:
     return (Path(data_home) if data_home else Path.home() / ".local" / "share") / "clipfarmpilot"
 
 
+# pywebview's Windows backend was written for the .NET Framework, where every type
+# it imports sits in an assembly that is always loaded. In modern .NET these types
+# moved into their own assemblies, which pythonnet only searches once referenced.
+WINDOWS_DESKTOP_ASSEMBLIES = (
+    "System.Windows.Forms",
+    "Microsoft.Win32.SystemEvents",  # SystemEvents
+    "System.Drawing.Primitives",  # Color, ColorTranslator, Point, Size, SizeF
+    "System.Drawing.Common",  # Icon
+    "System.Private.Uri",  # Uri
+    "System.Diagnostics.Process",  # Process
+)
+
+
 def _load_windows_arm64_dotnet() -> bool:
     """Start the bundled .NET desktop runtime so the ARM64 window can use WinForms.
 
@@ -154,6 +167,10 @@ def _load_windows_arm64_dotnet() -> bool:
     from pythonnet import load
 
     load("coreclr", runtime_config=str(runtime_config), dotnet_root=str(dotnet_root))
+    import clr
+
+    for assembly in WINDOWS_DESKTOP_ASSEMBLIES:
+        clr.AddReference(assembly)
     return True
 
 
