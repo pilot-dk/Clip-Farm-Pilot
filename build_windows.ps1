@@ -51,7 +51,17 @@ if ($Architecture -eq "arm64") {
   if (-not (Test-Path $ArmFfmpeg) -or -not (Test-Path $ArmFfprobe)) {
     throw "The native Windows ARM64 video tools were not prepared."
   }
-  $ExtraBinaries = @("--add-binary", "$ArmFfmpeg;bin", "--add-binary", "$ArmFfprobe;bin")
+  & $BuildPython scripts/prepare_windows_arm64_dotnet.py
+  Assert-Success "Preparing the .NET desktop runtime"
+  $ArmDotnet = Join-Path $ProjectDir ".desktop-runtime\windows-arm64-dotnet"
+  if (-not (Test-Path (Join-Path $ArmDotnet "clipfarmpilot.runtimeconfig.json"))) {
+    throw "The Windows ARM64 .NET desktop runtime was not prepared."
+  }
+  $ExtraBinaries = @(
+    "--add-binary", "$ArmFfmpeg;bin",
+    "--add-binary", "$ArmFfprobe;bin",
+    "--add-data", "$ArmDotnet;dotnet"
+  )
 }
 
 $PyInstallerArgs = @(

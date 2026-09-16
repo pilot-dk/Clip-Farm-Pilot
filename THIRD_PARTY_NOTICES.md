@@ -12,6 +12,8 @@ Clip Farm Pilot's desktop build includes third-party open-source components. The
 
 The Windows ARM64 package additionally includes an FFmpeg 9.0.1 GPL build produced by [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-31-13-27) from FFmpeg commit `e47273f4d9`. FFmpeg is available under the GNU General Public License for this build. The corresponding FFmpeg source and BtbN build scripts are available from the linked release and repository.
 
+The Windows ARM64 package also includes the Microsoft .NET 10 runtime and Windows Desktop runtime (version 10.0.12) from [Microsoft](https://dotnet.microsoft.com/download/dotnet/10.0), used to draw the app window. .NET is licensed under the MIT license; its license and third-party notices are included in the package's `dotnet` folder.
+
 Clip Farm Pilot invokes FFmpeg as a separate local command-line program for video processing. No user media is uploaded by this integration.
 
 Before distributing Clip Farm Pilot commercially, review the exact FFmpeg build configuration, the redistribution rights for the supplied sound-effect audio, and all licenses included in the final app bundle.

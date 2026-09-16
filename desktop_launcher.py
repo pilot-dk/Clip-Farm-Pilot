@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
+import traceback
 import shutil
 import socket
 import subprocess
@@ -132,6 +134,27 @@ def _default_storage_dir() -> Path:
         return Path(local_data) / APP_NAME if local_data else Path.home() / "AppData" / "Local" / APP_NAME
     data_home = os.environ.get("XDG_DATA_HOME")
     return (Path(data_home) if data_home else Path.home() / ".local" / "share") / "clipfarmpilot"
+
+
+def _load_windows_arm64_dotnet() -> bool:
+    """Start the bundled .NET desktop runtime so the ARM64 window can use WinForms.
+
+    pywebview draws its Windows window with WinForms through pythonnet. On x64
+    that uses the .NET Framework built into Windows, but clr_loader has no ARM64
+    build of its .NET Framework loader, and pywebview's fallback runtime has no
+    WinForms. Loading the bundled desktop runtime first gives pywebview a runtime
+    that does. Returns True when the bundled runtime was loaded.
+    """
+    if sys.platform != "win32" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        return False
+    dotnet_root = _resource_dir() / "dotnet"
+    runtime_config = dotnet_root / "clipfarmpilot.runtimeconfig.json"
+    if not runtime_config.is_file():
+        return False
+    from pythonnet import load
+
+    load("coreclr", runtime_config=str(runtime_config), dotnet_root=str(dotnet_root))
+    return True
 
 
 def _available_port() -> int:
@@ -495,7 +518,16 @@ def main() -> int:
                 _test_save_bridge(EXPORTS, export_ids[0], Path(str(test_save_dir)))
             return 0
 
-        import webview
+        test_window = env("TEST_WINDOW") == "1"
+        try:
+            _load_windows_arm64_dotnet()
+            import webview
+        except BaseException:
+            # A window that cannot start must end the process. Left alone, the
+            # .NET runtime keeps it alive with no window and nothing to close.
+            traceback.print_exc()
+            sys.stderr.flush()
+            os._exit(TEST_WINDOW_FAILURE_CODE if test_window else 1)
 
         desktop_api = DesktopApi(EXPORTS, UPLOADS)
         window = webview.create_window(
@@ -530,11 +562,15 @@ def main() -> int:
             )
             os._exit(TEST_WINDOW_FAILURE_CODE)
 
-        test_window = env("TEST_WINDOW") == "1"
         if test_window:
             threading.Thread(target=guard_test_window, name=f"{APP_NAME} window check", daemon=True).start()
         desktop_gui = "cocoa" if sys.platform == "darwin" else "edgechromium" if sys.platform == "win32" else "gtk"
-        webview.start(close_test_window if test_window else None, gui=desktop_gui, debug=False, private_mode=False)
+        try:
+            webview.start(close_test_window if test_window else None, gui=desktop_gui, debug=False, private_mode=False)
+        except BaseException:
+            traceback.print_exc()
+            sys.stderr.flush()
+            os._exit(TEST_WINDOW_FAILURE_CODE if test_window else 1)
         return 0
     finally:
         server.should_exit = True
