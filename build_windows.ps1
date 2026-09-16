@@ -53,6 +53,8 @@ if ($Architecture -eq "arm64") {
   }
   & $BuildPython scripts/prepare_windows_arm64_dotnet.py
   Assert-Success "Preparing the .NET desktop runtime"
+  & $BuildPython scripts/patch_pywebview_for_modern_dotnet.py
+  Assert-Success "Adapting pywebview's Windows backend for modern .NET"
   $ArmDotnet = Join-Path $ProjectDir ".desktop-runtime\windows-arm64-dotnet"
   if (-not (Test-Path (Join-Path $ArmDotnet "clipfarmpilot.runtimeconfig.json"))) {
     throw "The Windows ARM64 .NET desktop runtime was not prepared."

@@ -99,6 +99,43 @@ class DesktopReleaseTests(unittest.TestCase):
         # Piping makes PowerShell wait for the windowed app and record its exit code.
         self.assertEqual(workflow.count('ClipFarmPilot.exe" | Out-Host'), 2)
 
+    def test_pywebview_patch_only_applies_to_the_version_it_was_written_for(self):
+        from scripts import patch_pywebview_for_modern_dotnet as patcher
+
+        build = (ROOT / "build_windows.ps1").read_text(encoding="utf-8")
+        arm64_section = build[build.index('if ($Architecture -eq "arm64")'):build.index("$PyInstallerArgs = @(")]
+        self.assertIn("scripts/patch_pywebview_for_modern_dotnet.py", arm64_section)
+
+        self.assertEqual(patcher.PYWEBVIEW_VERSION, "6.2.1")
+        self.assertIn("pywebview==6.2.1", (ROOT / "desktop-requirements.txt").read_text(encoding="utf-8"))
+        with mock.patch("importlib.metadata.version", return_value="6.3.0"):
+            with self.assertRaisesRegex(RuntimeError, "written for pywebview 6.2.1"):
+                patcher.main()
+
+    def test_pywebview_patch_defers_framework_reflection_and_falls_back(self):
+        from scripts import patch_pywebview_for_modern_dotnet as patcher
+
+        with tempfile.TemporaryDirectory() as temporary:
+            module = Path(temporary) / "winforms.py"
+            module.write_text("import os\n\n\n" + patcher.ORIGINAL + "        return None\n", encoding="utf-8")
+            with mock.patch("importlib.metadata.version", return_value="6.2.1"), mock.patch.object(
+                patcher, "winforms_module_path", return_value=module
+            ):
+                patcher.main()
+                patched = module.read_text(encoding="utf-8")
+                patcher.main()  # a second build run leaves it unchanged
+                self.assertEqual(module.read_text(encoding="utf-8"), patched)
+                module.write_text("class Unexpected:\n    pass\n", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "no longer matches"):
+                    patcher.main()
+
+        class_body = patched[patched.index("class OpenFolderDialog:"):patched.index("def show(")]
+        # Nothing reflects into WinForms internals while the module is imported.
+        self.assertNotIn("iFileDialogType =", class_body.split("def _load_framework_internals")[0])
+        self.assertIn("if iFileDialogType is None:", patched)
+        self.assertIn("WinForms.FolderBrowserDialog()", patched)
+        compile(patched, "winforms.py", "exec")
+
     def test_arm64_whisper_is_compiled_with_clang_cl(self):
         caption_runtime = (ROOT / "scripts" / "prepare_caption_runtime.py").read_text(encoding="utf-8")
         self.assertIn('"-A", "ARM64", "-T", "ClangCL"', caption_runtime)
