@@ -57,7 +57,8 @@ class DesktopReleaseTests(unittest.TestCase):
         build = (ROOT / "build_windows.ps1").read_text(encoding="utf-8")
         launcher = (ROOT / "desktop_launcher.py").read_text(encoding="utf-8")
 
-        self.assertIn("autobuild-2026-09-03-13-17", preparer)
+        # A month-end build: BtbN prunes daily autobuilds after about two weeks.
+        self.assertRegex(preparer, r"autobuild-\d{4}-\d{2}-(28|29|30|31)-")
         self.assertRegex(preparer, r'ARCHIVE_SHA256 = "[0-9a-f]{64}"')
         self.assertIn('"$ArmFfmpeg;bin"', build)
         self.assertIn('"$ArmFfprobe;bin"', build)

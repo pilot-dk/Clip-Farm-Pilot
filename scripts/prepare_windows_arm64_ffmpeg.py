@@ -9,11 +9,13 @@ import zipfile
 from pathlib import Path
 
 
+# BtbN deletes its daily autobuilds after about two weeks but keeps the last
+# build of each month. Pin a month-end release build so the download stays put.
 ARCHIVE_URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
-    "autobuild-2026-09-03-13-17/ffmpeg-N-126390-g9fc8c785e2-winarm64-gpl.zip"
+    "autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-winarm64-gpl-9.0.zip"
 )
-ARCHIVE_SHA256 = "b450c50c4522f4a50304b3b09ea4424c1a9c2a8b1ba724c9570db4e1cf56d571"
+ARCHIVE_SHA256 = "7e6142ae4d04b35123eba48d91bb2c559ef43b49a6b3857f7324bbcf7266d18b"
 
 
 def sha256(path: Path) -> str:

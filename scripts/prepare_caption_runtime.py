@@ -115,9 +115,13 @@ def prepare_source_runtime(target_platform: str, architecture: str, cache: Path,
     source = source_tree(cache)
     build = cache / f"whisper.cpp-{WHISPER_RELEASE}-build-{target_platform}-{architecture}"
     if target_platform == "windows":
+        # whisper.cpp refuses to compile its ARM kernels with MSVC. Visual Studio's
+        # ClangCL toolset builds them with clang-cl, and GGML_NATIVE=OFF keeps the
+        # generic ARMv8 baseline so the tool runs on every Windows on Arm laptop.
+        build = build.with_name(f"{build.name}-clangcl")
         executable = build / "bin" / "Release" / "whisper-cli.exe"
         configure = [
-            "cmake", "-S", str(source), "-B", str(build), "-A", "ARM64",
+            "cmake", "-S", str(source), "-B", str(build), "-A", "ARM64", "-T", "ClangCL",
             "-DCMAKE_BUILD_TYPE=Release", "-DGGML_NATIVE=OFF", "-DBUILD_SHARED_LIBS=ON",
             "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_SERVER=OFF", "-DWHISPER_SDL2=OFF",
         ]

@@ -10,7 +10,7 @@ Clip Farm Pilot's desktop build includes third-party open-source components. The
 - whisper.cpp — Georgi Gerganov and contributors, MIT license. The bundled `base.en` speech-recognition model is derived from OpenAI Whisper and is used for offline word-level live captions.
 - "Vine Boom" and "Check" audio — media assets supplied by the project owner for inclusion and redistribution; no separate license files were provided.
 
-The Windows ARM64 package additionally includes an FFmpeg GPL build produced by [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-03-13-17) from FFmpeg commit `9fc8c785e2`. FFmpeg is available under the GNU General Public License for this build. The corresponding FFmpeg source and BtbN build scripts are available from the linked release and repository.
+The Windows ARM64 package additionally includes an FFmpeg 9.0.1 GPL build produced by [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-31-13-27) from FFmpeg commit `e47273f4d9`. FFmpeg is available under the GNU General Public License for this build. The corresponding FFmpeg source and BtbN build scripts are available from the linked release and repository.
 
 Clip Farm Pilot invokes FFmpeg as a separate local command-line program for video processing. No user media is uploaded by this integration.
 

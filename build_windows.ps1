@@ -5,6 +5,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# PowerShell does not stop when a native program fails, so a broken caption
+# engine or video tool used to be packaged silently. Check every exit code.
+function Assert-Success([string]$Step) {
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Step failed with exit code $LASTEXITCODE."
+  }
+}
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectDir
 
@@ -25,14 +32,19 @@ if ($NodeArchitecture -ne $Architecture) {
 }
 
 & $PythonBin -m venv $BuildEnv
+Assert-Success "Creating the build environment"
 $BuildPython = Join-Path $BuildEnv "Scripts\python.exe"
 & $BuildPython -m pip install -r backend/requirements.txt -r desktop-requirements.txt
+Assert-Success "Installing Python dependencies"
 & $BuildPython build_assets/generate_icon.py
+Assert-Success "Generating the app icon"
 & $BuildPython scripts/prepare_caption_runtime.py --platform windows --architecture $Architecture
+Assert-Success "Preparing the offline live-caption engine"
 
 $ExtraBinaries = @()
 if ($Architecture -eq "arm64") {
   & $BuildPython scripts/prepare_windows_arm64_ffmpeg.py
+  Assert-Success "Preparing the Windows ARM64 video tools"
   $ArmRuntime = Join-Path $ProjectDir ".desktop-runtime\windows-arm64"
   $ArmFfmpeg = Join-Path $ArmRuntime "ffmpeg.exe"
   $ArmFfprobe = Join-Path $ArmRuntime "ffprobe.exe"
@@ -62,6 +74,7 @@ $PyInstallerArgs = @(
   "--hidden-import", "uvicorn.lifespan.on"
 ) + $ExtraBinaries + @("desktop_launcher.py")
 & $BuildPython -m PyInstaller @PyInstallerArgs
+Assert-Success "Packaging the app"
 
 $OutputDir = Join-Path $ProjectDir "outputs"
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
