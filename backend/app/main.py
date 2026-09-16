@@ -31,6 +31,7 @@ from .video import (
     analyze_viral_candidates,
     center_caption_overlay,
     export_clip,
+    format_frame_rate,
     generate_viral_title,
     probe_video,
 )
@@ -123,7 +124,7 @@ class ExportRequest(BaseModel):
     caption_text: str = Field("", max_length=160)
     caption_font_scale: float = Field(1.0, ge=0.50, le=1.75)
     caption_position: Literal["top", "center", "bottom"] = "center"
-    caption_overlay_data_url: str = Field("", max_length=3_000_000)
+    caption_overlay_data_url: str = Field("", max_length=11_000_000)
     video_filter: Literal[
         "none",
         "black-white",
@@ -145,6 +146,7 @@ class ExportRequest(BaseModel):
     live_caption_scheme: Literal["pilot-lime", "ocean", "sunset", "neon-pink", "violet"] = "pilot-lime"
     live_caption_height: float = Field(0.0, ge=0.0, le=1.0)
     live_caption_scale: float = Field(1.0, ge=0.50, le=1.75)
+    resolution: Literal["720p", "1080p", "2160p"] = "1080p"
     viral_title: bool = True
     remove_silence: bool = False
     remove_filler_words: bool = False
@@ -197,6 +199,9 @@ async def protect_api(request: Request, call_next):
     return response
 
 
+SQUARE_CAPTION_SIZES = {(720, 720), (1080, 1080), (2160, 2160)}
+
+
 def _caption_overlay_from_data_url(
     value: str,
     caption_position: Literal["top", "center", "bottom"] = "center",
@@ -210,12 +215,12 @@ def _caption_overlay_from_data_url(
         raw = base64.b64decode(value[len(prefix):], validate=True)
     except (binascii.Error, ValueError) as exc:
         raise ValueError("The square-caption image could not be read.") from exc
-    if not raw or len(raw) > 2_000_000:
+    if not raw or len(raw) > 8_000_000:
         raise ValueError("The square-caption image is too large.")
     try:
         with Image.open(io.BytesIO(raw)) as image:
-            if image.format != "PNG" or image.size != (1080, 1080):
-                raise ValueError("The square-caption image must be a 1080 × 1080 PNG.")
+            if image.format != "PNG" or image.size not in SQUARE_CAPTION_SIZES:
+                raise ValueError("The square-caption image must be a 720, 1080, or 2160 pixel square PNG.")
             image.load()
             centered = center_caption_overlay(image, caption_position)
     except (UnidentifiedImageError, OSError) as exc:
@@ -296,6 +301,7 @@ def upload(video: UploadFile = File(...)):
         "duration": round(info.duration, 2),
         "width": info.width,
         "height": info.height,
+        "frame_rate": format_frame_rate(info.frame_rate),
     }
 
 
@@ -407,6 +413,7 @@ def export(video_id: str, req: ExportRequest):
             live_caption_scheme=req.live_caption_scheme,
             live_caption_height=req.live_caption_height,
             live_caption_scale=req.live_caption_scale,
+            resolution=req.resolution,
             title_transcript=req.viral_title,
             export_metadata=export_metadata,
             edit_mode=req.edit_mode,
@@ -469,6 +476,10 @@ def export(video_id: str, req: ExportRequest):
         "live_caption_scheme": req.live_caption_scheme if req.live_captions else "none",
         "live_caption_word_count": int(export_metadata.get("live_caption_word_count", 0)),
         "edit_mode": req.edit_mode,
+        "resolution": req.resolution,
+        "width": export_metadata.get("width"),
+        "height": export_metadata.get("height"),
+        "frame_rate": export_metadata.get("frame_rate", ""),
         "full_length_summary": export_metadata.get("full_length_summary", {}),
     }
 

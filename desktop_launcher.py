@@ -385,6 +385,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         end=clip_end,
         aspect="9:16",
         layout="gaming",
+        resolution="720p",
         face_corner="bottom-right",
         video_filter="vivid",
         sound_effect="check-sound",
@@ -399,6 +400,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         end=clip_end,
         aspect="1:1",
         edit_mode="full-length",
+        resolution="2160p",
         caption_text="FULL SQUARE ❤️",
         caption_position="bottom",
         video_filter="warm",
@@ -426,10 +428,16 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     enlarged_font = portrait_metadata.get("live_caption_font_size")
     if enlarged_font != live_caption_font_size(1080, 1920, 1.40) or enlarged_font <= standard_font:
         raise RuntimeError("The bundled live-caption size slider did not enlarge the captions.")
+    source_rate = info.frame_rate
+    gaming_info = probe_video(exports_dir / f"{gaming_id}.mp4")
+    if (gaming_info.width, gaming_info.height) != (720, 1280) or gaming_info.frame_rate != source_rate:
+        raise RuntimeError("The bundled 720p gaming export did not keep its size and the source frame rate.")
     full_square_info = probe_video(exports_dir / f"{full_square_id}.mp4")
+    if full_square_info.frame_rate != source_rate:
+        raise RuntimeError("The bundled 4K full-length export did not keep the source frame rate.")
     full_square_summary = full_square_metadata.get("full_length_summary", {})
     if (
-        (full_square_info.width, full_square_info.height) != (1080, 1080)
+        (full_square_info.width, full_square_info.height) != (2160, 2160)
         or full_square_summary.get("aspect") != "1:1"
         or not full_square_summary.get("square_caption")
         or not full_square_summary.get("subscribe_animation")

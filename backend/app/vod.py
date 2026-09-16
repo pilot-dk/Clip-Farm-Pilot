@@ -14,7 +14,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 from .brand import APP_NAME, env
-from .video import ffmpeg_executable, probe_video
+from .video import ffmpeg_executable, format_frame_rate, probe_video
 
 
 SUPPORTED_DOMAINS = ("youtube.com", "youtu.be", "twitch.tv")
@@ -194,6 +194,8 @@ class CachedVideoLibrary:
         item = next((value for value in self.list_items() if value["video_id"] == video_id), None)
         if item is None:
             raise KeyError(video_id)
+        # Probed fresh each time rather than stored, so older catalogs need no migration.
+        item["frame_rate"] = format_frame_rate(info.frame_rate)
         return item
 
     def title_for(self, video_id: str) -> str:
@@ -354,6 +356,7 @@ class VodImportManager:
                 duration=round(info.duration, 2),
                 width=info.width,
                 height=info.height,
+                frame_rate=format_frame_rate(info.frame_rate),
                 source_url=f"/api/videos/{video_id}/source",
             )
         except (DownloadError, Exception) as exc:

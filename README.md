@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.16.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.17.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.16.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.17.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64 or ARM64
 
-1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.16.0-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.16.0-x64.zip` for an Intel/AMD PC.
+1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.17.0-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.17.0-x64.zip` for an Intel/AMD PC.
 2. Unzip the download.
 3. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 4. If Windows SmartScreen appears, choose **More info → Run anyway**.
@@ -91,7 +91,7 @@ The Windows build is currently unsigned. Both downloads are native packages and 
 
 ### Linux — x64 or ARM64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.16.0-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.16.0-arm64.tar.gz` on an ARM64 computer.
+1. Extract `Clip-Farm-Pilot-Linux-v1.17.0-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.17.0-arm64.tar.gz` on an ARM64 computer.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux builds target Ubuntu 24.04 and compatible distributions on their matching architecture. They use the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -122,6 +122,7 @@ The editor now includes:
 - A responsive video preview that changes shape with the selected export ratio.
 - Clip start/end controls, playhead scrubbing, and clip-range playback.
 - **16:9**, **9:16**, and **1:1** visual presets.
+- **720p**, **1080p**, and **4K** export resolution for clips and full-length edits, always at the source video's own frame rate.
 - A **Gaming overlay** switch with a live vertical layout preview.
 - Face-cam source position, crop width/height, and horizontal/vertical inset controls with an accurate zoom preview.
 - Optional centered text for 1:1 clips, styled as bold white type with a black outline (and native color emoji).
@@ -151,7 +152,7 @@ The editor now includes:
 
 ## Full-Length YouTube Editor
 
-Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** Full HD (1920×1080) or a **1:1 square** video (1080×1080). Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
+Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** or a **1:1 square** video at 720p, 1080p, or 4K. Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
 
 The full-length editor retains the existing filters, live-caption colours, smart sound effects, visual effects, viral-title recommendation, native Save As flow, and direct-publishing controls. Smart sound placement runs against the cleaned timeline and can distribute effect-specific moments across a long edit without crowding them.
 
@@ -312,7 +313,7 @@ The browser version supports VOD links too. Its Python dependencies now include 
 
 1. Choose or drop a livestream video into the upload area.
 2. Enter a clip start/end manually, or press **Auto-Find Clips** and choose a candidate.
-3. Choose **16:9**, **9:16**, or **1:1**.
+3. Choose **16:9**, **9:16**, or **1:1**, then a **Resolution** of 720p, 1080p, or 4K.
 4. Optionally enable **Gaming overlay** and identify the source face-cam corner, crop size, and inward offset.
 5. For **1:1**, optionally enter center text and adjust **Caption size** from 50% to 175%.
 6. Optionally select a sound and visual effect, place the preview on the payoff, and press **Use playhead**.
@@ -347,16 +348,21 @@ The livestream is assumed to already contain a webcam in one corner. Clip Farm P
 
 The browser UI lets you choose the webcam corner, adjust its crop width and height, and move the crop inward horizontally or vertically. Smaller face-area values zoom in closer. The live preview now uses the same crop math as the exported video. Gaming mode automatically selects the required 9:16 format.
 
-## Verified output sizes
+## Resolution and frame rate
 
-The included backend and updated GUI were tested locally with an uploaded video, automatic moment analysis, and finished exports:
+Every export, in both the **Viral clips** and **Full YouTube video** workspaces, can be rendered at three resolutions. The resolution sets the short side of the frame, so each format keeps its shape:
 
-- 16:9 standard — `1920×1080`
-- 9:16 standard — `1080×1920`
-- 1:1 standard — `1080×1080`
-- 9:16 gaming overlay — `1080×1920`
-- Full-length 16:9 — `1920×1080`
-- Full-length 1:1 — `1080×1080`
+| Format | 720p | 1080p (default) | 4K |
+| --- | --- | --- | --- |
+| 16:9 | `1280×720` | `1920×1080` | `3840×2160` |
+| 9:16 and gaming overlay | `720×1280` | `1080×1920` | `2160×3840` |
+| 1:1 | `720×720` | `1080×1080` | `2160×2160` |
+
+The frame rate is never changed. Clip Farm Pilot reads the source's rate — including NTSC rates such as 29.97 fps (`30000/1001`) and 59.94 fps — and renders the export at exactly that rate with regular frame timing. The source's rate is shown next to its size in the preview monitor. Variable-rate recordings from phones and capture tools are exported at their average rate.
+
+Captions, the square caption, effects, the gaming layout, and the subscribe animation are laid out on the 1080p frame and scaled with the resolution, so they sit in the same place at the same relative size in every export. Square captions are drawn at the export's full size, so 4K text is sharp rather than upscaled. Choosing a resolution above the source's own (4K from a 1080p recording, for example) upscales the video: the file is larger, but it gains no extra detail, and the editor points this out before you export.
+
+Exports are H.264 in `yuv420p` for broad playback on phones, browsers, and social platforms. 4K renders take noticeably longer than 1080p, especially for full-length edits.
 
 ## Build the Apple Silicon app from source
 
@@ -374,8 +380,8 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On native Windows x64 or ARM64 with matching Python 3.12 and Node.js installations:
 
 ```powershell
-./build_windows.ps1 -Version 1.16.0 -Architecture x64
-./build_windows.ps1 -Version 1.16.0 -Architecture arm64
+./build_windows.ps1 -Version 1.17.0 -Architecture x64
+./build_windows.ps1 -Version 1.17.0 -Architecture arm64
 ```
 
 On Ubuntu 24.04 x64 or ARM64 with matching Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installations:

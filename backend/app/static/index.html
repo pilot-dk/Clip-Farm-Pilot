@@ -307,6 +307,8 @@
       white-space: nowrap;
       text-overflow: ellipsis;
     }
+    /* The size, frame rate, and length stay on one line; a long filename truncates instead. */
+    .video-meta span { white-space: nowrap; flex-shrink: 0; }
 
     .stage-wrap {
       min-height: 535px;
@@ -759,6 +761,28 @@
     .ratio-card:hover { border-color: var(--line-strong); color: #d7dae1; }
     .ratio-option input:checked + .ratio-card { border-color: #66723f; color: var(--accent); background: var(--accent-soft); }
     .ratio-option input:disabled + .ratio-card { cursor: not-allowed; opacity: .42; }
+
+    .resolution-control { margin-top: 14px; }
+    .resolution-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 7px; }
+    .resolution-option { position: relative; }
+    .resolution-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .resolution-option span {
+      display: grid;
+      place-items: center;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--muted);
+      background: rgba(6, 16, 24, .62);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease, color .15s ease;
+    }
+    .resolution-option span:hover { border-color: var(--line-strong); color: #d7dae1; }
+    .resolution-option input:checked + span { border-color: rgba(91,214,255,.48); color: var(--accent); background: var(--accent-soft); }
+    .resolution-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .resolution-control .field-hint.upscale { color: #f4c56a; }
     .ratio-shape { border: 1.5px solid currentColor; border-radius: 3px; }
     .ratio-shape.landscape { width: 30px; height: 18px; }
     .ratio-shape.portrait { width: 17px; height: 28px; }
@@ -1685,7 +1709,16 @@
               </div>
               <div class="full-length-format" id="fullLengthFormat" hidden>
                 <span class="full-format-shape" aria-hidden="true"></span>
-                <span><strong id="fullLengthFormatTitle">16:9 full video</strong><small id="fullLengthFormatDetail">Full HD 1920×1080 · complete timeline</small></span>
+                <span><strong id="fullLengthFormatTitle">16:9 full video</strong><small id="fullLengthFormatDetail">1920×1080 · complete timeline</small></span>
+              </div>
+              <div class="resolution-control" id="resolutionControl">
+                <div class="range-head"><span>Resolution</span><output id="resolutionValue">1920×1080</output></div>
+                <div class="resolution-grid" role="radiogroup" aria-label="Export resolution">
+                  <label class="resolution-option"><input type="radio" name="resolution" value="720p" /><span>720p</span></label>
+                  <label class="resolution-option"><input type="radio" name="resolution" value="1080p" checked /><span>1080p</span></label>
+                  <label class="resolution-option"><input type="radio" name="resolution" value="2160p" /><span>4K</span></label>
+                </div>
+                <small class="field-hint" id="resolutionHint">Frame rate always matches the source video.</small>
               </div>
               <div class="square-caption-controls" id="squareCaptionControls">
                 <div class="caption-head"><label for="captionText">Caption text (optional)</label><span id="captionCount">0 / 160</span></div>
@@ -2001,6 +2034,8 @@
       objectUrl: null,
       duration: 0,
       videoWidth: 0,
+      resolution: "1080p",
+      sourceFrameRate: "",
       videoHeight: 0,
       editMode: "clip",
       ratio: "16:9",
@@ -2447,10 +2482,14 @@
     function renderSquareCaptionOverlay() {
       const text = $("captionText").value.trim();
       if (state.ratio !== "1:1" || state.layout === "gaming" || !text) return "";
+      // Lay the caption out on the 1080 reference square, but draw it at the
+      // export's real size so 4K captions are sharp instead of upscaled.
+      const [squareSize] = exportSize("1:1");
       const canvas = document.createElement("canvas");
-      canvas.width = 1080;
-      canvas.height = 1080;
+      canvas.width = squareSize;
+      canvas.height = squareSize;
       const context = canvas.getContext("2d");
+      context.scale(squareSize / 1080, squareSize / 1080);
       const scale = Math.max(.5, Math.min(1.75, Number($("captionSize").value) / 100));
       let fontSize = Math.round(86 * scale);
       let lines = [];
@@ -2475,6 +2514,8 @@
         context.fillText(line, 540, y, 960);
       });
       const captionPosition = document.querySelector('input[name="captionPosition"]:checked')?.value || "center";
+      // Centring works in real pixels, so drop the layout scale first.
+      context.setTransform(1, 0, 0, 1, 0, 0);
       return opticallyCenterCanvas(canvas, captionPosition).toDataURL("image/png");
     }
 
@@ -2561,6 +2602,51 @@
       ghost.style.webkitTextStrokeWidth = `${Math.max(1, ghostFontSize * .07)}px`;
     }
 
+    // Matches output_size() in the backend: layouts are designed at 1080p and
+    // each resolution changes only the short side of the frame.
+    const RESOLUTION_SHORT_SIDES = { "720p": 720, "1080p": 1080, "2160p": 2160 };
+    const RESOLUTION_LABELS = { "720p": "720p", "1080p": "1080p", "2160p": "4K" };
+    const REFERENCE_FRAME_SIZES = { "16:9": [1920, 1080], "9:16": [1080, 1920], "1:1": [1080, 1080] };
+
+    function exportSize(ratio = state.ratio, resolution = state.resolution) {
+      const [width, height] = REFERENCE_FRAME_SIZES[ratio] || REFERENCE_FRAME_SIZES["16:9"];
+      const shortSide = RESOLUTION_SHORT_SIDES[resolution] || 1080;
+      return [width * shortSide / 1080, height * shortSide / 1080];
+    }
+
+    function formatFrameRate(value) {
+      const [numerator, denominator = "1"] = String(value || "").split("/");
+      const rate = Number(numerator) / Number(denominator);
+      if (!Number.isFinite(rate) || rate <= 0) return "";
+      return Number.isInteger(rate) ? String(rate) : rate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    }
+
+    function updateResolution() {
+      const [width, height] = exportSize();
+      const targetShortSide = RESOLUTION_SHORT_SIDES[state.resolution] || 1080;
+      const sourceShortSide = Math.min(state.videoWidth || 0, state.videoHeight || 0);
+      const fps = formatFrameRate(state.sourceFrameRate);
+      const hint = $("resolutionHint");
+      $("resolutionValue").value = `${width}×${height}`;
+      const rateText = fps ? `Frame rate stays at the source's ${fps} fps.` : "Frame rate always matches the source video.";
+      const upscaled = state.videoId && sourceShortSide && targetShortSide > sourceShortSide;
+      hint.textContent = upscaled
+        ? `${rateText} This ${state.videoWidth}×${state.videoHeight} source will be upscaled to ${RESOLUTION_LABELS[state.resolution]}: a larger file, but no extra detail.`
+        : rateText;
+      hint.classList.toggle("upscale", Boolean(upscaled));
+      if (state.editMode === "full-length") {
+        $("fullLengthFormatDetail").textContent = `${width}×${height} · complete timeline`;
+      }
+    }
+
+    function exportSpecText(data) {
+      const width = Number(data.width);
+      const height = Number(data.height);
+      const fps = formatFrameRate(data.frame_rate);
+      if (!width || !height) return "";
+      return fps ? `${width}×${height} at ${fps} fps` : `${width}×${height}`;
+    }
+
     function updateRatio(ratio) {
       state.ratio = ratio;
       $("stage").dataset.aspect = ratio;
@@ -2570,10 +2656,8 @@
         const isSquare = ratio === "1:1";
         $("fullLengthFormat").dataset.aspect = ratio;
         $("fullLengthFormatTitle").textContent = isSquare ? "1:1 square full video" : "16:9 full video";
-        $("fullLengthFormatDetail").textContent = isSquare
-          ? "1080×1080 · complete timeline"
-          : "Full HD 1920×1080 · complete timeline";
       }
+      updateResolution();
       requestAnimationFrame(() => {
         updateFacePreview();
         updateSquareCaption();
@@ -2706,6 +2790,7 @@
       state.duration = Number(data.duration) || activeVideo().duration || 0;
       state.videoWidth = Number(data.width) || activeVideo().videoWidth || 1920;
       state.videoHeight = Number(data.height) || activeVideo().videoHeight || 1080;
+      state.sourceFrameRate = data.frame_rate || "";
       $("playhead").max = state.duration;
       $("totalTime").textContent = formatTime(state.duration);
       $("startTime").max = state.duration;
@@ -2714,7 +2799,9 @@
       $("endTime").value = (state.editMode === "full-length" ? state.duration : Math.min(30, state.duration)).toFixed(1);
       $("effectTime").max = (state.editMode === "full-length" ? state.duration : Math.min(30, state.duration)).toFixed(1);
       $("effectTime").value = Math.min(1, state.duration).toFixed(1);
-      $("videoMeta").innerHTML = `<strong>${escapeHtml(displayName)}</strong><span>${data.width}×${data.height} · ${formatTime(state.duration)}</span>`;
+      const sourceFps = formatFrameRate(state.sourceFrameRate);
+      $("videoMeta").innerHTML = `<strong>${escapeHtml(displayName)}</strong><span>${data.width}×${data.height}${sourceFps ? ` · ${sourceFps} fps` : ""} · ${formatTime(state.duration)}</span>`;
+      updateResolution();
       $("uploadBar").style.width = "100%";
       $("uploadPercent").textContent = "100%";
       enableEditor(true);
@@ -3141,6 +3228,7 @@
             live_caption_scheme: $("liveCaptionScheme").value,
             live_caption_height: Math.max(0, Math.min(100, Number($("liveCaptionHeight").value) || 0)) / 100,
             live_caption_scale: Math.max(50, Math.min(175, Number($("liveCaptionSize").value) || 100)) / 100,
+            resolution: state.resolution,
             viral_title: $("viralTitleToggle").checked,
             remove_silence: isFullLength && $("removeSilenceToggle").checked,
             remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
@@ -3179,6 +3267,7 @@
             $("viralTitleResult").classList.add("visible");
           }
           const summary = data.full_length_summary || {};
+          const spec = exportSpecText(data);
           const removed = Number(summary.removed_seconds) || 0;
           const fillerCount = Number(summary.filler_words_removed) || 0;
           const silenceCount = Number(summary.silence_sections_removed) || 0;
@@ -3191,19 +3280,22 @@
           setStatus(
             "success",
             "Full video ready",
-            improvements.length ? improvements.join(" · ") : `The complete ${state.ratio} MP4 is ready to save.`,
+            [spec, ...improvements].filter(Boolean).join(" · ") || `The complete ${state.ratio} MP4 is ready to save.`,
           );
         } else if ($("viralTitleToggle").checked && state.generatedTitle) {
+          const spec = exportSpecText(data);
+          const withSpec = (detail) => (spec ? `${spec} · ${detail}` : detail);
           $("viralTitleText").textContent = $("downloadLink").download;
           $("viralTitleResult").classList.add("visible");
           if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) {
-            setStatus("success", "Live-captioned clip ready", `${data.live_caption_word_count} words timed and highlighted · “${state.generatedTitle}”`);
+            setStatus("success", "Live-captioned clip ready", withSpec(`${data.live_caption_word_count} words timed and highlighted · “${state.generatedTitle}”`));
           } else if ($("liveCaptionsToggle").checked) {
-            setStatus("success", "Clip ready — no clear speech found", "The MP4 was exported normally, but the speech engine did not find words to caption.");
+            setStatus("success", "Clip ready — no clear speech found", withSpec("The MP4 was exported normally, but the speech engine did not find words to caption."));
           } else {
-            setStatus("success", "Original viral title ready", `“${state.generatedTitle}” · A different recommendation is created for every export.`);
+            setStatus("success", "Original viral title ready", withSpec(`“${state.generatedTitle}” · A different recommendation is created for every export.`));
           }
         } else {
+          const spec = exportSpecText(data);
           setStatus(
             "success",
             $("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0
@@ -3215,7 +3307,7 @@
               ? `${data.live_caption_word_count} words were transcribed and highlighted in the finished MP4.`
               : $("liveCaptionsToggle").checked
                 ? "The MP4 was exported normally without captions. Try a section with clearer speech."
-              : "Your MP4 is rendered and ready to save.",
+              : spec ? `Your ${spec} MP4 is rendered and ready to save.` : "Your MP4 is rendered and ready to save.",
           );
         }
         $("downloadLink").classList.add("visible");
@@ -3255,7 +3347,8 @@
     function resetProject() {
       allVideos().forEach((video) => { video.pause(); video.removeAttribute("src"); video.load(); });
       if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
-      Object.assign(state, { videoId: null, file: null, objectUrl: null, duration: 0, videoWidth: 0, videoHeight: 0, clipPlayback: false, selectedCandidate: null, importId: null, exportId: null, generatedTitle: null });
+      Object.assign(state, { videoId: null, file: null, objectUrl: null, duration: 0, videoWidth: 0, videoHeight: 0, sourceFrameRate: "", resolution: "1080p", clipPlayback: false, selectedCandidate: null, importId: null, exportId: null, generatedTitle: null });
+      document.querySelector('input[name="resolution"][value="1080p"]').checked = true;
       $("fileInput").value = "";
       $("vodUrl").value = "";
       $("captionText").value = "";
@@ -3421,6 +3514,10 @@
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
     document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
     ["liveCaptionsToggle", "liveCaptionScheme", "liveCaptionHeight", "liveCaptionSize"].forEach((id) => $(id).addEventListener("input", updateLiveCaptionControls));
+    document.querySelectorAll('input[name="resolution"]').forEach((input) => input.addEventListener("change", () => {
+      state.resolution = input.value;
+      updateResolution();
+    }));
     ["videoFilter", "vineBoomToggle", "checkSoundToggle", "visualEffect", "autoSoundEffectToggle", "soundVolume", "visualStrength"].forEach((id) => $(id).addEventListener("input", updateEffectControls));
     $("usePlayheadForEffect").addEventListener("click", () => {
       const range = validateRange();

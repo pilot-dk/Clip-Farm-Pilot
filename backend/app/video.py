@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unicodedata
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +33,7 @@ from .captions import (
 )
 
 Aspect = Literal["16:9", "9:16", "1:1"]
+Resolution = Literal["720p", "1080p", "2160p"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 CaptionPosition = Literal["top", "center", "bottom"]
 SoundEffect = Literal["none", "vine-boom", "check-sound"]
@@ -56,6 +58,66 @@ ASPECT_SIZES: dict[Aspect, tuple[int, int]] = {
     "1:1": (1080, 1080),
 }
 
+# Every layout is designed on the 1080p frame above. Other resolutions keep the
+# same proportions and change only the short side of the frame.
+DEFAULT_RESOLUTION: Resolution = "1080p"
+REFERENCE_SHORT_SIDE = 1080
+RESOLUTION_SHORT_SIDES: dict[Resolution, int] = {"720p": 720, "1080p": 1080, "2160p": 2160}
+
+# Rates that cameras, capture cards, and streaming services record at, including
+# their NTSC variants, so a rate read back as 29.97 becomes exactly 30000/1001.
+_WHOLE_FRAME_RATES = (24, 25, 30, 48, 50, 60, 90, 100, 120, 144, 240)
+_NTSC_FRAME_RATE_BASES = (24, 30, 48, 60, 120, 240)
+_FRAME_RATE_TOLERANCE = Fraction(1, 200)
+
+
+def output_size(aspect: Aspect, resolution: Resolution = DEFAULT_RESOLUTION) -> tuple[int, int]:
+    """Pixel size of an export in the chosen shape and resolution."""
+    if aspect not in ASPECT_SIZES:
+        raise ValueError("Unknown aspect ratio.")
+    if resolution not in RESOLUTION_SHORT_SIDES:
+        raise ValueError("Unknown export resolution.")
+    reference_width, reference_height = ASPECT_SIZES[aspect]
+    short_side = RESOLUTION_SHORT_SIDES[resolution]
+    return (
+        reference_width * short_side // REFERENCE_SHORT_SIDE,
+        reference_height * short_side // REFERENCE_SHORT_SIDE,
+    )
+
+
+def normalize_frame_rate(value: object) -> Fraction | None:
+    """Turn a probed frame rate into an exact rate FFmpeg can reproduce."""
+    if value is None:
+        return None
+    try:
+        rate = value if isinstance(value, Fraction) else Fraction(str(value).strip())
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if rate <= 0 or rate > 480:
+        return None
+    for whole in _WHOLE_FRAME_RATES:
+        if abs(rate - whole) <= _FRAME_RATE_TOLERANCE:
+            return Fraction(whole)
+    for base in _NTSC_FRAME_RATE_BASES:
+        ntsc = Fraction(base * 1000, 1001)
+        if abs(rate - ntsc) <= _FRAME_RATE_TOLERANCE:
+            return ntsc
+    return rate.limit_denominator(1001)
+
+
+def format_frame_rate(rate: Fraction | None) -> str:
+    """FFmpeg's rational spelling of a frame rate, such as 30000/1001."""
+    if rate is None:
+        return ""
+    return str(rate.numerator) if rate.denominator == 1 else f"{rate.numerator}/{rate.denominator}"
+
+
+def _frame_rate_args(rate: Fraction | None) -> list[str]:
+    """Output options that keep the finished video at the source frame rate."""
+    if rate is None:
+        return []
+    return ["-fps_mode", "cfr", "-r", format_frame_rate(rate)]
+
 VIDEO_FILTER_CHAINS: dict[VideoFilter, str] = {
     "none": "",
     "black-white": "hue=s=0,eq=contrast=1.12:brightness=0.01",
@@ -76,6 +138,7 @@ class VideoInfo:
     width: int
     height: int
     duration: float
+    frame_rate: Fraction | None = None
 
 
 @dataclass
@@ -148,14 +211,19 @@ def probe_video(path: Path) -> VideoInfo:
         result = _run([
             ffprobe, "-v", "error",
             "-select_streams", "v:0",
-            "-show_entries", "stream=width,height:format=duration",
+            "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate:format=duration",
             "-of", "json",
             str(path),
         ])
         data = json.loads(result.stdout)
         stream = data["streams"][0]
         duration = float(data.get("format", {}).get("duration", 0) or 0)
-        return VideoInfo(width=int(stream["width"]), height=int(stream["height"]), duration=duration)
+        return VideoInfo(
+            width=int(stream["width"]),
+            height=int(stream["height"]),
+            duration=duration,
+            frame_rate=_probed_frame_rate(stream.get("r_frame_rate"), stream.get("avg_frame_rate")),
+        )
 
     # The desktop bundle carries imageio-ffmpeg's standalone FFmpeg binary, so
     # probing still works even when Homebrew and ffprobe are not installed.
@@ -168,7 +236,25 @@ def probe_video(path: Path) -> VideoInfo:
         reader.close()
     width, height = metadata["size"]
     duration = float(metadata.get("duration") or 0)
-    return VideoInfo(width=int(width), height=int(height), duration=duration)
+    return VideoInfo(
+        width=int(width),
+        height=int(height),
+        duration=duration,
+        frame_rate=normalize_frame_rate(metadata.get("fps")),
+    )
+
+
+def _probed_frame_rate(nominal: object, average: object) -> Fraction | None:
+    """Pick the rate a constant- or variable-rate recording actually plays at."""
+    nominal_rate = normalize_frame_rate(nominal)
+    average_rate = normalize_frame_rate(average)
+    if nominal_rate and average_rate:
+        # Variable-rate phone and capture files report a high timebase as the
+        # nominal rate; their average is the rate a viewer actually sees.
+        if abs(nominal_rate - average_rate) / nominal_rate <= Fraction(1, 100):
+            return nominal_rate
+        return average_rate
+    return nominal_rate or average_rate
 
 
 def _read_exactly(stream, byte_count: int) -> bytes:
@@ -1826,6 +1912,7 @@ def _apply_effects(
     visual_strength: float,
     live_caption_ass: Path | None = None,
     sound_effect_placements: dict[SelectedSoundEffect, list[float]] | None = None,
+    frame_rate: Fraction | None = None,
 ) -> None:
     trigger = min(max(0.0, float(effect_time)), max(0.0, duration - 0.05))
     volume = min(2.0, max(0.0, float(sound_volume)))
@@ -1988,7 +2075,8 @@ def _apply_effects(
             command += ["-map", "0:a?"]
         command += [
             "-t", f"{duration:.3f}",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+            *_frame_rate_args(frame_rate),
             "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         ]
@@ -2307,6 +2395,7 @@ def _export_full_length_single_pass(
     live_caption_scheme: LiveCaptionScheme,
     live_caption_height: float,
     live_caption_scale: float,
+    resolution: Resolution,
     title_transcript: bool,
     remove_silence: bool,
     remove_filler_words: bool,
@@ -2316,8 +2405,9 @@ def _export_full_length_single_pass(
     """Analyze once and render a complete landscape or square edit in one generation."""
     if aspect not in {"16:9", "1:1"}:
         raise ValueError("Full-length edits support the 16:9 or 1:1 standard layout.")
-    width, height = ASPECT_SIZES[aspect]
+    width, height = output_size(aspect, resolution)
     info = probe_video(source)
+    frame_rate = info.frame_rate
     selection_start = max(0.0, min(float(start), info.duration))
     selection_end = max(selection_start + 0.1, min(float(end), info.duration))
     selection_duration = max(0.1, selection_end - selection_start)
@@ -2397,11 +2487,12 @@ def _export_full_length_single_pass(
             live_caption_ass = Path(caption_file.name)
             caption_file.close()
             temporary_paths.append(live_caption_ass)
+            caption_width, caption_height = ASPECT_SIZES[aspect]
             write_live_caption_ass(
                 cleaned_words,
                 live_caption_ass,
-                width,
-                height,
+                caption_width,
+                caption_height,
                 live_caption_scheme,
                 live_caption_height,
                 live_caption_scale,
@@ -2551,7 +2642,9 @@ def _export_full_length_single_pass(
             )
             video_label = "withsubscribe"
         if creator_caption_index is not None:
-            filters.append(f"[{creator_caption_index}:v]format=rgba[creatorcaption]")
+            filters.append(
+                f"[{creator_caption_index}:v]scale={width}:{height}:flags=lanczos,format=rgba[creatorcaption]"
+            )
             filters.append(
                 f"[{video_label}][creatorcaption]overlay=0:0:eof_action=pass[withcreatorcaption]"
             )
@@ -2639,6 +2732,7 @@ def _export_full_length_single_pass(
             "-t", f"{output_duration:.3f}",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
             "-profile:v", "high", "-pix_fmt", "yuv420p",
+            *_frame_rate_args(frame_rate),
         ]
         if audio_label is not None:
             command += ["-c:a", "aac", "-b:a", "192k"]
@@ -2646,6 +2740,10 @@ def _export_full_length_single_pass(
         _run(command)
 
         if export_metadata is not None:
+            export_metadata["width"] = width
+            export_metadata["height"] = height
+            export_metadata["resolution"] = resolution
+            export_metadata["frame_rate"] = format_frame_rate(frame_rate)
             export_metadata["live_caption_word_count"] = len(cleaned_words) if live_captions else 0
             export_metadata["title_transcript"] = " ".join(word.text for word in cleaned_words)[:2_000]
             export_metadata["full_length_summary"] = {
@@ -2665,8 +2763,8 @@ def _export_full_length_single_pass(
                 "width": width,
                 "height": height,
                 "square_caption": bool(creator_caption_index is not None),
-                "live_caption_margin": live_caption_margin(width, height, live_caption_height),
-                "live_caption_font_size": live_caption_font_size(width, height, live_caption_scale),
+                "live_caption_margin": live_caption_margin(*ASPECT_SIZES[aspect], live_caption_height),
+                "live_caption_font_size": live_caption_font_size(*ASPECT_SIZES[aspect], live_caption_scale),
             }
         return placements
     finally:
@@ -2736,6 +2834,7 @@ def export_clip(
     live_caption_scheme: LiveCaptionScheme = "pilot-lime",
     live_caption_height: float = DEFAULT_LIVE_CAPTION_HEIGHT,
     live_caption_scale: float = DEFAULT_LIVE_CAPTION_SCALE,
+    resolution: Resolution = DEFAULT_RESOLUTION,
     title_transcript: bool = False,
     export_metadata: dict[str, object] | None = None,
     edit_mode: Literal["clip", "full-length"] = "clip",
@@ -2770,6 +2869,7 @@ def export_clip(
             live_caption_scheme=live_caption_scheme,
             live_caption_height=live_caption_height,
             live_caption_scale=live_caption_scale,
+            resolution=resolution,
             title_transcript=title_transcript,
             remove_silence=remove_silence,
             remove_filler_words=remove_filler_words,
@@ -2782,6 +2882,12 @@ def export_clip(
     end = max(start + 0.1, min(end, info.duration))
     duration = end - start
     filter_chain = _video_filter_chain(video_filter)
+    width, height = output_size(aspect, resolution)
+    frame_rate = info.frame_rate
+    encode_video = [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        *_frame_rate_args(frame_rate),
+    ]
     if sound_effect not in {"none", "vine-boom", "check-sound"}:
         raise ValueError("Unknown sound effect.")
     selected_sound_effects = list(dict.fromkeys(sound_effects or ()))
@@ -2827,17 +2933,23 @@ def export_clip(
             )
             live_caption_ass = Path(caption_file.name)
             caption_file.close()
-            width, height = ASPECT_SIZES[aspect]
+            # Captions are laid out on the 1080p reference frame; libass scales
+            # the script to the export's real size, so every resolution matches.
+            caption_width, caption_height = ASPECT_SIZES[aspect]
             write_live_caption_ass(
                 words,
                 live_caption_ass,
-                width,
-                height,
+                caption_width,
+                caption_height,
                 live_caption_scheme,
                 live_caption_height,
                 live_caption_scale,
             )
     if export_metadata is not None:
+        export_metadata["width"] = width
+        export_metadata["height"] = height
+        export_metadata["resolution"] = resolution
+        export_metadata["frame_rate"] = format_frame_rate(frame_rate)
         export_metadata["live_caption_word_count"] = live_caption_word_count
         export_metadata["live_caption_margin"] = live_caption_margin(*ASPECT_SIZES[aspect], live_caption_height)
         export_metadata["live_caption_font_size"] = live_caption_font_size(*ASPECT_SIZES[aspect], live_caption_scale)
@@ -2872,30 +2984,31 @@ def export_clip(
                 face_inset_x_fraction,
                 face_inset_y_fraction,
             )
-            # 36% of the vertical frame is face-cam, 64% gameplay.
-            face_h = 690
-            game_h = 1230
+            # 36% of the vertical frame is face-cam, 64% gameplay (690 of 1920 at 1080p).
+            face_h = 2 * round(345 * height / 1920)
+            game_h = height - face_h
             source_filters = f"{filter_chain}," if filter_chain else ""
+            # Stacking both crops of the source keeps its frame rate. A generated
+            # background would impose its own rate (25 fps) on the whole clip.
             filter_complex = (
                 f"[0:v]{source_filters}split=2[face][game];"
                 f"[face]crop={fw}:{fh}:{fx}:{fy},"
-                f"scale=1080:{face_h}:force_original_aspect_ratio=increase,crop=1080:{face_h}[faceout];"
-                f"[game]scale=1080:{game_h}:force_original_aspect_ratio=increase,crop=1080:{game_h}[gameout];"
-                f"color=c=black:s=1080x1920:d={duration:.3f}[bg];"
-                f"[bg][faceout]overlay=0:0[tmp];"
-                f"[tmp][gameout]overlay=0:{face_h}[outv]"
+                f"scale={width}:{face_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={width}:{face_h},setsar=1[faceout];"
+                f"[game]scale={width}:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={width}:{game_h},setsar=1[gameout];"
+                f"[faceout][gameout]vstack=inputs=2[outv]"
             )
             cmd = common + [
                 "-filter_complex", filter_complex,
                 "-map", "[outv]", "-map", "0:a?",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                *encode_video,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
                 str(render_target),
             ]
             _run(cmd)
         elif aspect == "1:1" and (caption_text.strip() or caption_overlay_path is not None):
-            width, height = ASPECT_SIZES[aspect]
             owns_overlay = caption_overlay_path is None
             if owns_overlay:
                 overlay_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-caption-", suffix=".png", delete=False)
@@ -2907,19 +3020,20 @@ def export_clip(
                 if owns_overlay:
                     _render_square_caption(caption_text, overlay_path, caption_font_scale, caption_position)
                 base_filters = (
-                    f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                    f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={width}:{height}"
                 )
                 if filter_chain:
                     base_filters += f",{filter_chain}"
                 filter_complex = (
                     f"[0:v]{base_filters}[base];"
-                    f"[base][1:v]overlay=0:0:eof_action=repeat[outv]"
+                    f"[1:v]scale={width}:{height}:flags=lanczos,format=rgba[caption];"
+                    f"[base][caption]overlay=0:0:eof_action=repeat[outv]"
                 )
                 cmd = common[:-2] + ["-i", str(overlay_path)] + common[-2:] + [
                     "-filter_complex", filter_complex,
                     "-map", "[outv]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    *encode_video,
                     "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart",
                     str(render_target),
@@ -2929,14 +3043,16 @@ def export_clip(
                 if owns_overlay:
                     overlay_path.unlink(missing_ok=True)
         else:
-            width, height = ASPECT_SIZES[aspect]
-            vf = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+            vf = (
+                f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={width}:{height}"
+            )
             if filter_chain:
                 vf += f",{filter_chain}"
             cmd = common + [
                 "-vf", vf,
                 "-map", "0:v:0", "-map", "0:a?",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                *encode_video,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
                 str(render_target),
@@ -2944,7 +3060,6 @@ def export_clip(
             _run(cmd)
 
         if has_postprocessing:
-            width, height = ASPECT_SIZES[aspect]
             _apply_effects(
                 render_target,
                 output,
@@ -2959,6 +3074,7 @@ def export_clip(
                 visual_strength,
                 live_caption_ass,
                 sound_effect_placements,
+                frame_rate,
             )
     finally:
         if base_temporary is not None:
