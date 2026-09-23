@@ -6,7 +6,7 @@ from typing import TypeVar
 
 APP_NAME = "Clip Farm Pilot"
 APP_SLUG = "clipfarmpilot"
-APP_VERSION = "1.17.0"
+APP_VERSION = "1.18.0"
 ENV_PREFIX = "CLIPFARMPILOT_"
 
 # Existing desktop installs and Render services used the pre-rebrand prefix.

@@ -1,4 +1,4 @@
-const CACHE_NAME = "clipfarmpilot-simple-studio-v1.17.0";
+const CACHE_NAME = "clipfarmpilot-simple-studio-v1.18.0";
 const APP_SHELL = [
   "/",
   "/assets/manifest.webmanifest",
