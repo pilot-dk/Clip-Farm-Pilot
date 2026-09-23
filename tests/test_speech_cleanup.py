@@ -166,12 +166,14 @@ class TranscriptTimingTests(unittest.TestCase):
         words = parse_whisper_words(payload, 2.0)
         self.assertEqual((words[0].start, words[0].end), (0.1, 0.42))
 
-    def _command(self, include_fillers: bool) -> list[str]:
+    def _commands(self, include_fillers: bool = False, gpu_fails: bool = False) -> list[list[str]]:
         seen: list[list[str]] = []
 
         def fake_run(command, **kwargs):
             seen.append([str(part) for part in command])
             if "-of" in command:
+                if gpu_fails and "-ng" not in command:
+                    return subprocess.CompletedProcess(command, 1, b"", b"ggml_metal_init: error")
                 Path(str(command[command.index("-of") + 1]) + ".json").write_text('{"transcription": []}')
             else:
                 Path(str(command[-1])).write_bytes(b"\0" * 256)
@@ -184,7 +186,20 @@ class TranscriptTimingTests(unittest.TestCase):
             with patch.object(captions, "caption_runtime_paths", return_value=(cli, model)), \
                     patch.object(captions.subprocess, "run", side_effect=fake_run):
                 captions.transcribe_words(Path("clip.mp4"), 0.0, 5.0, "ffmpeg", include_fillers=include_fillers)
-        return next(command for command in seen if "-of" in command)
+        return [command for command in seen if "-of" in command]
+
+    def _command(self, include_fillers: bool) -> list[str]:
+        return self._commands(include_fillers)[0]
+
+    def test_a_mac_transcribes_on_the_gpu_and_falls_back_to_the_cpu(self):
+        with patch.object(captions.sys, "platform", "darwin"):
+            self.assertEqual(len(self._commands()), 1)
+            self.assertNotIn("-ng", self._commands()[0])
+            retried = self._commands(gpu_fails=True)
+        self.assertEqual(len(retried), 2)
+        self.assertIn("-ng", retried[1])
+        with patch.object(captions.sys, "platform", "win32"):
+            self.assertIn("-ng", self._commands()[0])
 
     def test_transcription_uses_dtw_timing(self):
         command = self._command(include_fillers=False)

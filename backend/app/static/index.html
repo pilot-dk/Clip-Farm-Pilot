@@ -2644,7 +2644,9 @@
       const height = Number(data.height);
       const fps = formatFrameRate(data.frame_rate);
       if (!width || !height) return "";
-      return fps ? `${width}×${height} at ${fps} fps` : `${width}×${height}`;
+      const size = fps ? `${width}×${height} at ${fps} fps` : `${width}×${height}`;
+      const encoder = String(data.video_encoder || "");
+      return encoder && encoder !== "libx264" ? `${size} · ${encoder} hardware encoding` : size;
     }
 
     function updateRatio(ratio) {

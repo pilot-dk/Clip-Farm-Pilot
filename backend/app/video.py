@@ -11,6 +11,8 @@ import sys
 import tempfile
 import threading
 import unicodedata
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -118,6 +120,133 @@ def _frame_rate_args(rate: Fraction | None) -> list[str]:
     if rate is None:
         return []
     return ["-fps_mode", "cfr", "-r", format_frame_rate(rate)]
+
+
+# Video encoders. A hardware H.264 encoder is used when this computer has one
+# that works, and libx264 otherwise. Each hardware setting matches libx264
+# -preset veryfast at the same CRF: on an M2 Max, VideoToolbox at quality 72
+# scored the same VMAF as CRF 18 on stream footage (95.6 vs 95.3, 99.4 vs 98.8,
+# 95.9 vs 95.7) at about the same bitrate, ran at ~375 fps where libx264 managed
+# 190-360, and left most of the CPU free for the speech analysis.
+EncoderSettings = Callable[[int, int, "Fraction | None", int], list[str]]
+
+
+def _software_encode_args(crf: int) -> list[str]:
+    return [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
+        "-profile:v", "high", "-pix_fmt", "yuv420p",
+    ]
+
+
+def _videotoolbox_quality_args(width: int, height: int, rate: Fraction | None, crf: int) -> list[str]:
+    # Constant quality needs Apple silicon.
+    return [
+        "-c:v", "h264_videotoolbox", "-q:v", str(72 - 2 * (crf - 18)),
+        "-profile:v", "high", "-g", "250", "-pix_fmt", "yuv420p",
+    ]
+
+
+def _videotoolbox_bitrate_args(width: int, height: int, rate: Fraction | None, crf: int) -> list[str]:
+    # Intel Macs only offer a bitrate target, so it is set generously.
+    frames_per_second = min(60.0, float(rate)) if rate else 30.0
+    bitrate = int(width * height * frames_per_second * 0.16 * 0.85 ** (crf - 18))
+    return [
+        "-c:v", "h264_videotoolbox", "-b:v", str(bitrate), "-maxrate", str(bitrate * 3 // 2),
+        "-bufsize", str(bitrate * 2), "-profile:v", "high", "-g", "250", "-pix_fmt", "yuv420p",
+    ]
+
+
+def _nvenc_args(width: int, height: int, rate: Fraction | None, crf: int) -> list[str]:
+    return [
+        "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", str(crf),
+        "-b:v", "0", "-spatial-aq", "1", "-profile:v", "high", "-g", "250", "-pix_fmt", "yuv420p",
+    ]
+
+
+def _quick_sync_args(width: int, height: int, rate: Fraction | None, crf: int) -> list[str]:
+    return [
+        "-c:v", "h264_qsv", "-preset", "medium", "-global_quality", str(crf + 1),
+        "-profile:v", "high", "-g", "250", "-pix_fmt", "nv12",
+    ]
+
+
+def _amf_args(width: int, height: int, rate: Fraction | None, crf: int) -> list[str]:
+    return [
+        "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp",
+        "-qp_i", str(crf), "-qp_p", str(crf + 2), "-profile:v", "high", "-g", "250", "-pix_fmt", "yuv420p",
+    ]
+
+
+_HARDWARE_ENCODERS: dict[str, tuple[tuple[str, EncoderSettings], ...]] = {
+    "darwin": (("VideoToolbox", _videotoolbox_quality_args), ("VideoToolbox", _videotoolbox_bitrate_args)),
+    "win32": (("NVENC", _nvenc_args), ("Quick Sync", _quick_sync_args), ("AMF", _amf_args)),
+    "linux": (("NVENC", _nvenc_args),),
+}
+_HARDWARE_ENCODER_CHOICES: dict[str, tuple[str, EncoderSettings] | None] = {}
+_HARDWARE_ENCODER_LOCK = threading.Lock()
+
+
+def _encoder_works(ffmpeg: str, codec_args: list[str]) -> bool:
+    """Encode one second of a test pattern to see whether an encoder runs here."""
+    with tempfile.TemporaryDirectory(prefix=f"{APP_SLUG}-encoder-") as folder:
+        probe = Path(folder) / "probe.mp4"
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=1",
+                    *codec_args, "-frames:v", "30", str(probe),
+                ],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0 and probe.is_file() and probe.stat().st_size > 1_000
+
+
+def _hardware_encoder(ffmpeg: str) -> tuple[str, EncoderSettings] | None:
+    """The first hardware encoder that works with this FFmpeg, checked once a session."""
+    if str(env("VIDEO_ENCODER", "auto")).strip().lower() in {"software", "cpu", "libx264"}:
+        return None
+    platform = "win32" if sys.platform.startswith("win") else "darwin" if sys.platform == "darwin" else "linux"
+    with _HARDWARE_ENCODER_LOCK:
+        if ffmpeg not in _HARDWARE_ENCODER_CHOICES:
+            _HARDWARE_ENCODER_CHOICES[ffmpeg] = next(
+                (
+                    (name, settings)
+                    for name, settings in _HARDWARE_ENCODERS.get(platform, ())
+                    if _encoder_works(ffmpeg, settings(1280, 720, Fraction(30), 18))
+                ),
+                None,
+            )
+        return _HARDWARE_ENCODER_CHOICES[ffmpeg]
+
+
+def _encode_video(
+    command_for: Callable[[list[str]], list[str]],
+    width: int,
+    height: int,
+    frame_rate: Fraction | None,
+    crf: int,
+) -> str:
+    """Run a video encode on the hardware encoder when there is one, else libx264.
+
+    command_for turns encoder options into the full FFmpeg command. Returns the
+    name of the encoder that made the file.
+    """
+    software = command_for(_software_encode_args(crf))
+    hardware = _hardware_encoder(software[0])
+    if hardware is not None:
+        name, settings = hardware
+        try:
+            _run(command_for(settings(width, height, frame_rate, crf)))
+            return name
+        except subprocess.CalledProcessError:
+            # A GPU can still turn down a job the probe passed, such as a frame
+            # size it cannot encode. libx264 handles anything, so export anyway.
+            pass
+    _run(software)
+    return "libx264"
+
 
 VIDEO_FILTER_CHAINS: dict[VideoFilter, str] = {
     "none": "",
@@ -2076,22 +2205,30 @@ def _apply_effects(
                 )
             audio_label = "aout"
 
-        command = inputs
-        if filters:
-            command += ["-filter_complex", ";".join(filters)]
-        command += ["-map", f"[{video_label}]" if video_label != "0:v" else "0:v:0"]
-        if audio_label:
-            command += ["-map", f"[{audio_label}]"]
+        def command_for(codec: list[str]) -> list[str]:
+            command = list(inputs)
+            if filters:
+                command += ["-filter_complex", ";".join(filters)]
+            command += ["-map", f"[{video_label}]" if video_label != "0:v" else "0:v:0"]
+            if audio_label:
+                command += ["-map", f"[{audio_label}]"]
+            else:
+                command += ["-map", "0:a?"]
+            return command + [
+                "-t", f"{duration:.3f}", *codec,
+                "-c:a", "aac", "-b:a", "160k",
+                "-movflags", "+faststart", str(output),
+            ]
+
+        if video_label == "0:v":
+            # Only the sound changes, and the picture was encoded moments ago
+            # with these settings, so it is copied rather than encoded again.
+            _run(command_for(["-c:v", "copy"]))
         else:
-            command += ["-map", "0:a?"]
-        command += [
-            "-t", f"{duration:.3f}",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-            *_frame_rate_args(frame_rate),
-            "-c:a", "aac", "-b:a", "160k",
-            "-movflags", "+faststart", str(output),
-        ]
-        _run(command)
+            _encode_video(
+                lambda codec: command_for([*codec, *_frame_rate_args(frame_rate)]),
+                width, height, frame_rate, crf=20,
+            )
     finally:
         for temporary in temporary_paths:
             temporary.unlink(missing_ok=True)
@@ -2659,12 +2796,22 @@ def _cut_audio_envelope(
 
 # Stream VODs can change picture size or audio channels partway through, for
 # example when the streamer switches their output from 720p to 1080p. FFmpeg
-# normally rebuilds the whole filter graph when that happens, which restarts
-# every trim and the concat joining them: the edit either fails or silently
-# ends at the switch. Edits keep the graph fixed instead. Each kept piece is
-# scaled to one frame size before joining (the scaler follows size changes on
-# its own), and the audio is decoded once to a steady format beforehand.
+# normally rebuilds the filter graph at each switch, which restarts any trim or
+# concat inside it: an edit either fails or silently ends at the switch. Edits
+# therefore never let the graph rebuild. The video runs through one chain that
+# picks the kept frames by time and scales every frame to the output size (the
+# scaler follows size changes by itself). The audio is decoded by a separate
+# process, where a rebuild is harmless, and cut in Python.
 _STEADY_INPUT = ("-reinit_filter", "0")
+_EDIT_SAMPLE_RATE = 48_000
+_EDIT_CHANNELS = 2
+_EDIT_FADE_SECONDS = 0.012
+# The edited audio waits in a fast, lossless FLAC: an hour takes a few seconds and
+# about 200 MB, where encoding AAC up front would add a minute before the picture.
+_LOSSLESS_AUDIO = ("-c:a", "flac", "-compression_level", "0", "-sample_fmt", "s16")
+# Longer filter graphs go through a file: Windows caps a command line at 32,767 characters.
+_INLINE_GRAPH_LIMIT = 6_000
+_FFMPEG_MAJOR_VERSIONS: dict[str, int] = {}
 
 
 def _fit_frame(width: int, height: int) -> str:
@@ -2675,26 +2822,166 @@ def _fit_frame(width: int, height: int) -> str:
     )
 
 
-def _steady_audio_track(source: Path, start: float, duration: float) -> Path:
-    """Decode a section's audio once, losslessly, at a fixed 48 kHz stereo."""
-    handle = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-audio-", suffix=".flac", delete=False)
-    track = Path(handle.name)
+def _gaps_between(segments: list[tuple[float, float]], duration: float) -> list[tuple[float, float]]:
+    """The removed stretches of a timeline that keeps only these segments."""
+    gaps: list[tuple[float, float]] = []
+    cursor = 0.0
+    for segment_start, segment_end in segments:
+        if segment_start > cursor:
+            gaps.append((round(cursor, 3), round(segment_start, 3)))
+        cursor = max(cursor, segment_end)
+    if duration > cursor:
+        gaps.append((round(cursor, 3), round(duration, 3)))
+    return [(start, end) for start, end in gaps if end > start]
+
+
+def _kept_frames_filter(segments: list[tuple[float, float]], duration: float) -> str:
+    """Keep only the frames inside the segments and close the gaps between them.
+
+    One select and one setpts replace a trim per segment joined by concat: the
+    graph stays two filters long however many cuts there are, and a frame keeps
+    its exact place on the edited timeline, T minus everything removed before it.
+    """
+    if len(segments) == 1 and segments[0][0] <= 0.0005 and segments[0][1] >= duration - 0.0005:
+        return "setpts=PTS-STARTPTS"
+    keep = "+".join(f"gte(t,{start:.4f})*lt(t,{end:.4f})" for start, end in segments)
+    steps: list[str] = []
+    previous_end = 0.0
+    for start, end in segments:
+        if start - previous_end > 0.00005:
+            steps.append(f"{start - previous_end:.4f}*gte(T,{start:.4f})")
+        previous_end = end
+    return f"select='{keep}',setpts='(T-({'+'.join(steps) or '0'}))/TB'"
+
+
+def _ffmpeg_major_version(ffmpeg: str) -> int:
+    if ffmpeg not in _FFMPEG_MAJOR_VERSIONS:
+        try:
+            banner = subprocess.run(
+                [ffmpeg, "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            banner = ""
+        match = re.search(r"ffmpeg version n?(\d+)\.", banner)
+        # Builds from FFmpeg's main branch report "N-<commit>" and are newer than any release.
+        _FFMPEG_MAJOR_VERSIONS[ffmpeg] = int(match.group(1)) if match else 99
+    return _FFMPEG_MAJOR_VERSIONS[ffmpeg]
+
+
+def _filter_graph_args(ffmpeg: str, graph: str, temporary_paths: list[Path]) -> list[str]:
+    """Pass a filter graph on the command line, or in a file when it is long."""
+    if len(graph) <= _INLINE_GRAPH_LIMIT:
+        return ["-filter_complex", graph]
+    handle = tempfile.NamedTemporaryFile(
+        "w", prefix=f"{APP_SLUG}-graph-", suffix=".txt", delete=False, encoding="utf-8"
+    )
+    handle.write(graph)
     handle.close()
-    try:
-        _run([
-            ffmpeg_executable(), "-y", "-v", "error",
-            "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(source),
-            "-map", "0:a:0", "-vn",
-            # async fills any real timestamp gap with silence so the track stays
-            # in step with the video. A forced first_pts would pad again after
-            # every format change, so it is left unset.
-            "-af", "aresample=async=1", "-ac", "2", "-ar", "48000",
-            "-c:a", "flac", str(track),
-        ])
-    except BaseException:
-        track.unlink(missing_ok=True)
-        raise
-    return track
+    temporary_paths.append(Path(handle.name))
+    # FFmpeg 7 replaced -filter_complex_script with -/filter_complex; FFmpeg 8 removed the old form.
+    option = "-/filter_complex" if _ffmpeg_major_version(ffmpeg) >= 7 else "-filter_complex_script"
+    return [option, handle.name]
+
+
+def _steady_audio_command(ffmpeg: str, source: Path, start: float, duration: float) -> list[str]:
+    """Decode a section's audio as raw 48 kHz stereo, whatever format changes it has."""
+    return [
+        ffmpeg, "-v", "error",
+        "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(source),
+        "-map", "0:a:0", "-vn",
+        # async fills any real timestamp gap with silence so the audio stays in
+        # step with the video. A forced first_pts would pad again after every
+        # format change, so it is left unset.
+        "-af", "aresample=async=1",
+        "-ac", str(_EDIT_CHANNELS), "-ar", str(_EDIT_SAMPLE_RATE), "-f", "s16le", "-",
+    ]
+
+
+def _copy_kept_audio(reader, writer, segments: list[tuple[float, float]]) -> bool:
+    """Copy the kept segments of a raw 16-bit stereo stream, fading each join.
+
+    Every segment fades in and out over 12 ms so the joins never click. Returns
+    True when it stopped after the last segment, before the stream ended.
+    """
+    frame_bytes = 2 * _EDIT_CHANNELS
+    kept = [
+        (round(start * _EDIT_SAMPLE_RATE), round(end * _EDIT_SAMPLE_RATE))
+        for start, end in segments
+    ]
+    kept = [(start, end) for start, end in kept if end > start]
+    position = 0
+    index = 0
+    while index < len(kept):
+        data = reader.read(_EDIT_SAMPLE_RATE * frame_bytes)
+        count = len(data) // frame_bytes
+        if count == 0:
+            return False
+        samples = np.frombuffer(data, dtype="<i2", count=count * _EDIT_CHANNELS).reshape(count, _EDIT_CHANNELS)
+        block_end = position + count
+        while index < len(kept) and kept[index][0] < block_end:
+            start, end = kept[index]
+            low, high = max(start, position), min(end, block_end)
+            if high > low:
+                piece = samples[low - position: high - position]
+                fade = max(1, min(round(_EDIT_FADE_SECONDS * _EDIT_SAMPLE_RATE), (end - start) // 4))
+                if low - start < fade or end - high < fade:
+                    offsets = np.arange(low - start, high - start, dtype=np.float64)
+                    gain = np.minimum(1.0, np.minimum((offsets + 1.0) / fade, (end - start - offsets) / fade))
+                    piece = np.clip(np.rint(piece * gain[:, None]), -32768, 32767).astype("<i2")
+                writer.write(piece.tobytes())
+            if end > block_end:
+                break
+            index += 1
+        position = block_end
+    return True
+
+
+def _run_with_kept_audio(
+    command: list[str],
+    source: Path,
+    start: float,
+    duration: float,
+    segments: list[tuple[float, float]],
+) -> None:
+    """Run an FFmpeg command that reads the edit's audio as raw PCM on stdin."""
+    with tempfile.TemporaryFile() as decode_errors, tempfile.TemporaryFile() as encode_errors:
+        decoder = subprocess.Popen(
+            _steady_audio_command(command[0], source, start, duration),
+            stdout=subprocess.PIPE, stderr=decode_errors,
+        )
+        read_to_end = False
+        try:
+            encoder = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=encode_errors
+            )
+            try:
+                try:
+                    read_to_end = not _copy_kept_audio(decoder.stdout, encoder.stdin, segments)
+                except BrokenPipeError:
+                    pass  # The encoder stopped early; its exit status says why.
+                finally:
+                    try:
+                        encoder.stdin.close()
+                    except BrokenPipeError:
+                        pass
+                encoder_status = encoder.wait()
+            except BaseException:
+                encoder.kill()
+                encoder.wait()
+                raise
+        finally:
+            # Past the last kept segment, or after a failure, the rest of the
+            # source's audio is not needed.
+            if not read_to_end:
+                decoder.kill()
+            decoder.stdout.close()
+            decoder_status = decoder.wait()
+        if encoder_status != 0:
+            encode_errors.seek(0)
+            raise subprocess.CalledProcessError(encoder_status, command, stderr=encode_errors.read())
+        if read_to_end and decoder_status != 0:
+            decode_errors.seek(0)
+            raise subprocess.CalledProcessError(decoder_status, decoder.args, stderr=decode_errors.read())
 
 
 def _render_kept_segments(
@@ -2704,59 +2991,54 @@ def _render_kept_segments(
     segments: list[tuple[float, float]],
 ) -> float:
     """Join retained sections into one smooth, local full-length edit."""
-    has_audio = _has_audio(source)
     info = probe_video(source)
     width, height = info.width - info.width % 2, info.height - info.height % 2
-    filters: list[str] = []
-    video_inputs: list[str] = []
-    audio_inputs: list[str] = []
-    total_duration = 0.0
-    for index, (relative_start, relative_end) in enumerate(segments):
-        absolute_start = selection_start + relative_start
-        absolute_end = selection_start + relative_end
-        segment_duration = max(0.001, relative_end - relative_start)
-        total_duration += segment_duration
-        filters.append(
-            f"[0:v]trim=start={absolute_start:.3f}:end={absolute_end:.3f},"
-            f"setpts=PTS-STARTPTS,{_fit_frame(width, height)}[v{index}]"
-        )
-        video_inputs.append(f"[v{index}]")
-        if has_audio:
-            fade = min(0.012, segment_duration / 4)
-            filters.append(
-                f"[1:a]atrim=start={relative_start:.3f}:end={relative_end:.3f},"
-                f"asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade:.3f},"
-                f"afade=t=out:st={max(0.0, segment_duration - fade):.3f}:d={fade:.3f}[a{index}]"
-            )
-            audio_inputs.append(f"[a{index}]")
-
-    if has_audio:
-        concat_inputs = "".join(
-            video + audio for video, audio in zip(video_inputs, audio_inputs)
-        )
-        filters.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=1[outv][outa]")
-    else:
-        filters.append(f"{''.join(video_inputs)}concat=n={len(segments)}:v=1:a=0[outv]")
-
-    audio_track = (
-        _steady_audio_track(source, selection_start, segments[-1][1]) if has_audio else None
-    )
+    duration = segments[-1][1]
+    total_duration = round(sum(end - start for start, end in segments), 3)
+    ffmpeg = ffmpeg_executable()
+    temporary_paths: list[Path] = []
     try:
-        command = [ffmpeg_executable(), "-y", "-v", "error", *_STEADY_INPUT, "-i", str(source)]
-        if audio_track is not None:
-            command += ["-i", str(audio_track)]
-        command += ["-filter_complex", ";".join(filters), "-map", "[outv]"]
-        if has_audio:
-            command += ["-map", "[outa]"]
-        command += [
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+        audio_track: Path | None = None
+        if _has_audio(source):
+            handle = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-audio-", suffix=".flac", delete=False)
+            audio_track = Path(handle.name)
+            handle.close()
+            temporary_paths.append(audio_track)
+            _run_with_kept_audio(
+                [
+                    ffmpeg, "-y", "-v", "error",
+                    "-f", "s16le", "-ar", str(_EDIT_SAMPLE_RATE), "-ac", str(_EDIT_CHANNELS), "-i", "pipe:0",
+                    "-af", f"apad=whole_dur={total_duration:.3f}", "-t", f"{total_duration:.3f}",
+                    *_LOSSLESS_AUDIO, str(audio_track),
+                ],
+                source, selection_start, duration, segments,
+            )
+        inputs = [
+            ffmpeg, "-y", "-v", "error", *_STEADY_INPUT,
+            "-ss", f"{selection_start:.3f}", "-t", f"{duration:.3f}", "-i", str(source),
         ]
-        _run(command)
-    finally:
         if audio_track is not None:
-            audio_track.unlink(missing_ok=True)
-    return round(total_duration, 3)
+            inputs += ["-i", str(audio_track)]
+        graph = _filter_graph_args(
+            ffmpeg,
+            f"[0:v]{_kept_frames_filter(segments, duration)},{_fit_frame(width, height)}[outv]",
+            temporary_paths,
+        )
+
+        def command_for(codec: list[str]) -> list[str]:
+            command = [*inputs, *graph, "-map", "[outv]"]
+            if audio_track is not None:
+                command += ["-map", "1:a", "-c:a", "aac", "-b:a", "192k"]
+            return command + [
+                "-t", f"{total_duration:.3f}", *codec,
+                *_frame_rate_args(info.frame_rate), "-movflags", "+faststart", str(output),
+            ]
+
+        _encode_video(command_for, width, height, info.frame_rate, crf=19)
+    finally:
+        for temporary_path in temporary_paths:
+            temporary_path.unlink(missing_ok=True)
+    return total_duration
 
 
 def _prepare_full_length_source(
@@ -2856,38 +3138,52 @@ def _export_full_length_single_pass(
         or title_transcript
         or (auto_sound_effect and selected_sound_effects)
     )
-    transcript_words: list[CaptionWord] = []
-    if needs_transcript:
-        try:
-            transcript_words = _transcribe_words_cached(
-                source, selection_start, selection_end, include_fillers=remove_filler_words
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            if remove_filler_words:
-                raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
-            if live_captions:
-                raise
 
-    silence_cuts = (
-        _speech_pause_cut_intervals(source, selection_start, selection_end)
-        if remove_silence
-        else []
-    )
+    def analyze_speech() -> tuple[list[tuple[float, float]], tuple[np.ndarray | None, list | None]]:
+        silence = (
+            _speech_pause_cut_intervals(source, selection_start, selection_end) if remove_silence else []
+        )
+        context = (
+            _speech_context(source, selection_start, selection_end) if remove_filler_words else (None, None)
+        )
+        return silence, context
+
+    # The transcript and the pause analysis don't depend on each other, so they
+    # run side by side: Whisper keeps most cores busy while the pause detector runs.
+    transcript_words: list[CaptionWord] = []
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"{APP_SLUG}-analysis") as pool:
+        speech_job = pool.submit(analyze_speech)
+        if needs_transcript:
+            transcript_job = pool.submit(
+                _transcribe_words_cached,
+                source, selection_start, selection_end, include_fillers=remove_filler_words,
+            )
+            try:
+                transcript_words = transcript_job.result()
+            except (OSError, RuntimeError, ValueError) as exc:
+                if remove_filler_words:
+                    raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
+                if live_captions:
+                    raise
+        silence_cuts, speech_context = speech_job.result()
+
     filler_cuts: list[tuple[float, float]] = []
     filler_count = 0
     if remove_filler_words:
         filler_cuts, filler_count = _filler_word_cut_intervals(
-            transcript_words, selection_duration, *_speech_context(source, selection_start, selection_end)
+            transcript_words, selection_duration, *speech_context
         )
     cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts], selection_duration)
     segments = _kept_segments(cuts, selection_duration)
     output_duration = sum(segment_end - segment_start for segment_start, segment_end in segments)
     if output_duration < min(0.5, selection_duration * 0.10):
-        cuts = []
         segments = [(0.0, selection_duration)]
         output_duration = selection_duration
         silence_cuts = []
         filler_count = 0
+    # Everything downstream follows the segments actually kept, so a sliver too
+    # short to keep counts as removed for captions and sound placement too.
+    cuts = _gaps_between(segments, selection_duration)
     output_duration = round(output_duration, 3)
     cleaned_words = _remap_transcript_after_cuts(transcript_words, cuts, selection_duration)
 
@@ -2928,19 +3224,21 @@ def _export_full_length_single_pass(
                 live_caption_scale,
             )
 
-        ffmpeg = ffmpeg_executable(require_ass=live_caption_ass is not None)
-        inputs = [
-            ffmpeg, "-y", "-v", "error", *_STEADY_INPUT,
-            "-ss", f"{selection_start:.3f}", "-t", f"{selection_duration:.3f}",
-            "-i", str(source),
-        ]
-        next_input = 1
+        subscribe_asset = EFFECT_ASSETS_DIR / "youtube-subscribe.mov"
+        if subscribe_animation and not subscribe_asset.is_file():
+            raise RuntimeError("The bundled YouTube subscribe animation is missing.")
+
+        # First the audio: the kept speech with its sound effects and the subscribe
+        # chime mixed in, stored losslessly. It takes seconds; the AAC encode then
+        # happens inside the video encode, alongside the picture, at no extra time.
         has_audio = _has_audio(source)
+        audio_ffmpeg = ffmpeg_executable()
+        audio_inputs: list[str] = []
         if has_audio:
-            audio_track = _steady_audio_track(source, selection_start, selection_duration)
-            temporary_paths.append(audio_track)
-            inputs += ["-i", str(audio_track)]
-            next_input += 1
+            audio_inputs += [
+                "-f", "s16le", "-ar", str(_EDIT_SAMPLE_RATE), "-ac", str(_EDIT_CHANNELS), "-i", "pipe:0",
+            ]
+        next_audio_input = 1 if has_audio else 0
         sound_indexes: dict[SelectedSoundEffect, int] = {}
         for effect in selected_sound_effects:
             if not placements.get(effect):
@@ -2950,9 +3248,120 @@ def _export_full_length_single_pass(
             sound_file.close()
             temporary_paths.append(sound_path)
             _render_sound_effect(effect, sound_path)
-            sound_indexes[effect] = next_input
-            inputs += ["-i", str(sound_path)]
-            next_input += 1
+            sound_indexes[effect] = next_audio_input
+            audio_inputs += ["-i", str(sound_path)]
+            next_audio_input += 1
+        subscribe_audio_index: int | None = None
+        if subscribe_animation:
+            subscribe_audio_index = next_audio_input
+            audio_inputs += ["-i", str(subscribe_asset)]
+            next_audio_input += 1
+
+        audio_filters: list[str] = []
+        volume = min(2.0, max(0.0, float(sound_volume)))
+        effect_labels: list[str] = []
+        duck_events: list[tuple[SelectedSoundEffect, float]] = []
+        for effect_number, (effect, sound_index) in enumerate(sound_indexes.items()):
+            effect_times = placements[effect]
+            split_labels = [f"sfxsource{effect_number}_{index}" for index in range(len(effect_times))]
+            if len(split_labels) > 1:
+                audio_filters.append(
+                    f"[{sound_index}:a]asplit={len(split_labels)}"
+                    + "".join(f"[{label}]" for label in split_labels)
+                )
+            else:
+                split_labels = [f"{sound_index}:a"]
+            for index, (split_label, effect_trigger) in enumerate(zip(split_labels, effect_times)):
+                delayed_label = f"sfx{effect_number}_{index}"
+                audio_filters.append(
+                    f"[{split_label}]adelay={round(effect_trigger * 1000)}:all=1,"
+                    f"volume={volume:.3f}[{delayed_label}]"
+                )
+                effect_labels.append(delayed_label)
+                duck_events.append((effect, effect_trigger))
+
+        extra_audio_labels = list(effect_labels)
+        if subscribe_audio_index is not None:
+            audio_filters.append(f"[{subscribe_audio_index}:a]asetpts=PTS-STARTPTS[subscribeaudio]")
+            extra_audio_labels.append("subscribeaudio")
+        base_audio_label: str | None = "0:a" if has_audio else None
+        if base_audio_label is None and extra_audio_labels:
+            audio_filters.append(
+                f"anullsrc=r={_EDIT_SAMPLE_RATE}:cl=stereo,atrim=0:{output_duration:.3f},"
+                "asetpts=PTS-STARTPTS[silentbase]"
+            )
+            base_audio_label = "silentbase"
+
+        audio_label: str | None = None
+        if base_audio_label is not None:
+            # The mix is padded to the full length so the audio can never end early.
+            audio_filters.append(
+                f"[{base_audio_label}]apad=whole_dur={output_duration:.3f},"
+                f"atrim=0:{output_duration:.3f}[mixbase]"
+            )
+            audio_label = "mixbase"
+        if audio_label is not None and extra_audio_labels:
+            volume_expressions: list[str] = []
+            if subscribe_audio_index is not None:
+                volume_expressions.append("if(lt(t\\,3.717)\\,0.82\\,1)")
+            if effect_labels and volume > 0:
+                duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
+                for effect, effect_trigger in duck_events:
+                    hold_seconds = 0.68 if effect == "check-sound" else 0.82
+                    release_seconds = 0.96 if effect == "check-sound" else 1.10
+                    attack_start = max(0.0, effect_trigger - 0.08)
+                    attack_end = min(output_duration, max(effect_trigger, attack_start + 0.01))
+                    release_start = min(output_duration, max(attack_end, effect_trigger + hold_seconds))
+                    release_end = min(output_duration, max(release_start + 0.01, effect_trigger + release_seconds))
+                    attack_duration = max(0.01, attack_end - attack_start)
+                    release_duration = max(0.01, release_end - release_start)
+                    volume_expressions.append(
+                        f"if(between(t\\,{attack_start:.3f}\\,{attack_end:.3f})\\,"
+                        f"1-(1-{duck_gain:.3f})*(t-{attack_start:.3f})/{attack_duration:.3f}\\,"
+                        f"if(between(t\\,{attack_end:.3f}\\,{release_start:.3f})\\,{duck_gain:.3f}\\,"
+                        f"if(between(t\\,{release_start:.3f}\\,{release_end:.3f})\\,"
+                        f"{duck_gain:.3f}+(1-{duck_gain:.3f})*(t-{release_start:.3f})/{release_duration:.3f}\\,1)))"
+                    )
+            mixed_base = "mixbase"
+            if volume_expressions:
+                audio_filters.append(
+                    f"[{mixed_base}]volume='{'*'.join(f'({value})' for value in volume_expressions)}':"
+                    "eval=frame[duckedbase]"
+                )
+                mixed_base = "duckedbase"
+            mix_inputs = f"[{mixed_base}]" + "".join(f"[{label}]" for label in extra_audio_labels)
+            audio_filters.append(
+                f"{mix_inputs}amix=inputs={len(extra_audio_labels) + 1}:"
+                "duration=first:dropout_transition=0:normalize=0,"
+                "alimiter=limit=0.95[outa]"
+            )
+            audio_label = "outa"
+
+        audio_track: Path | None = None
+        if audio_label is not None:
+            audio_file = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-audio-", suffix=".flac", delete=False)
+            audio_track = Path(audio_file.name)
+            audio_file.close()
+            temporary_paths.append(audio_track)
+            audio_command = [
+                audio_ffmpeg, "-y", "-v", "error", *audio_inputs,
+                *_filter_graph_args(audio_ffmpeg, ";".join(audio_filters), temporary_paths),
+                "-map", f"[{audio_label}]", "-t", f"{output_duration:.3f}", *_LOSSLESS_AUDIO,
+                str(audio_track),
+            ]
+            if has_audio:
+                _run_with_kept_audio(audio_command, source, selection_start, selection_duration, segments)
+            else:
+                _run(audio_command)
+
+        # Then the picture, in one encode.
+        ffmpeg = ffmpeg_executable(require_ass=live_caption_ass is not None)
+        inputs = [
+            ffmpeg, "-y", "-v", "error", *_STEADY_INPUT,
+            "-ss", f"{selection_start:.3f}", "-t", f"{selection_duration:.3f}",
+            "-i", str(source),
+        ]
+        next_input = 1
 
         overlay_index: int | None = None
         if visual_effect in {"lens-flare", "white-flash"}:
@@ -2967,9 +3376,6 @@ def _export_full_length_single_pass(
 
         subscribe_index: int | None = None
         if subscribe_animation:
-            subscribe_asset = EFFECT_ASSETS_DIR / "youtube-subscribe.mov"
-            if not subscribe_asset.is_file():
-                raise RuntimeError("The bundled YouTube subscribe animation is missing.")
             subscribe_index = next_input
             inputs += ["-i", str(subscribe_asset)]
             next_input += 1
@@ -2996,39 +3402,19 @@ def _export_full_length_single_pass(
             inputs += ["-loop", "1", "-i", str(rendered_caption_overlay)]
             next_input += 1
 
-        filters: list[str] = []
-        video_labels: list[str] = []
-        audio_labels: list[str] = []
-        for index, (segment_start, segment_end) in enumerate(segments):
-            segment_duration = max(0.001, segment_end - segment_start)
-            filters.append(
-                f"[0:v]trim=start={segment_start:.3f}:end={segment_end:.3f},"
-                f"setpts=PTS-STARTPTS,{_fit_frame(width, height)}[v{index}]"
-            )
-            video_labels.append(f"[v{index}]")
-            if has_audio:
-                fade = min(0.012, segment_duration / 4)
-                filters.append(
-                    f"[1:a]atrim=start={segment_start:.3f}:end={segment_end:.3f},"
-                    f"asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade:.3f},"
-                    f"afade=t=out:st={max(0.0, segment_duration - fade):.3f}:d={fade:.3f}[a{index}]"
-                )
-                audio_labels.append(f"[a{index}]")
+        audio_index: int | None = None
+        if audio_track is not None:
+            audio_index = next_input
+            inputs += ["-i", str(audio_track)]
+            next_input += 1
 
-        if has_audio:
-            concat_inputs = "".join(
-                video + audio for video, audio in zip(video_labels, audio_labels)
-            )
-            filters.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=1[joinedv][joineda]")
-            base_audio_label: str | None = "joineda"
-        else:
-            filters.append(f"{''.join(video_labels)}concat=n={len(segments)}:v=1:a=0[joinedv]")
-            base_audio_label = None
-
-        video_label = "joinedv"
+        base_video_filter = (
+            f"[0:v]{_kept_frames_filter(segments, selection_duration)},{_fit_frame(width, height)}"
+        )
         if filter_chain:
-            filters.append(f"[joinedv]{filter_chain}[basev]")
-            video_label = "basev"
+            base_video_filter += f",{filter_chain}"
+        filters = [f"{base_video_filter}[basev]"]
+        video_label = "basev"
         trigger = min(max(0.0, float(effect_time)), max(0.0, output_duration - 0.05))
         strength = min(1.5, max(0.25, float(visual_strength)))
         if visual_effect == "punch-zoom":
@@ -3081,100 +3467,25 @@ def _export_full_length_single_pass(
             )
             video_label = "withcreatorcaption"
 
-        volume = min(2.0, max(0.0, float(sound_volume)))
-        effect_labels: list[str] = []
-        duck_events: list[tuple[SelectedSoundEffect, float]] = []
-        for effect_number, (effect, sound_index) in enumerate(sound_indexes.items()):
-            effect_times = placements[effect]
-            split_labels = [f"sfxsource{effect_number}_{index}" for index in range(len(effect_times))]
-            if len(split_labels) > 1:
-                filters.append(
-                    f"[{sound_index}:a]asplit={len(split_labels)}"
-                    + "".join(f"[{label}]" for label in split_labels)
-                )
-            else:
-                split_labels = [f"{sound_index}:a"]
-            for index, (split_label, effect_trigger) in enumerate(zip(split_labels, effect_times)):
-                delayed_label = f"sfx{effect_number}_{index}"
-                filters.append(
-                    f"[{split_label}]adelay={round(effect_trigger * 1000)}:all=1,"
-                    f"volume={volume:.3f}[{delayed_label}]"
-                )
-                effect_labels.append(delayed_label)
-                duck_events.append((effect, effect_trigger))
+        graph = _filter_graph_args(ffmpeg, ";".join(filters), temporary_paths)
 
-        extra_audio_labels = list(effect_labels)
-        if subscribe_index is not None:
-            filters.append(f"[{subscribe_index}:a]asetpts=PTS-STARTPTS[subscribeaudio]")
-            extra_audio_labels.append("subscribeaudio")
-        if base_audio_label is None and extra_audio_labels:
-            filters.append(
-                f"anullsrc=r=48000:cl=stereo,atrim=0:{output_duration:.3f},"
-                "asetpts=PTS-STARTPTS[silentbase]"
-            )
-            base_audio_label = "silentbase"
+        def command_for(codec: list[str]) -> list[str]:
+            command = [*inputs, *graph, "-map", f"[{video_label}]"]
+            if audio_index is not None:
+                command += ["-map", f"{audio_index}:a", "-c:a", "aac", "-b:a", "192k"]
+            return command + [
+                "-t", f"{output_duration:.3f}", *codec, *_frame_rate_args(frame_rate),
+                "-movflags", "+faststart", str(output),
+            ]
 
-        audio_label = base_audio_label
-        if base_audio_label is not None and extra_audio_labels:
-            filters.append(
-                f"[{base_audio_label}]apad=whole_dur={output_duration:.3f},"
-                f"atrim=0:{output_duration:.3f}[mixbase]"
-            )
-            volume_expressions: list[str] = []
-            if subscribe_index is not None:
-                volume_expressions.append("if(lt(t\\,3.717)\\,0.82\\,1)")
-            if effect_labels and volume > 0:
-                duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
-                for effect, effect_trigger in duck_events:
-                    hold_seconds = 0.68 if effect == "check-sound" else 0.82
-                    release_seconds = 0.96 if effect == "check-sound" else 1.10
-                    attack_start = max(0.0, effect_trigger - 0.08)
-                    attack_end = min(output_duration, max(effect_trigger, attack_start + 0.01))
-                    release_start = min(output_duration, max(attack_end, effect_trigger + hold_seconds))
-                    release_end = min(output_duration, max(release_start + 0.01, effect_trigger + release_seconds))
-                    attack_duration = max(0.01, attack_end - attack_start)
-                    release_duration = max(0.01, release_end - release_start)
-                    volume_expressions.append(
-                        f"if(between(t\\,{attack_start:.3f}\\,{attack_end:.3f})\\,"
-                        f"1-(1-{duck_gain:.3f})*(t-{attack_start:.3f})/{attack_duration:.3f}\\,"
-                        f"if(between(t\\,{attack_end:.3f}\\,{release_start:.3f})\\,{duck_gain:.3f}\\,"
-                        f"if(between(t\\,{release_start:.3f}\\,{release_end:.3f})\\,"
-                        f"{duck_gain:.3f}+(1-{duck_gain:.3f})*(t-{release_start:.3f})/{release_duration:.3f}\\,1)))"
-                    )
-            mixed_base = "mixbase"
-            if volume_expressions:
-                filters.append(
-                    f"[{mixed_base}]volume='{'*'.join(f'({value})' for value in volume_expressions)}':"
-                    "eval=frame[duckedbase]"
-                )
-                mixed_base = "duckedbase"
-            mix_inputs = f"[{mixed_base}]" + "".join(f"[{label}]" for label in extra_audio_labels)
-            filters.append(
-                f"{mix_inputs}amix=inputs={len(extra_audio_labels) + 1}:"
-                "duration=first:dropout_transition=0:normalize=0,"
-                "alimiter=limit=0.95[outa]"
-            )
-            audio_label = "outa"
-
-        command = inputs + ["-filter_complex", ";".join(filters), "-map", f"[{video_label}]"]
-        if audio_label is not None:
-            command += ["-map", f"[{audio_label}]"]
-        command += [
-            "-t", f"{output_duration:.3f}",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-            "-profile:v", "high", "-pix_fmt", "yuv420p",
-            *_frame_rate_args(frame_rate),
-        ]
-        if audio_label is not None:
-            command += ["-c:a", "aac", "-b:a", "192k"]
-        command += ["-movflags", "+faststart", str(output)]
-        _run(command)
+        video_encoder = _encode_video(command_for, width, height, frame_rate, crf=18)
 
         if export_metadata is not None:
             export_metadata["width"] = width
             export_metadata["height"] = height
             export_metadata["resolution"] = resolution
             export_metadata["frame_rate"] = format_frame_rate(frame_rate)
+            export_metadata["video_encoder"] = video_encoder
             export_metadata["live_caption_word_count"] = len(cleaned_words) if live_captions else 0
             export_metadata["title_transcript"] = " ".join(word.text for word in cleaned_words)[:2_000]
             export_metadata["full_length_summary"] = {
@@ -3190,6 +3501,7 @@ def _export_full_length_single_pass(
                 "render_passes": 1,
                 "shared_transcript": bool(needs_transcript),
                 "quality": "single-pass-crf18",
+                "video_encoder": video_encoder,
                 "aspect": aspect,
                 "width": width,
                 "height": height,
@@ -3227,14 +3539,15 @@ def _apply_subscribe_animation(source: Path, output: Path) -> None:
         filters.append(f"[1:a]asetpts=PTS-STARTPTS,apad,atrim=0:{duration:.3f}[outa]")
         audio_label = "outa"
 
-    command = [
-        ffmpeg_executable(), "-y", "-v", "error", "-i", str(source), "-i", str(asset),
-        "-filter_complex", ";".join(filters), "-map", "[outv]", "-map", f"[{audio_label}]",
-        "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-        str(output),
-    ]
-    _run(command)
+    def command_for(codec: list[str]) -> list[str]:
+        return [
+            ffmpeg_executable(), "-y", "-v", "error", "-i", str(source), "-i", str(asset),
+            "-filter_complex", ";".join(filters), "-map", "[outv]", "-map", f"[{audio_label}]",
+            "-t", f"{duration:.3f}", *codec, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            str(output),
+        ]
+
+    _encode_video(command_for, info.width - info.width % 2, info.height - info.height % 2, info.frame_rate, crf=19)
 
 
 def export_clip(
@@ -3315,10 +3628,14 @@ def export_clip(
     filter_chain = _video_filter_chain(video_filter)
     width, height = output_size(aspect, resolution)
     frame_rate = info.frame_rate
-    encode_video = [
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-        *_frame_rate_args(frame_rate),
-    ]
+    video_encoders: list[str] = []
+
+    def encode(command_for: Callable[[list[str]], list[str]]) -> None:
+        video_encoders.append(_encode_video(
+            lambda codec: command_for([*codec, *_frame_rate_args(frame_rate)]),
+            width, height, frame_rate, crf=20,
+        ))
+
     if sound_effect not in {"none", "vine-boom", "check-sound"}:
         raise ValueError("Unknown sound effect.")
     selected_sound_effects = list(dict.fromkeys(sound_effects or ()))
@@ -3381,6 +3698,7 @@ def export_clip(
         export_metadata["height"] = height
         export_metadata["resolution"] = resolution
         export_metadata["frame_rate"] = format_frame_rate(frame_rate)
+        export_metadata["video_encoder"] = video_encoders[0] if video_encoders else ""
         export_metadata["live_caption_word_count"] = live_caption_word_count
         export_metadata["live_caption_margin"] = live_caption_margin(*ASPECT_SIZES[aspect], live_caption_height)
         export_metadata["live_caption_font_size"] = live_caption_font_size(*ASPECT_SIZES[aspect], live_caption_scale)
@@ -3430,15 +3748,14 @@ def export_clip(
                 f"crop={width}:{game_h},setsar=1[gameout];"
                 f"[faceout][gameout]vstack=inputs=2[outv]"
             )
-            cmd = common + [
+            encode(lambda codec: common + [
                 "-filter_complex", filter_complex,
                 "-map", "[outv]", "-map", "0:a?",
-                *encode_video,
+                *codec,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
                 str(render_target),
-            ]
-            _run(cmd)
+            ])
         elif aspect == "1:1" and (caption_text.strip() or caption_overlay_path is not None):
             owns_overlay = caption_overlay_path is None
             if owns_overlay:
@@ -3461,15 +3778,14 @@ def export_clip(
                     f"[1:v]scale={width}:{height}:flags=lanczos,format=rgba[caption];"
                     f"[base][caption]overlay=0:0:eof_action=repeat[outv]"
                 )
-                cmd = common[:-2] + ["-i", str(overlay_path)] + common[-2:] + [
+                encode(lambda codec: common[:-2] + ["-i", str(overlay_path)] + common[-2:] + [
                     "-filter_complex", filter_complex,
                     "-map", "[outv]", "-map", "0:a?",
-                    *encode_video,
+                    *codec,
                     "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart",
                     str(render_target),
-                ]
-                _run(cmd)
+                ])
             finally:
                 if owns_overlay:
                     overlay_path.unlink(missing_ok=True)
@@ -3480,15 +3796,14 @@ def export_clip(
             )
             if filter_chain:
                 vf += f",{filter_chain}"
-            cmd = common + [
+            encode(lambda codec: common + [
                 "-vf", vf,
                 "-map", "0:v:0", "-map", "0:a?",
-                *encode_video,
+                *codec,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
                 str(render_target),
-            ]
-            _run(cmd)
+            ])
 
         if has_postprocessing:
             _apply_effects(

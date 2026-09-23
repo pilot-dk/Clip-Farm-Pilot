@@ -480,6 +480,7 @@ def export(video_id: str, req: ExportRequest):
         "width": export_metadata.get("width"),
         "height": export_metadata.get("height"),
         "frame_rate": export_metadata.get("frame_rate", ""),
+        "video_encoder": export_metadata.get("video_encoder", ""),
         "full_length_summary": export_metadata.get("full_length_summary", {}),
     }
 

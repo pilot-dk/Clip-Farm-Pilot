@@ -165,7 +165,9 @@ Choose **Full YouTube video** at the top of the studio, then load an upload or s
 
 The full-length editor retains the existing filters, live-caption colours, smart sound effects, visual effects, viral-title recommendation, native Save As flow, and direct-publishing controls. Smart sound placement runs against the cleaned timeline and can distribute effect-specific moments across a long edit without crowding them.
 
-Version 1.13 uses a single-pass render pipeline for full-length edits. Silence and filler cleanup, resizing, filters, captions, visual effects, smart sound mixing, and the subscribe animation are combined into one high-quality H.264 encode instead of repeatedly encoding the whole video. One cached offline transcript is shared by filler removal, live captions, smart sounds, and title generation, and long-video sound analysis now streams audio in bounded memory.
+Full-length edits encode the whole video once. The transcript and the pause analysis run side by side, and on a Mac the speech engine runs on the GPU; the audio is then cut sample-accurately while it streams, mixed with any sound effects and the subscribe animation's audio, and held losslessly for the final encode, which resizes, filters, and captions the picture and encodes the audio alongside it. On an M2 Max a 20-minute stretch of a 720p stream VOD exports at 1080p with pause and filler removal in 99 seconds, down from 182 in version 1.18. One cached offline transcript is shared by filler removal, live captions, smart sounds, and title generation, and long-video sound analysis streams audio in bounded memory.
+
+Stream VODs sometimes switch resolution or audio channels partway through, for example from 720p to 1080p when the streamer changes their output settings. The editor scales every frame to the export size and decodes the audio to one steady format, so these switches cannot interrupt or cut short an export.
 
 Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the selected 16:9 or square frame without cropping, centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
 
@@ -372,6 +374,12 @@ The frame rate is never changed. Clip Farm Pilot reads the source's rate — inc
 Captions, the square caption, effects, the gaming layout, and the subscribe animation are laid out on the 1080p frame and scaled with the resolution, so they sit in the same place at the same relative size in every export. Square captions are drawn at the export's full size, so 4K text is sharp rather than upscaled. Choosing a resolution above the source's own (4K from a 1080p recording, for example) upscales the video: the file is larger, but it gains no extra detail, and the editor points this out before you export.
 
 Exports are H.264 in `yuv420p` for broad playback on phones, browsers, and social platforms. 4K renders take noticeably longer than 1080p, especially for full-length edits.
+
+### Hardware encoding
+
+When the computer has a hardware video encoder, exports use it: VideoToolbox on every Mac, and NVIDIA NVENC, Intel Quick Sync, or AMD AMF on Windows (NVENC on Linux). The app checks once per session which encoder works, and falls back to the libx264 software encoder when none does or when the hardware turns down a job, so an export never fails because of it. The hardware settings were tuned to match the software encoder's quality: on an M2 Max, VideoToolbox scored the same VMAF on 1080p stream footage (within half a point, often higher) at about the same file size, ran at about 375 frames per second against libx264's 190–360, and used a fifth of the processor, which leaves the rest for speech analysis. The gain is larger on computers with fewer cores. Set `CLIPFARMPILOT_VIDEO_ENCODER=software` to always use libx264.
+
+A clip that only adds sound effects copies its already-encoded picture instead of encoding it a second time.
 
 ## Build the Apple Silicon app from source
 
