@@ -102,11 +102,15 @@ class MissedWordTests(unittest.TestCase):
         # The same breath as detected speech: 0.10 s before the word and 0.15 s after it.
         self.assertEqual(cuts, [(2.15, 2.35), (2.9, 3.1)])
 
-    def test_words_the_detector_heard_are_left_to_its_edges(self):
-        # The last word's estimated end runs into the pause; the next sentence's first
-        # word starts just before the detected speech. Neither moves the cut.
-        words = [CaptionWord("left", 1.70, 2.40), CaptionWord("okay", 3.08, 3.40)]
-        self.assertEqual(self._spare(words), self.CUTS)
+    def test_a_word_the_detector_heard_is_left_to_its_edges(self):
+        # The last word's estimated end runs into the pause, but it starts inside
+        # detected speech, so the cut stays where the detector put it.
+        self.assertEqual(self._spare([CaptionWord("left", 1.70, 2.40)]), self.CUTS)
+
+    def test_a_first_word_heard_just_before_the_speech_keeps_its_own_breath(self):
+        # "You" starts 0.12 s before the detected sentence, earlier than its breath reaches.
+        cuts = self._spare([CaptionWord("You", 3.08, 3.14), CaptionWord("know", 3.14, 3.40)])
+        self.assertEqual(cuts, [(2.15, 2.98)])
 
     def test_silent_words_sound_tags_and_fillers_are_still_cut(self):
         quiet_gap = level_track(5.0, [(0.0, 2.0, 20.0), (3.2, 5.0, 20.0)], floor=-30.0)

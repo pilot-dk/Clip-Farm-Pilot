@@ -417,7 +417,7 @@ def _audio_analysis_per_second(path: Path, sample_rate: int = 8000) -> AudioAnal
             return cached
 
     command = [
-        ffmpeg_executable(), "-v", "error", "-i", str(resolved),
+        ffmpeg_executable(), "-v", "error", "-i", str(audio_source(resolved)),
         "-vn", "-ac", "1", "-ar", str(sample_rate),
         "-f", "s16le", "pipe:1",
     ]
@@ -1658,6 +1658,187 @@ def _has_audio(path: Path) -> bool:
     return result.returncode == 0
 
 
+# Some stream recordings store AAC audio whose frames switch between one and two
+# channels while the file declares a single layout for all of them (a Twitch VOD
+# declared mono ran mono, stereo from 0:01.6, then mono again from 0:07.3).
+# FFmpeg's decoder follows the first switch but not the way back: every later
+# frame is decoded into a stale channel setup, and in the threaded command-line
+# tool the result even differs from run to run. Speech in such a file came out
+# garbled enough to cost Whisper whole sentences. The repair labels each frame
+# with the layout its first element (one channel or a channel pair) says it has,
+# decodes that, puts every frame back at its own timestamp, and keeps the result
+# as a lossless FLAC that everything which listens to the audio reads instead.
+_AUDIO_REPAIR_LOCK = threading.Lock()
+_AUDIO_REPAIRS: dict[tuple[str, int, int], Path | None] = {}
+_AUDIO_REPAIR_DIR = Path(tempfile.gettempdir()) / f"{APP_SLUG}-repaired-audio"
+_AUDIO_REPAIR_KEEP = 4
+_ADTS_SAMPLE_RATES = (96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350)
+
+
+def audio_source(source: Path) -> Path:
+    """The file to decode a video's audio from: the video itself, or its repaired audio."""
+    try:
+        resolved = Path(source).resolve()
+        stat = resolved.stat()
+    except OSError:
+        return source
+    key = (str(resolved), int(stat.st_size), int(stat.st_mtime_ns))
+    with _AUDIO_REPAIR_LOCK:
+        if key not in _AUDIO_REPAIRS or (_AUDIO_REPAIRS[key] is not None and not _AUDIO_REPAIRS[key].is_file()):
+            try:
+                _AUDIO_REPAIRS[key] = _repair_switching_aac(resolved, key)
+            except (OSError, subprocess.SubprocessError, RuntimeError, ValueError):
+                _AUDIO_REPAIRS[key] = None
+        repaired = _AUDIO_REPAIRS[key]
+    return repaired if repaired is not None else source
+
+
+def _adts_frames(stream):
+    """Yield (header_size, frame bytes) for each ADTS frame in a byte stream."""
+    buffer = b""
+    while True:
+        chunk = stream.read(1 << 20)
+        buffer += chunk
+        position = 0
+        while len(buffer) - position >= 9:
+            if buffer[position] != 0xFF or buffer[position + 1] & 0xF0 != 0xF0:
+                raise ValueError("Lost ADTS sync.")
+            length = ((buffer[position + 3] & 0x03) << 11) | (buffer[position + 4] << 3) | (buffer[position + 5] >> 5)
+            if length < 9 or len(buffer) - position < length:
+                break
+            yield (7 if buffer[position + 1] & 1 else 9), buffer[position:position + length]
+            position += length
+        buffer = buffer[position:]
+        if not chunk:
+            return
+
+
+def _repair_switching_aac(source: Path, key: tuple[str, int, int]) -> Path | None:
+    """A FLAC of the source's audio when its AAC frames switch layout, else None."""
+    ffmpeg = ffmpeg_executable()
+    _AUDIO_REPAIR_DIR.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(repr(key).encode()).hexdigest()[:24]
+    repaired = _AUDIO_REPAIR_DIR / f"{name}.flac"
+    if repaired.is_file():
+        return repaired
+    relabelled = _AUDIO_REPAIR_DIR / f"{name}.aac"
+    copy = subprocess.Popen(
+        [ffmpeg, "-v", "error", "-i", str(source), "-map", "0:a:0", "-c:a", "copy", "-f", "adts", "pipe:1"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    switches = 0
+    sample_rate = 0
+    try:
+        with relabelled.open("wb") as output:
+            for header_size, frame in _adts_frames(copy.stdout):
+                declared = ((frame[2] & 0x01) << 2) | (frame[3] >> 6)
+                sample_rate = _ADTS_SAMPLE_RATES[min(12, (frame[2] >> 2) & 0x0F)]
+                if declared not in {1, 2}:
+                    return None  # Surround layouts are left alone.
+                actual = {0: 1, 1: 2}.get(frame[header_size] >> 5)  # One channel, or a channel pair.
+                if actual is not None and actual != declared:
+                    switches += 1
+                    frame = bytearray(frame)
+                    frame[2] = (frame[2] & 0xFE) | (actual >> 2)
+                    frame[3] = (frame[3] & 0x3F) | ((actual & 0x03) << 6)
+                output.write(frame)
+        copy.wait()
+        if copy.returncode != 0 or not switches:
+            return None
+        timestamps = _packet_timestamps(ffmpeg, source, sample_rate)
+        _decode_onto_timeline(ffmpeg, relabelled, repaired, sample_rate, timestamps)
+    finally:
+        if copy.poll() is None:
+            copy.kill()
+        copy.stdout.close()
+        copy.wait()
+        relabelled.unlink(missing_ok=True)
+    kept = sorted(_AUDIO_REPAIR_DIR.glob("*.flac"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for stale in kept[_AUDIO_REPAIR_KEEP:]:
+        stale.unlink(missing_ok=True)
+    return repaired
+
+
+def _packet_timestamps(ffmpeg: str, source: Path, sample_rate: int) -> list[tuple[int, int]]:
+    """(start, length) of every audio packet in samples, from FFmpeg's framecrc listing."""
+    listing = subprocess.run(
+        [ffmpeg, "-v", "error", "-i", str(source), "-map", "0:a:0", "-c:a", "copy", "-f", "framecrc", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, text=True,
+    ).stdout
+    # FFmpeg counts a video's time from its earliest timestamp, which is not always
+    # zero (MPEG-TS recordings often start at 1.4 s); the FLAC starts there too.
+    banner = subprocess.run([ffmpeg, "-hide_banner", "-i", str(source)], capture_output=True, text=True).stderr
+    match = re.search(r"start: (-?[\d.]+)", banner)
+    origin = round(float(match.group(1)) * sample_rate) if match else 0
+    time_base = Fraction(1, sample_rate)
+    packets: list[tuple[int, int]] = []
+    for line in listing.splitlines():
+        if line.startswith("#tb 0:"):
+            time_base = Fraction(line.split(":", 1)[1].strip())
+        elif line and not line.startswith("#"):
+            fields = [field.strip() for field in line.split(",")]
+            start = round(int(fields[2]) * time_base * sample_rate) - origin
+            length = round(int(fields[3]) * time_base * sample_rate)
+            packets.append((start, length))
+    return packets
+
+
+def _decode_onto_timeline(
+    ffmpeg: str,
+    relabelled: Path,
+    output: Path,
+    sample_rate: int,
+    packets: list[tuple[int, int]],
+) -> None:
+    """Decode relabelled ADTS and place each frame at its packet's timestamp.
+
+    Raw ADTS carries no timestamps, so silence fills any gap in the original and
+    overlaps are dropped; the FLAC starts at the video's zero like its audio did.
+    """
+    frame_bytes = 2 * _EDIT_CHANNELS
+    decoder = subprocess.Popen(
+        [
+            ffmpeg, "-v", "error", "-f", "aac", "-i", str(relabelled),
+            "-ac", str(_EDIT_CHANNELS), "-ar", str(sample_rate), "-f", "s16le", "pipe:1",
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    encoder = subprocess.Popen(
+        [
+            ffmpeg, "-y", "-v", "error", "-f", "s16le", "-ar", str(sample_rate), "-ac", str(_EDIT_CHANNELS),
+            "-i", "pipe:0", *_LOSSLESS_AUDIO, str(output),
+        ],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        written = 0  # Samples on the output timeline so far.
+        for start, length in packets:
+            data = decoder.stdout.read(length * frame_bytes) if length > 0 else b""
+            if len(data) < length * frame_bytes:
+                break
+            if start > written:
+                gap = start - written
+                encoder.stdin.write(b"\0" * (gap * frame_bytes))
+                written += gap
+            skip = min(length, written - start)
+            if skip < length:
+                encoder.stdin.write(data[skip * frame_bytes:])
+                written += length - skip
+        encoder.stdin.close()
+        if encoder.wait() != 0:
+            raise RuntimeError("Could not store the repaired audio.")
+    except BaseException:
+        output.unlink(missing_ok=True)
+        raise
+    finally:
+        if encoder.poll() is None:
+            encoder.kill()
+            encoder.wait()
+        decoder.kill()
+        decoder.stdout.close()
+        decoder.wait()
+
+
 def _video_filter_chain(video_filter: VideoFilter) -> str:
     try:
         return VIDEO_FILTER_CHAINS[video_filter]
@@ -1697,9 +1878,9 @@ def _transcribe_words_cached(
             return list(cached)
 
     if include_fillers:
-        words = transcribe_words(resolved, start, end, ffmpeg_executable(), include_fillers=True)
+        words = transcribe_words(audio_source(resolved), start, end, ffmpeg_executable(), include_fillers=True)
     else:
-        words = transcribe_words(resolved, start, end, ffmpeg_executable())
+        words = transcribe_words(audio_source(resolved), start, end, ffmpeg_executable())
     with _TRANSCRIPT_CACHE_LOCK:
         _TRANSCRIPT_CACHE[cache_key] = tuple(words)
         while len(_TRANSCRIPT_CACHE) > _TRANSCRIPT_CACHE_LIMIT:
@@ -1725,7 +1906,7 @@ def _clip_audio_envelope(
             return cached
     command = [
         ffmpeg_executable(), "-v", "error",
-        "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
+        "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(audio_source(source)),
         "-t", f"{duration:.3f}", "-vn", "-ac", "1", "-ar", str(sample_rate),
         "-f", "s16le", "pipe:1",
     ]
@@ -2434,7 +2615,7 @@ def _speech_band_levels(source: Path, start: float, end: float) -> np.ndarray:
             return cached
     command = [
         ffmpeg_executable(), "-v", "error",
-        "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
+        "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(audio_source(source)),
         "-t", f"{duration:.3f}", "-vn", "-ac", "1", "-ar", str(_SPEECH_SAMPLE_RATE),
         "-f", "s16le", "pipe:1",
     ]
@@ -2597,7 +2778,7 @@ def _speech_segments(source: Path, start: float, end: float) -> list[tuple[float
         if cached is not None:
             return list(cached)
     try:
-        segments = detect_speech_segments(source, start, end, ffmpeg_executable())
+        segments = detect_speech_segments(audio_source(source), start, end, ffmpeg_executable())
     except (OSError, RuntimeError, ValueError):
         segments = None
     levels = _speech_band_levels(source, start, end)
@@ -2758,8 +2939,9 @@ def _spare_spoken_words(
     imagined ones here (its "Okay." over silence scores 0.9), but silence does.
 
     Only the start of a word is trusted: Whisper's DTW places it closely, while
-    its end is an estimate. A word starting within 0.15 s of detected speech is
-    that speech's own first word, already covered by the breath kept before it.
+    its end is an estimate, so a word that starts inside detected speech is left
+    to the detector's edges. Protecting estimated ends kept 26% of benchmark
+    pauses instead of 9%; protecting starts changed nothing there.
     """
     if not cuts or not words:
         return cuts
@@ -2780,8 +2962,6 @@ def _spare_spoken_words(
         following = bisect.bisect_right(segment_starts, word.start)
         if following and word.start < segments[following - 1][1]:
             continue  # Inside detected speech.
-        if following < len(segments) and segments[following][0] - word.start < 0.15:
-            continue
         if index_at is not None:
             window = levels[index_at(word.start):max(index_at(word.start) + 1, index_at(word.end))]
             if window.size and float(np.max(window)) < silent_below:
@@ -2970,7 +3150,7 @@ def _steady_audio_command(ffmpeg: str, source: Path, start: float, duration: flo
     """Decode a section's audio as raw 48 kHz stereo, whatever format changes it has."""
     return [
         ffmpeg, "-v", "error",
-        "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(source),
+        "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(audio_source(source)),
         "-map", "0:a:0", "-vn",
         # async fills any real timestamp gap with silence so the audio stays in
         # step with the video. A forced first_pts would pad again after every
@@ -3810,6 +3990,13 @@ def export_clip(
         "-ss", f"{start:.3f}", "-i", str(source),
         "-t", f"{duration:.3f}",
     ]
+    # The sound comes from the repaired audio when the video's audio needed one.
+    # It is added before "-t", which must stay the output's own option.
+    clip_audio = audio_source(source)
+    repaired_audio = ["-ss", f"{start:.3f}", "-i", str(clip_audio)] if clip_audio != source else []
+
+    def audio_map(index: int) -> str:
+        return f"{index}:a" if repaired_audio else "0:a?"
 
     try:
         if layout == "gaming":
@@ -3839,9 +4026,9 @@ def export_clip(
                 f"crop={width}:{game_h},setsar=1[gameout];"
                 f"[faceout][gameout]vstack=inputs=2[outv]"
             )
-            encode(lambda codec: common + [
+            encode(lambda codec: common[:-2] + repaired_audio + common[-2:] + [
                 "-filter_complex", filter_complex,
-                "-map", "[outv]", "-map", "0:a?",
+                "-map", "[outv]", "-map", audio_map(1),
                 *codec,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
@@ -3869,9 +4056,9 @@ def export_clip(
                     f"[1:v]scale={width}:{height}:flags=lanczos,format=rgba[caption];"
                     f"[base][caption]overlay=0:0:eof_action=repeat[outv]"
                 )
-                encode(lambda codec: common[:-2] + ["-i", str(overlay_path)] + common[-2:] + [
+                encode(lambda codec: common[:-2] + ["-i", str(overlay_path)] + repaired_audio + common[-2:] + [
                     "-filter_complex", filter_complex,
-                    "-map", "[outv]", "-map", "0:a?",
+                    "-map", "[outv]", "-map", audio_map(2),
                     *codec,
                     "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart",
@@ -3887,9 +4074,9 @@ def export_clip(
             )
             if filter_chain:
                 vf += f",{filter_chain}"
-            encode(lambda codec: common + [
+            encode(lambda codec: common[:-2] + repaired_audio + common[-2:] + [
                 "-vf", vf,
-                "-map", "0:v:0", "-map", "0:a?",
+                "-map", "0:v:0", "-map", audio_map(1),
                 *codec,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",

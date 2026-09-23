@@ -170,6 +170,8 @@ Full-length edits encode the whole video once. The transcript and the pause anal
 
 Stream VODs sometimes switch resolution or audio channels partway through, for example from 720p to 1080p when the streamer changes their output settings. The editor scales every frame to the export size and decodes the audio to one steady format, so these switches cannot interrupt or cut short an export.
 
+Some stream recordings also switch their AAC audio between mono and stereo while the file declares a single layout. FFmpeg's decoder misreads every frame after such a switch, which garbles the sound and hides speech from captions, pause removal, and filler removal. Clip Farm Pilot checks each video's audio once per session (under a second for an hour-long VOD) and, when it finds this, decodes every frame in the layout it was recorded in and keeps the result as a temporary lossless copy on the video's own timeline. Clips, full-length edits, captions, and all audio analysis then use that copy.
+
 Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the selected 16:9 or square frame without cropping, centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
 
 ### How Auto-Find Clips ranks moments
