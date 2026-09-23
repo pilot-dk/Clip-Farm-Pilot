@@ -112,7 +112,7 @@ The editor now includes:
 
 - Separate **Viral clips** and **Full YouTube video** workspaces without leaving the current project.
 - A full-length **16:9** or **1:1 square** editor with independent **Remove silent pauses** and **Remove filler words** switches.
-- Conservative pause trimming that keeps a short natural breath at speech boundaries, plus local word-timed removal for “um”, “uh”, “you know”, and similar filler.
+- Pause trimming that listens for gaps in your voice rather than silence, so it works over game audio and music, and keeps a short natural breath at speech boundaries — plus word-timed removal for “um”, “uh”, “you know”, and similar filler.
 - The supplied transparent YouTube subscribe animation, fully visible and centred at the very start with its original sound.
 - Filters, live captions, smart Vine Boom and Check Sound placement, visual effects, original title suggestions, saving, and direct publishing in the full-length workspace.
 - Drag-and-drop or file-picker livestream upload with upload progress.
@@ -152,7 +152,16 @@ The editor now includes:
 
 ## Full-Length YouTube Editor
 
-Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** or a **1:1 square** video at 720p, 1080p, or 4K. Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses** detects dead air longer than a natural breath and keeps a short safety margin around speech. **Remove filler words** uses the bundled offline speech engine and conservative word timestamps so the two cleanup options can be enabled independently or together.
+Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** or a **1:1 square** video at 720p, 1080p, or 4K. Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses** and **Remove filler words** can be enabled independently or together; both run offline on your computer.
+
+### How pause and filler removal work
+
+**Remove silent pauses** looks for gaps in *speech*, not for silence. Stream VODs keep game audio, music, and microphone hiss running between sentences, so a silence threshold rarely fires on them. Clip Farm Pilot uses the bundled Silero voice-activity model to find where you are talking, even over gameplay, then trims each edge to where your voice actually starts and stops.
+
+- A gap between two sentences of up to three seconds is tightened to a natural breath: about 0.15 s is kept after you stop and 0.10 s before you start again, so words are never clipped.
+- Longer gaps, and the stretches before your first word and after your last, are treated as content. Gameplay, music, or a quiet moment of concentration stays; only genuine dead air — at least 30 dB quieter than your voice — is removed from them.
+
+**Remove filler words** transcribes the video with the bundled Whisper model, aligned to the audio word by word, and starts it from a sample transcript that keeps hesitations so it writes “um” and “uh” down instead of tidying them away. Each filler is then cut from the quiet dip just before its sound to the dip just after it, so a drawn-out “uhhh” goes completely while the neighbouring words stay intact. Fillers that the speech engine mishears as a real word (for example “I’m”) are left in rather than risk cutting real speech.
 
 The full-length editor retains the existing filters, live-caption colours, smart sound effects, visual effects, viral-title recommendation, native Save As flow, and direct-publishing controls. Smart sound placement runs against the cleaned timeline and can distribute effect-specific moments across a long edit without crowding them.
 

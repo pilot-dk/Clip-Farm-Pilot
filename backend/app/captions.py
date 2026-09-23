@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -94,13 +95,111 @@ def caption_runtime_paths() -> tuple[Path, Path]:
     return fallback / "bin" / executable_name, fallback / "models" / "ggml-base.en.bin"
 
 
+# Silero voice-activity detection, bundled beside Whisper, finds where someone is
+# speaking even over game audio and music.
+VAD_MODEL_NAME = "ggml-silero-v6.2.0.bin"
+_VAD_CHUNK_SECONDS = 600.0
+_VAD_CHUNK_OVERLAP_SECONDS = 4.0
+_VAD_SEGMENT_LINE = re.compile(r"Speech segment \d+: start = ([0-9.]+), end = ([0-9.]+)")
+
+
+def speech_detector_paths() -> tuple[Path, Path]:
+    executable_name = "whisper-vad-speech-segments.exe" if os.name == "nt" else "whisper-vad-speech-segments"
+    for root in _runtime_candidates():
+        tool = root / "bin" / executable_name
+        model = root / "models" / VAD_MODEL_NAME
+        if tool.is_file() and model.is_file():
+            return tool, model
+    fallback = _runtime_candidates()[0]
+    return fallback / "bin" / executable_name, fallback / "models" / VAD_MODEL_NAME
+
+
 def caption_engine_status() -> dict[str, object]:
     cli, model = caption_runtime_paths()
+    tool, vad_model = speech_detector_paths()
     return {
         "available": cli.is_file() and model.is_file(),
         "engine": "Whisper.cpp",
         "model": "base.en",
+        "speech_detector": tool.is_file() and vad_model.is_file(),
     }
+
+
+def _merge_segments(segments: list[tuple[float, float]], duration: float) -> list[tuple[float, float]]:
+    merged: list[list[float]] = []
+    for start, end in sorted(segments):
+        start, end = max(0.0, start), min(duration, end)
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(round(start, 3), round(end, 3)) for start, end in merged]
+
+
+def _run_speech_detector(tool: Path, model: Path, audio: Path) -> list[tuple[float, float]]:
+    thread_count = max(1, min(8, os.cpu_count() or 4))
+    result = subprocess.run(
+        [
+            str(tool), "-vm", str(model), "-f", str(audio), "-t", str(thread_count),
+            # Keep short replies such as "yeah" as speech, and report every gap.
+            "-vspd", "100", "-vsd", "100", "-np",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        timeout=600,
+        env=_runtime_environment(tool),
+    )
+    output = result.stdout.decode("utf-8", errors="replace")
+    if result.returncode != 0 or "Detected" not in output:
+        lines = output.strip().splitlines()
+        raise RuntimeError(f"Speech detection failed: {lines[-1] if lines else 'no output'}")
+    # The tool reports centiseconds.
+    return [(float(start) / 100.0, float(end) / 100.0) for start, end in _VAD_SEGMENT_LINE.findall(output)]
+
+
+def detect_speech_segments(source: Path, start: float, end: float, ffmpeg: str) -> list[tuple[float, float]]:
+    """Stretches where someone is speaking, in seconds from `start`.
+
+    The recording is analysed in ten-minute pieces that overlap slightly, so a
+    multi-hour VOD never has to be held in memory at once.
+    """
+    tool, model = speech_detector_paths()
+    if not tool.is_file() or not model.is_file():
+        raise ValueError("The bundled speech detector is missing. Reinstall the latest Clip Farm Pilot release.")
+    duration = max(0.1, float(end) - float(start))
+    segments: list[tuple[float, float]] = []
+    temporary_dir = Path(tempfile.mkdtemp(prefix=f"{APP_SLUG}-speech-"))
+    try:
+        piece_start = 0.0
+        while piece_start < duration:
+            piece_length = min(_VAD_CHUNK_SECONDS + _VAD_CHUNK_OVERLAP_SECONDS, duration - piece_start)
+            audio = temporary_dir / "piece.wav"
+            decoded = subprocess.run(
+                [
+                    ffmpeg, "-y", "-v", "error",
+                    "-ss", f"{max(0.0, float(start)) + piece_start:.3f}", "-i", str(source),
+                    "-t", f"{piece_length:.3f}", "-vn", "-ar", "16000", "-ac", "1",
+                    "-c:a", "pcm_s16le", str(audio),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if decoded.returncode != 0 or not audio.is_file():
+                raise RuntimeError("The audio could not be prepared for speech detection.")
+            segments.extend(
+                (piece_start + segment_start, piece_start + segment_end)
+                for segment_start, segment_end in _run_speech_detector(tool, model, audio)
+            )
+            piece_start += _VAD_CHUNK_SECONDS
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Speech detection timed out.") from exc
+    finally:
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+    return _merge_segments(segments, duration)
 
 
 def caption_engine_self_test() -> None:
@@ -122,6 +221,27 @@ def caption_engine_self_test() -> None:
     output = result.stdout.decode("utf-8", errors="replace").lower()
     if result.returncode != 0 or "whisper" not in output:
         raise RuntimeError("The bundled offline live-caption engine did not pass its startup test.")
+    speech_detector_self_test()
+
+
+def speech_detector_self_test() -> None:
+    """Run the bundled Silero model on a short silent clip to prove it loads."""
+    tool, model = speech_detector_paths()
+    if not tool.is_file() or not model.is_file():
+        raise RuntimeError("The bundled speech detector is missing.")
+    with tempfile.TemporaryDirectory(prefix=f"{APP_SLUG}-speech-test-") as temporary:
+        audio = Path(temporary) / "silence.wav"
+        with wave.open(str(audio), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(16000)
+            handle.writeframes(b"\x00\x00" * 16000)
+        try:
+            segments = _run_speech_detector(tool, model, audio)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+            raise RuntimeError(f"The bundled speech detector could not run: {exc}") from exc
+    if segments:
+        raise RuntimeError("The bundled speech detector heard speech in silence.")
 
 
 def _runtime_environment(cli: Path) -> dict[str, str]:
@@ -143,9 +263,36 @@ def _clean_transcribed_word(value: object) -> str:
     return text.replace("{", "").replace("}", "")[:48]
 
 
+# Whisper's DTW alignment marks each word about 0.13 s after it actually starts;
+# measured across six voices and three kinds of background audio.
+DTW_ONSET_LEAD_SECONDS = 0.13
+
+
+def _dtw_onset(item: dict) -> float | None:
+    """The DTW-aligned start of a transcribed word, or None when DTW is unavailable."""
+    for token in item.get("tokens", []) or []:
+        if not isinstance(token, dict):
+            continue
+        text = str(token.get("text", ""))
+        if not text.strip() or text.startswith("[_"):
+            continue
+        try:
+            moment = float(token.get("t_dtw", -1))
+        except (TypeError, ValueError):
+            return None
+        return None if moment < 0 else max(0.0, moment / 100.0 - DTW_ONSET_LEAD_SECONDS)
+    return None
+
+
+def _spoken_length(text: str) -> float:
+    """A rough upper bound on how long a word lasts, used when a pause follows it."""
+    letters = sum(1 for character in text if character.isalnum())
+    return max(0.20, 0.09 * letters + 0.12)
+
+
 def parse_whisper_words(payload: dict, duration: float) -> list[CaptionWord]:
-    words: list[CaptionWord] = []
     clip_duration = max(0.0, float(duration))
+    entries: list[tuple[str, float, float, float | None]] = []
     for item in payload.get("transcription", []):
         if not isinstance(item, dict):
             continue
@@ -158,6 +305,13 @@ def parse_whisper_words(payload: dict, duration: float) -> list[CaptionWord]:
             end = min(clip_duration, float(offsets.get("to", 0)) / 1000.0)
         except (TypeError, ValueError):
             continue
+        entries.append((text, start, end, _dtw_onset(item)))
+
+    if entries and all(onset is not None for _, _, _, onset in entries):
+        return _words_from_dtw(entries, clip_duration)
+
+    words: list[CaptionWord] = []
+    for text, start, end, _ in entries:
         if end <= start:
             end = min(clip_duration, start + 0.12)
         if end <= start or start >= clip_duration:
@@ -168,7 +322,40 @@ def parse_whisper_words(payload: dict, duration: float) -> list[CaptionWord]:
     return words
 
 
-def transcribe_words(source: Path, start: float, end: float, ffmpeg: str) -> list[CaptionWord]:
+def _words_from_dtw(entries: list[tuple[str, float, float, float | None]], duration: float) -> list[CaptionWord]:
+    """Place words by their DTW onsets: each lasts until the next begins, or its likely length."""
+    onsets: list[tuple[str, float]] = []
+    for text, _, _, onset in entries:
+        if onset is None or onset >= duration:
+            continue
+        if onsets and onset < onsets[-1][1]:
+            continue
+        onsets.append((text, onset))
+    words: list[CaptionWord] = []
+    for index, (text, start) in enumerate(onsets):
+        following = onsets[index + 1][1] if index + 1 < len(onsets) else duration
+        end = min(following, start + _spoken_length(text), duration)
+        if end - start < 0.04:
+            end = min(duration, start + 0.04)
+        if end <= start:
+            continue
+        words.append(CaptionWord(text=text, start=round(start, 3), end=round(end, 3)))
+    return words
+
+
+# Whisper tends to write clean transcripts and leave hesitations out. Starting it
+# from a sample that keeps them makes it write "um" and "uh" down, which filler
+# removal needs; it is only used then, so ordinary captions stay as they were.
+FILLER_PROMPT = "So, um, I was, uh, thinking we could, um, try this. Uh, yeah, okay."
+
+
+def transcribe_words(
+    source: Path,
+    start: float,
+    end: float,
+    ffmpeg: str,
+    include_fillers: bool = False,
+) -> list[CaptionWord]:
     cli, model = caption_runtime_paths()
     if not cli.is_file() or not model.is_file():
         raise ValueError(
@@ -198,8 +385,13 @@ def transcribe_words(source: Path, start: float, end: float, ffmpeg: str) -> lis
         command = [
             str(cli), "-m", str(model), "-f", str(audio_path),
             "-l", "en", "-t", str(thread_count), "-ng", "-np",
-            "-oj", "-ml", "1", "-sow", "-of", str(result_base),
+            # DTW aligns each word to the audio far more closely than Whisper's own
+            # timestamps. It needs flash attention off and the full JSON output.
+            "-nfa", "-dtw", "base.en", "-ojf",
+            "-ml", "1", "-sow", "-of", str(result_base),
         ]
+        if include_fillers:
+            command += ["--prompt", FILLER_PROMPT]
         timeout_seconds = max(90.0, min(1800.0, duration * 8.0))
         transcription = subprocess.run(
             command,

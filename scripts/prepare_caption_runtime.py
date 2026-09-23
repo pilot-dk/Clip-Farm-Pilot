@@ -18,6 +18,11 @@ WHISPER_RELEASE = "b4938"
 MODEL_NAME = "ggml-base.en.bin"
 MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_NAME}"
 MODEL_SHA256 = "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+# Silero voice-activity model: finds the pauses in speech even over game audio and music.
+VAD_MODEL_NAME = "ggml-silero-v6.2.0.bin"
+VAD_MODEL_URL = f"https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_MODEL_NAME}"
+VAD_MODEL_SHA256 = "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"
+TOOLS = ("whisper-cli", "whisper-vad-speech-segments")
 SOURCE_URL = f"https://github.com/ggml-org/whisper.cpp/archive/refs/tags/{WHISPER_RELEASE}.tar.gz"
 SOURCE_SHA256 = "6d8d70a014ca2b10f8a6d006b8f423e5f5ef2afcfbe92b57ab4e01107238112a"
 PLATFORM_ARCHIVES = {
@@ -94,8 +99,7 @@ def prepare_macos(cache: Path, binary_dir: Path, architecture: str) -> None:
     source = source_tree(cache)
     cmake_architecture = "arm64" if architecture == "arm64" else "x86_64"
     build = cache / f"whisper.cpp-{WHISPER_RELEASE}-build-macos-{architecture}"
-    executable = build / "bin" / "whisper-cli"
-    if not executable.is_file():
+    if not all((build / "bin" / tool).is_file() for tool in TOOLS):
         subprocess.run(
             [
                 "cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
@@ -106,7 +110,7 @@ def prepare_macos(cache: Path, binary_dir: Path, architecture: str) -> None:
             ],
             check=True,
         )
-        subprocess.run(["cmake", "--build", str(build), "--target", "whisper-cli", "-j", "6"], check=True)
+        subprocess.run(["cmake", "--build", str(build), "--target", *TOOLS, "-j", "6"], check=True)
     shutil.copytree(build / "bin", binary_dir, dirs_exist_ok=True, symlinks=True)
 
 
@@ -119,7 +123,7 @@ def prepare_source_runtime(target_platform: str, architecture: str, cache: Path,
         # ClangCL toolset builds them with clang-cl, and GGML_NATIVE=OFF keeps the
         # generic ARMv8 baseline so the tool runs on every Windows on Arm laptop.
         build = build.with_name(f"{build.name}-clangcl")
-        executable = build / "bin" / "Release" / "whisper-cli.exe"
+        executables = [build / "bin" / "Release" / f"{tool}.exe" for tool in TOOLS]
         configure = [
             "cmake", "-S", str(source), "-B", str(build), "-A", "ARM64", "-T", "ClangCL",
             "-DCMAKE_BUILD_TYPE=Release", "-DGGML_NATIVE=OFF", "-DBUILD_SHARED_LIBS=ON",
@@ -127,19 +131,19 @@ def prepare_source_runtime(target_platform: str, architecture: str, cache: Path,
         ]
         build_command = [
             "cmake", "--build", str(build), "--config", "Release",
-            "--target", "whisper-cli", "--parallel", "4",
+            "--target", *TOOLS, "--parallel", "4",
         ]
         output_dir = build / "bin" / "Release"
     else:
-        executable = build / "bin" / "whisper-cli"
+        executables = [build / "bin" / tool for tool in TOOLS]
         configure = [
             "cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
             "-DCMAKE_BUILD_TYPE=Release", "-DGGML_NATIVE=OFF", "-DBUILD_SHARED_LIBS=ON",
             "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_SERVER=OFF", "-DWHISPER_SDL2=OFF",
         ]
-        build_command = ["cmake", "--build", str(build), "--target", "whisper-cli", "-j", "4"]
+        build_command = ["cmake", "--build", str(build), "--target", *TOOLS, "-j", "4"]
         output_dir = build / "bin"
-    if not executable.is_file():
+    if not all(executable.is_file() for executable in executables):
         subprocess.run(configure, check=True)
         subprocess.run(build_command, check=True)
     shutil.copytree(output_dir, binary_dir, dirs_exist_ok=True, symlinks=True)
@@ -189,13 +193,19 @@ def main() -> None:
         prepare_archive_runtime(args.platform, cache, binary_dir)
     model_path = model_dir / MODEL_NAME
     download(MODEL_URL, model_path, MODEL_SHA256)
-    executable = binary_dir / ("whisper-cli.exe" if args.platform == "windows" else "whisper-cli")
-    executable.chmod(executable.stat().st_mode | 0o111)
+    download(VAD_MODEL_URL, model_dir / VAD_MODEL_NAME, VAD_MODEL_SHA256)
+    suffix = ".exe" if args.platform == "windows" else ""
+    for tool in TOOLS:
+        executable = binary_dir / f"{tool}{suffix}"
+        if not executable.is_file():
+            raise RuntimeError(f"The prepared caption runtime is missing {executable.name}.")
+        executable.chmod(executable.stat().st_mode | 0o111)
     (output / "runtime.json").write_text(
         json.dumps({
             "engine": "whisper.cpp",
             "release": WHISPER_RELEASE,
             "model": MODEL_NAME,
+            "vad_model": VAD_MODEL_NAME,
             "architecture": args.architecture,
         }) + "\n",
         encoding="utf-8",

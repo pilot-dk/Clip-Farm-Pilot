@@ -451,6 +451,31 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         subscribe_animation=True,
         export_metadata=full_square_metadata,
     )
+    # Pause and filler removal run the bundled Silero detector and Whisper with DTW
+    # timing and the filler prompt, so each platform's own binaries are exercised.
+    cleaned_id = uuid.uuid4().hex
+    cleaned_metadata: dict[str, object] = {}
+    export_clip(
+        source=cached_source,
+        output=exports_dir / f"{cleaned_id}.mp4",
+        start=0,
+        end=info.duration,
+        aspect="16:9",
+        edit_mode="full-length",
+        resolution="720p",
+        remove_silence=True,
+        remove_filler_words=True,
+        export_metadata=cleaned_metadata,
+    )
+    cleaned_summary = cleaned_metadata.get("full_length_summary", {})
+    cleaned_info = probe_video(exports_dir / f"{cleaned_id}.mp4")
+    if (
+        not cleaned_summary.get("remove_silence")
+        or not cleaned_summary.get("remove_filler_words")
+        or cleaned_info.duration <= 0.5
+        or cleaned_info.frame_rate != info.frame_rate
+    ):
+        raise RuntimeError("The bundled pause and filler cleanup did not produce the expected video.")
     expected_manual_time = [0.6]
     if (
         landscape_sound_times.get("vine-boom") != expected_manual_time
@@ -492,7 +517,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     if not title_result["title"] or title_result["filename"].startswith(f"{APP_NAME}-"):
         raise RuntimeError("The bundled viral filename generator did not produce a content-aware title.")
     library.move_to_trash(video_id)
-    expected_exports = [landscape_id, portrait_id, square_id, gaming_id, full_square_id]
+    expected_exports = [landscape_id, portrait_id, square_id, gaming_id, full_square_id, cleaned_id]
     if cached_source.exists() or any(not (exports_dir / f"{item}.mp4").is_file() for item in expected_exports):
         raise RuntimeError("Deleting the bundled test VOD did not preserve its exports.")
     if any(item["video_id"] == video_id for item in library.list_items()):

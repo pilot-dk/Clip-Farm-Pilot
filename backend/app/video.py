@@ -27,6 +27,7 @@ from .captions import (
     LIVE_CAPTION_SCHEMES,
     LiveCaptionScheme,
     live_caption_font_size,
+    detect_speech_segments,
     live_caption_margin,
     transcribe_words,
     write_live_caption_ass,
@@ -1549,16 +1550,26 @@ def _store_bounded_cache(cache: dict, key: tuple[object, ...], value: object) ->
         cache.pop(next(iter(cache)))
 
 
-def _transcribe_words_cached(source: Path, start: float, end: float) -> list[CaptionWord]:
+def _transcribe_words_cached(
+    source: Path,
+    start: float,
+    end: float,
+    include_fillers: bool = False,
+) -> list[CaptionWord]:
     """Reuse one offline transcript across cleanup, captions, sounds, and titles."""
     resolved = Path(source).resolve()
-    cache_key = _analysis_cache_key(resolved, max(0.0, start), max(start + 0.1, end), "transcript")
+    cache_key = _analysis_cache_key(
+        resolved, max(0.0, start), max(start + 0.1, end), "transcript", bool(include_fillers)
+    )
     with _TRANSCRIPT_CACHE_LOCK:
         cached = _TRANSCRIPT_CACHE.get(cache_key)
         if cached is not None:
             return list(cached)
 
-    words = transcribe_words(resolved, start, end, ffmpeg_executable())
+    if include_fillers:
+        words = transcribe_words(resolved, start, end, ffmpeg_executable(), include_fillers=True)
+    else:
+        words = transcribe_words(resolved, start, end, ffmpeg_executable())
     with _TRANSCRIPT_CACHE_LOCK:
         _TRANSCRIPT_CACHE[cache_key] = tuple(words)
         while len(_TRANSCRIPT_CACHE) > _TRANSCRIPT_CACHE_LIMIT:
@@ -2122,11 +2133,88 @@ def _merge_cut_intervals(
     return [(round(start, 3), round(end, 3)) for start, end in merged]
 
 
+def _filler_extent(
+    levels: np.ndarray,
+    onset: float,
+    next_onset: float,
+    depth: float = 0.65,
+) -> tuple[float | None, float | None]:
+    """Where a filler's own sound starts and stops, found in the voice-band level.
+
+    The filler's loudness is measured just after its transcribed start and the gap
+    level is the quietest nearby. The filler ends at the first dip that falls
+    `depth` of the way from its loudness down to that gap level (the gap before the
+    next word, or the start of a pause) and begins after the last such dip before
+    it. Brief dips inside a drawn-out "uhhh" are shallower, so they do not end it.
+    The next word's time is only an outer limit, because Whisper can place it late.
+    """
+    if levels.size == 0:
+        return None, None
+    frame = _speech_frame_seconds()
+    centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
+
+    def index_at(seconds: float) -> int:
+        return int(min(levels.size - 1, max(0, round((seconds - centre) / frame))))
+
+    first = index_at(onset - 0.20)
+    last = index_at(min(next_onset + 0.02, onset + 1.6))
+    if last - first < 6:
+        return None, None
+    local = np.convolve(levels[first:last + 1], np.ones(3) / 3, mode="same")
+
+    def at(seconds: float) -> int:
+        return index_at(seconds) - first
+
+    body = local[max(0, at(onset)):max(1, at(onset + 0.15))]
+    if body.size == 0:
+        return None, None
+    loudness = float(np.percentile(body, 80))
+    gap_level = float(np.percentile(local, 5))
+    if loudness - gap_level < 9.0:
+        return None, None  # no clear gap around this filler
+    quiet = loudness - depth * (loudness - gap_level)
+
+    end_index = None
+    position = max(0, at(onset + 0.10))
+    while position < local.size:
+        if local[position] < quiet:
+            while position + 1 < local.size and local[position + 1] <= local[position]:
+                position += 1
+            end_index = position
+            break
+        position += 1
+
+    start_index = None
+    lowest = max(0, at(onset - 0.15))
+    position = min(local.size - 1, at(onset + 0.05))
+    while position >= lowest:
+        if local[position] < quiet:
+            while position - 1 >= lowest and local[position - 1] <= local[position]:
+                position -= 1
+            start_index = position
+            break
+        position -= 1
+
+    def time_of(index: int | None) -> float | None:
+        return None if index is None else (first + index) * frame + centre
+
+    return time_of(start_index), time_of(end_index)
+
+
 def _filler_word_cut_intervals(
     words: list[CaptionWord] | tuple[CaptionWord, ...],
     duration: float,
+    levels: np.ndarray | None = None,
+    speech_segments: list[tuple[float, float]] | None = None,
 ) -> tuple[list[tuple[float, float]], int]:
-    """Return conservative filler-word cuts using local word timestamps."""
+    """Return filler-word cuts from the transcript, placed on the audio when available.
+
+    With the voice-band levels, a filler is cut from the dip before its sound to
+    the dip after it, so a drawn-out "uhhh" goes entirely. Where no clear dip is
+    found the cut stays slightly inside the filler, so an imprecise word time leaves
+    a sliver of "uh" rather than clipping the neighbouring word.
+    """
+    use_audio = levels is not None and levels.size > 0
     normalized = [_normalized_caption_word(word) for word in words]
     intervals: list[tuple[float, float]] = []
     removed_words = 0
@@ -2155,6 +2243,23 @@ def _filler_word_cut_intervals(
         right_room = max(0.0, next_start - last.end)
         start = max(0.0, first.start - min(0.055, left_room * 0.45))
         end = min(duration, last.end + min(0.075, right_room * 0.45))
+        if use_audio:
+            outer_limit = next_start
+            for segment_start, segment_end in speech_segments or ():
+                if segment_start - 0.05 <= first.start <= segment_end:
+                    outer_limit = min(outer_limit, segment_end + 0.05)
+                    break
+            sound_start, sound_end = _filler_extent(levels, first.start, outer_limit)
+            start = sound_start if sound_start is not None else first.start + 0.02
+            # Over game audio a quiet "mm" can sink to the background level, so the
+            # audio alone may end the cut early; the transcript's end of the filler
+            # (never closer than 50 ms to the next word) keeps it from falling short.
+            transcript_end = min(last.end, next_start - 0.05)
+            end = transcript_end if sound_end is None else max(sound_end, transcript_end)
+            start, end = max(0.0, start), min(duration, end)
+            if end - start < 0.06:
+                index += phrase_length
+                continue
         intervals.append((start, end))
         removed_words += phrase_length
         index += phrase_length
@@ -2162,54 +2267,324 @@ def _filler_word_cut_intervals(
     return _merge_cut_intervals(intervals, duration), removed_words
 
 
-def _silence_cut_intervals(
+# Pauses are gaps in the creator's voice, not digital silence. Stream VODs keep game
+# audio, music, and mic hiss running between sentences, so a fixed silence level never
+# fires on them. The detector below tracks the recording's own background level and
+# speech level and marks speech relative to both.
+_SPEECH_SAMPLE_RATE = 16_000
+_SPEECH_HOP_SAMPLES = 160  # 10 ms
+_SPEECH_WINDOW_SAMPLES = 400  # 25 ms
+_SPEECH_FFT_SIZE = 512
+_SPEECH_BAND_HZ = (200.0, 7_000.0)  # keeps the fricatives at the ends of words
+_SPEECH_BLOCK_FRAMES = 25  # background and speech levels are tracked per 0.25 s
+_SPEECH_CONTEXT_BLOCKS = 8  # compared across roughly four seconds either side
+_SPEECH_CACHE: dict[tuple[object, ...], np.ndarray] = {}
+_SPEECH_SEGMENT_CACHE: dict[tuple[object, ...], tuple[tuple[float, float], ...]] = {}
+
+
+def _speech_frame_seconds() -> float:
+    return _SPEECH_HOP_SAMPLES / _SPEECH_SAMPLE_RATE
+
+
+def _speech_band_levels(source: Path, start: float, end: float) -> np.ndarray:
+    """Voice-band level in dB for every 10 ms, decoded as a stream in bounded memory."""
+    duration = max(0.1, float(end) - float(start))
+    cache_key = _analysis_cache_key(source, max(0.0, start), max(start + 0.1, end), "speech-levels")
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        cached = _SPEECH_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    command = [
+        ffmpeg_executable(), "-v", "error",
+        "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
+        "-t", f"{duration:.3f}", "-vn", "-ac", "1", "-ar", str(_SPEECH_SAMPLE_RATE),
+        "-f", "s16le", "pipe:1",
+    ]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if process.stdout is None:
+        raise RuntimeError("FFmpeg did not provide decoded audio.")
+    window = np.hanning(_SPEECH_WINDOW_SAMPLES).astype(np.float32)
+    frequencies = np.fft.rfftfreq(_SPEECH_FFT_SIZE, 1.0 / _SPEECH_SAMPLE_RATE)
+    band = (frequencies >= _SPEECH_BAND_HZ[0]) & (frequencies <= _SPEECH_BAND_HZ[1])
+    offsets = np.arange(_SPEECH_WINDOW_SAMPLES)
+    chunk_bytes = _SPEECH_SAMPLE_RATE * np.dtype(np.int16).itemsize
+    carry = np.zeros(0, dtype=np.float32)
+    levels: list[np.ndarray] = []
+    try:
+        while True:
+            raw = _read_exactly(process.stdout, chunk_bytes)
+            if not raw:
+                break
+            usable = len(raw) - (len(raw) % 2)
+            fresh = np.frombuffer(raw[:usable], dtype=np.int16).astype(np.float32) / 32768.0
+            samples = np.concatenate([carry, fresh]) if carry.size else fresh
+            frame_count = (samples.size - _SPEECH_WINDOW_SAMPLES) // _SPEECH_HOP_SAMPLES + 1
+            if frame_count > 0:
+                indexes = np.arange(frame_count)[:, None] * _SPEECH_HOP_SAMPLES + offsets[None, :]
+                spectrum = np.fft.rfft(samples[indexes] * window, n=_SPEECH_FFT_SIZE)
+                power = np.square(np.abs(spectrum[:, band])).sum(axis=1)
+                levels.append((10.0 * np.log10(power + 1e-10)).astype(np.float32))
+                carry = samples[frame_count * _SPEECH_HOP_SAMPLES:]
+            else:
+                carry = samples
+            if len(raw) < chunk_bytes:
+                break
+    finally:
+        process.stdout.close()
+        process.wait()
+    result = np.concatenate(levels) if levels else np.zeros(0, dtype=np.float32)
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        _store_bounded_cache(_SPEECH_CACHE, cache_key, result)
+    return result
+
+
+def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """Start and end (exclusive) frame of every run of True values."""
+    if mask.size == 0:
+        return []
+    padded = np.concatenate([[False], mask, [False]])
+    edges = np.flatnonzero(np.diff(padded.astype(np.int8)))
+    return list(zip(edges[0::2].tolist(), edges[1::2].tolist()))
+
+
+def _rolling_extreme(values: np.ndarray, radius: int, use_max: bool) -> np.ndarray:
+    padded = np.pad(values, radius, mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, 2 * radius + 1)
+    return windows.max(axis=1) if use_max else windows.min(axis=1)
+
+
+def _speech_activity(levels: np.ndarray) -> np.ndarray:
+    """Mark the 10 ms frames where someone is speaking.
+
+    The background level is the quietest stretch nearby and the speech level the
+    loudest; a frame is speech when it rises well above the background relative to
+    that contrast, so the same rule works in a quiet room and over loud gameplay.
+    """
+    count = int(levels.size)
+    if count == 0:
+        return np.zeros(0, dtype=bool)
+    block = _SPEECH_BLOCK_FRAMES
+    block_count = -(-count // block)
+    padded = np.pad(levels, (0, block_count * block - count), mode="edge").reshape(block_count, block)
+    background = _rolling_extreme(np.percentile(padded, 20, axis=1), _SPEECH_CONTEXT_BLOCKS, use_max=False)
+    peak = _rolling_extreme(np.percentile(padded, 95, axis=1), _SPEECH_CONTEXT_BLOCKS, use_max=True)
+    background = np.repeat(background, block)[:count]
+    contrast = np.maximum(0.0, np.repeat(peak, block)[:count] - background)
+    enter = levels > background + np.maximum(7.0, 0.45 * contrast)
+    stay = levels > background + np.maximum(4.0, 0.30 * contrast)
+    # Hysteresis: a stretch above the lower line counts only if it also crosses the higher one.
+    speech = np.zeros(count, dtype=bool)
+    for first, last in _runs(stay):
+        if enter[first:last].any():
+            speech[first:last] = True
+    # Close the short dips inside and between words, then drop blips too short to be speech.
+    frame = _speech_frame_seconds()
+    for first, last in _runs(~speech):
+        if 0 < first and last < count and (last - first) * frame < 0.15:
+            speech[first:last] = True
+    for first, last in _runs(speech):
+        if (last - first) * frame < 0.12:
+            speech[first:last] = False
+    return speech
+
+
+def _tighten_speech_edges(
+    segments: list[tuple[float, float]],
+    levels: np.ndarray,
+    duration: float,
+    start_reach: float = 0.35,
+    start_margin_db: float = 6.0,
+    end_reach: float = 0.25,
+    end_margin_db: float = 3.0,
+) -> list[tuple[float, float]]:
+    """Trim the padding Silero leaves around speech, using the voice-band level.
+
+    Silero decides where the pauses are; this only moves each segment edge inward
+    to where the voice actually rises above the background. Words start sharply but
+    trail off, so the end of speech is trimmed more gently than the start, keeping
+    soft final sounds such as the "s" in "closes" that fade under game audio.
+    """
+    if not segments or levels.size == 0:
+        return segments
+    frame = _speech_frame_seconds()
+    centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
+
+    def index_at(seconds: float) -> int:
+        return int(min(levels.size - 1, max(0, round((seconds - centre) / frame))))
+
+    def background_near(gap_start: float, gap_end: float) -> float | None:
+        first, last = index_at(gap_start), index_at(gap_end)
+        if last - first < 8:
+            return None
+        return float(np.median(levels[first:last]))
+
+    tightened: list[tuple[float, float]] = []
+    start_frames = int(round(start_reach / frame))
+    end_frames = int(round(end_reach / frame))
+    for position, (segment_start, segment_end) in enumerate(segments):
+        before = segments[position - 1][1] if position else 0.0
+        after = segments[position + 1][0] if position + 1 < len(segments) else duration
+        new_start, new_end = segment_start, segment_end
+        floor = background_near(before, segment_start)
+        if floor is not None:
+            first = index_at(segment_start)
+            window = levels[first:first + start_frames]
+            loud = np.flatnonzero(window > floor + start_margin_db)
+            if loud.size:
+                new_start = max(segment_start, (first + loud[0]) * frame + centre - 0.03)
+        floor = background_near(segment_end, after)
+        if floor is not None:
+            last = index_at(segment_end)
+            window = levels[max(0, last - end_frames):last + 1]
+            loud = np.flatnonzero(window > floor + end_margin_db)
+            if loud.size:
+                new_end = min(segment_end, (last - (window.size - 1 - loud[-1])) * frame + centre + 0.03)
+        if new_end - new_start >= 0.08:
+            tightened.append((round(float(new_start), 3), round(float(new_end), 3)))
+        else:
+            tightened.append((segment_start, segment_end))
+    return tightened
+
+
+def _speech_segments(source: Path, start: float, end: float) -> list[tuple[float, float]]:
+    """Where someone is speaking, from the bundled Silero model when available.
+
+    Builds without the model (a source checkout, for example) fall back to the
+    loudness-based detector above, which is weaker over loud game audio.
+    """
+    duration = max(0.1, float(end) - float(start))
+    cache_key = _analysis_cache_key(source, max(0.0, start), max(start + 0.1, end), "speech-segments")
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        cached = _SPEECH_SEGMENT_CACHE.get(cache_key)
+        if cached is not None:
+            return list(cached)
+    try:
+        segments = detect_speech_segments(source, start, end, ffmpeg_executable())
+    except (OSError, RuntimeError, ValueError):
+        segments = None
+    levels = _speech_band_levels(source, start, end)
+    if segments is not None:
+        result = _tighten_speech_edges(segments, levels, duration)
+        with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+            _store_bounded_cache(_SPEECH_SEGMENT_CACHE, cache_key, tuple(result))
+        return result
+    speech = _speech_activity(levels)
+    frame = _speech_frame_seconds()
+    centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
+    return [
+        (round(first * frame + centre, 3), round(min(duration, last * frame + centre), 3))
+        for first, last in _runs(speech)
+    ]
+
+
+def _speech_context(
+    source: Path, start: float, end: float
+) -> tuple[np.ndarray | None, list[tuple[float, float]] | None]:
+    """Voice-band levels and speech segments for placing filler cuts, when decodable."""
+    try:
+        return _speech_band_levels(source, start, end), _speech_segments(source, start, end)
+    except (OSError, RuntimeError):
+        return None, None
+
+
+# A gap in speech up to this long is a pause between sentences and is tightened.
+# A longer gap is usually content -- gameplay, a song, a moment of concentration --
+# so only its genuinely quiet parts are removed.
+_LONGEST_SPEECH_PAUSE = 3.0
+# "Genuinely quiet" means at least this far below the level of the speech itself.
+_DEAD_AIR_DB = 30.0
+
+
+def _dead_air(
+    levels: np.ndarray,
+    segments: list[tuple[float, float]],
+    gap_start: float,
+    gap_end: float,
+    minimum: float,
+) -> list[tuple[float, float]]:
+    """Stretches inside a gap that are silent compared with the speech.
+
+    With no speech at all (music, or gameplay nobody talks over), silence is judged
+    against the loudest audio in the selection instead.
+    """
+    if levels.size == 0:
+        return []
+    frame = _speech_frame_seconds()
+    centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
+
+    def index_at(seconds: float) -> int:
+        return int(min(levels.size, max(0, round((seconds - centre) / frame))))
+
+    spoken = np.concatenate([levels[index_at(a):index_at(b)] for a, b in segments] or [levels[:0]])
+    reference = float(np.median(spoken)) if spoken.size else float(np.percentile(levels, 90))
+    quiet = levels < reference - _DEAD_AIR_DB
+    first, last = index_at(gap_start), index_at(gap_end)
+    stretches: list[tuple[float, float]] = []
+    for run_start, run_end in _runs(quiet[first:last]):
+        a, b = (first + run_start) * frame + centre, (first + run_end) * frame + centre
+        if b - a >= minimum:
+            stretches.append((max(gap_start, a), min(gap_end, b)))
+    return stretches
+
+
+def _speech_pause_cut_intervals(
     source: Path,
     start: float,
     end: float,
-    minimum_silence: float = 0.68,
-    threshold_db: float = -42.0,
+    minimum_pause: float = 0.40,
+    tail_keep: float = 0.15,
+    lead_keep: float = 0.10,
 ) -> list[tuple[float, float]]:
-    """Find removable pauses while preserving a short natural breath at each edge."""
+    """Find removable pauses in speech, keeping a short natural breath at each edge.
+
+    Gaps between sentences up to three seconds are tightened whatever is playing
+    underneath. Longer gaps, and the stretches before the first word and after the
+    last, keep their audible content and lose only dead air.
+    `tail_keep` is left after speech ends and `lead_keep` before it resumes, so a
+    tightened pause is about a quarter of a second, like a natural breath.
+    """
     duration = max(0.1, float(end) - float(start))
     cache_key = _analysis_cache_key(
-        source,
-        max(0.0, start),
-        max(start + 0.1, end),
-        "silence",
-        round(minimum_silence, 3),
-        round(threshold_db, 2),
+        source, max(0.0, start), max(start + 0.1, end), "speech-pauses",
+        round(minimum_pause, 3), round(tail_keep, 3), round(lead_keep, 3),
+        _LONGEST_SPEECH_PAUSE, _DEAD_AIR_DB,
     )
     with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
         cached = _SILENCE_CUT_CACHE.get(cache_key)
         if cached is not None:
             return list(cached)
-    command = [
-        ffmpeg_executable(), "-hide_banner", "-nostats", "-ss", f"{start:.3f}",
-        "-t", f"{duration:.3f}", "-i", str(source), "-vn",
-        "-af", f"asetpts=PTS-STARTPTS,silencedetect=noise={threshold_db:.1f}dB:d={minimum_silence:.2f}",
-        "-f", "null", "-",
-    ]
-    result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
-    if result.returncode != 0:
+    try:
+        segments = _speech_segments(source, start, end)
+        levels = _speech_band_levels(source, start, end)
+    except (OSError, RuntimeError):
         return []
-    output = result.stderr.decode("utf-8", errors="replace")
-    starts = [float(value) for value in re.findall(r"silence_start:\s*([0-9.]+)", output)]
-    ends = [float(value) for value in re.findall(r"silence_end:\s*([0-9.]+)", output)]
-    if len(starts) > len(ends):
-        ends.append(duration)
-
+    # The gaps between speech, including dead air before the first word and after the last.
+    boundaries = [0.0]
+    for segment_start, segment_end in segments:
+        boundaries.extend([segment_start, segment_end])
+    boundaries.append(duration)
     cuts: list[tuple[float, float]] = []
-    for silence_start, silence_end in zip(starts, ends):
-        silence_start = max(0.0, min(duration, silence_start))
-        silence_end = max(silence_start, min(duration, silence_end))
-        # Keep 120 ms at both speech boundaries so edits stay intelligible and do
-        # not clip breaths or consonants. Leading/trailing dead air keeps 80 ms.
-        left_keep = 0.08 if silence_start <= 0.02 else 0.12
-        right_keep = 0.08 if silence_end >= duration - 0.02 else 0.12
-        cut_start = silence_start + left_keep
-        cut_end = silence_end - right_keep
-        if cut_end - cut_start >= 0.20:
-            cuts.append((cut_start, cut_end))
+    for index in range(0, len(boundaries), 2):
+        gap_start, gap_end = boundaries[index], min(duration, boundaries[index + 1])
+        if gap_end - gap_start < minimum_pause:
+            continue
+        opening, closing = index == 0, index + 2 >= len(boundaries)
+        # Only a gap between two stretches of speech is a pause between sentences.
+        # Before the first word or after the last it may be an intro or gameplay.
+        if not opening and not closing and gap_end - gap_start <= _LONGEST_SPEECH_PAUSE:
+            stretches = [(gap_start, gap_end)]
+        else:
+            stretches = _dead_air(levels, segments, gap_start, gap_end, minimum_pause)
+        for stretch_start, stretch_end in stretches:
+            # Keep a breath beside speech; dead air before the first word or after the
+            # last keeps a little less, and quiet inside a long gap keeps the same.
+            touches_speech_before = stretch_start <= gap_start + 0.01 and not opening
+            touches_speech_after = stretch_end >= gap_end - 0.01 and not closing
+            left_keep = tail_keep if touches_speech_before else 0.08
+            right_keep = lead_keep if touches_speech_after else 0.08
+            cut_start, cut_end = stretch_start + left_keep, stretch_end - right_keep
+            if cut_end - cut_start >= 0.15:
+                cuts.append((cut_start, cut_end))
     merged = _merge_cut_intervals(cuts, duration)
     with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
         _store_bounded_cache(_SILENCE_CUT_CACHE, cache_key, tuple(merged))
@@ -2344,15 +2719,17 @@ def _prepare_full_length_source(
     remove_filler_words: bool,
 ) -> dict[str, object]:
     duration = max(0.1, float(end) - float(start))
-    silence_cuts = _silence_cut_intervals(source, start, end) if remove_silence else []
+    silence_cuts = _speech_pause_cut_intervals(source, start, end) if remove_silence else []
     filler_cuts: list[tuple[float, float]] = []
     filler_count = 0
     if remove_filler_words:
         try:
-            transcript_words = _transcribe_words_cached(source, start, end)
+            transcript_words = _transcribe_words_cached(source, start, end, include_fillers=True)
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
-        filler_cuts, filler_count = _filler_word_cut_intervals(transcript_words, duration)
+        filler_cuts, filler_count = _filler_word_cut_intervals(
+            transcript_words, duration, *_speech_context(source, start, end)
+        )
 
     cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts], duration)
     segments = _kept_segments(cuts, duration)
@@ -2433,7 +2810,9 @@ def _export_full_length_single_pass(
     transcript_words: list[CaptionWord] = []
     if needs_transcript:
         try:
-            transcript_words = _transcribe_words_cached(source, selection_start, selection_end)
+            transcript_words = _transcribe_words_cached(
+                source, selection_start, selection_end, include_fillers=remove_filler_words
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             if remove_filler_words:
                 raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
@@ -2441,14 +2820,16 @@ def _export_full_length_single_pass(
                 raise
 
     silence_cuts = (
-        _silence_cut_intervals(source, selection_start, selection_end)
+        _speech_pause_cut_intervals(source, selection_start, selection_end)
         if remove_silence
         else []
     )
     filler_cuts: list[tuple[float, float]] = []
     filler_count = 0
     if remove_filler_words:
-        filler_cuts, filler_count = _filler_word_cut_intervals(transcript_words, selection_duration)
+        filler_cuts, filler_count = _filler_word_cut_intervals(
+            transcript_words, selection_duration, *_speech_context(source, selection_start, selection_end)
+        )
     cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts], selection_duration)
     segments = _kept_segments(cuts, selection_duration)
     output_duration = sum(segment_end - segment_start for segment_start, segment_end in segments)
