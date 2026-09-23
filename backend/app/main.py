@@ -149,6 +149,7 @@ class ExportRequest(BaseModel):
     resolution: Literal["720p", "1080p", "2160p"] = "1080p"
     viral_title: bool = True
     remove_silence: bool = False
+    remove_still_scenes: bool = False
     remove_filler_words: bool = False
     subscribe_animation: bool = False
 
@@ -418,6 +419,7 @@ def export(video_id: str, req: ExportRequest):
             export_metadata=export_metadata,
             edit_mode=req.edit_mode,
             remove_silence=req.remove_silence,
+            remove_still_scenes=req.remove_still_scenes,
             remove_filler_words=req.remove_filler_words,
             subscribe_animation=req.subscribe_animation,
         )

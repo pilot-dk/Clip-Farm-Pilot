@@ -452,7 +452,8 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         export_metadata=full_square_metadata,
     )
     # Pause and filler removal run the bundled Silero detector and Whisper with DTW
-    # timing and the filler prompt, so each platform's own binaries are exercised.
+    # timing and the filler prompt, and still-scene removal decodes the picture, so
+    # each platform's own binaries are exercised.
     cleaned_id = uuid.uuid4().hex
     cleaned_metadata: dict[str, object] = {}
     export_clip(
@@ -465,6 +466,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         resolution="720p",
         remove_silence=True,
         remove_filler_words=True,
+        remove_still_scenes=True,
         export_metadata=cleaned_metadata,
     )
     cleaned_summary = cleaned_metadata.get("full_length_summary", {})
@@ -472,10 +474,11 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     if (
         not cleaned_summary.get("remove_silence")
         or not cleaned_summary.get("remove_filler_words")
+        or not cleaned_summary.get("remove_still_scenes")
         or cleaned_info.duration <= 0.5
         or cleaned_info.frame_rate != info.frame_rate
     ):
-        raise RuntimeError("The bundled pause and filler cleanup did not produce the expected video.")
+        raise RuntimeError("The bundled pause, filler, and still-scene cleanup did not produce the expected video.")
     expected_manual_time = [0.6]
     if (
         landscape_sound_times.get("vine-boom") != expected_manual_time

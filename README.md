@@ -152,7 +152,7 @@ The editor now includes:
 
 ## Full-Length YouTube Editor
 
-Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** or a **1:1 square** video at 720p, 1080p, or 4K. Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses** and **Remove filler words** can be enabled independently or together; both run offline on your computer.
+Choose **Full YouTube video** at the top of the studio, then load an upload or saved VOD. The editor selects the complete timeline and lets you export either **16:9** or a **1:1 square** video at 720p, 1080p, or 4K. Square full videos retain the optional creator caption controls, including emoji, size, and top/centre/bottom placement. **Remove silent pauses**, **Remove still scenes**, and **Remove filler words** can be enabled independently or together; all run offline on your computer.
 
 ### How pause and filler removal work
 
@@ -161,6 +161,8 @@ Choose **Full YouTube video** at the top of the studio, then load an upload or s
 - A gap between two sentences of up to three seconds is tightened to a natural breath: about 0.15 s is kept after you stop and 0.10 s before you start again, so words are never clipped.
 - Longer gaps, and the stretches before your first word and after your last, are treated as content. Gameplay, music, or a quiet moment of concentration stays; only genuine dead air — at least 30 dB quieter than your voice — is removed from them.
 - The speech model occasionally misses a word said over loud game audio, often the first word of a sentence. Pause removal therefore also transcribes the video, and any word Whisper hears inside a pause keeps the same breath around it as the rest of your speech. Fillers, sound tags such as “[music]”, and words over silence are not protected.
+
+**Remove still scenes** cuts stretches of five seconds or more where barely anything on screen moves: lobby and map screens, a BRB card, or a phone left filming during a break. The picture is sampled four times a second, and a stretch stays still while no more than 5% of the frame differs from how it looked when the stretch began, so a moving face cam, a scrolling chat box, or a cursor does not interrupt it, but a slow camera pan eventually does. The first second and the last half second of each still scene are kept so the viewer still sees it, and nothing is cut while anyone is speaking. It is off by default.
 
 **Remove filler words** transcribes the video with the bundled Whisper model, aligned to the audio word by word, and starts it from a sample transcript that keeps hesitations so it writes “um” and “uh” down instead of tidying them away. Each filler is then cut from the quiet dip just before its sound to the dip just after it, so a drawn-out “uhhh” goes completely while the neighbouring words stay intact. Fillers that the speech engine mishears as a real word (for example “I’m”) are left in rather than risk cutting real speech.
 

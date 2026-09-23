@@ -1681,6 +1681,10 @@
                   <label class="switch"><input id="removeSilenceToggle" type="checkbox" checked /><span class="switch-track"></span></label>
                 </div>
                 <div class="full-edit-option">
+                  <span class="full-edit-copy"><strong>Remove still scenes</strong><small>Cuts stretches of five seconds or more where barely anything on screen moves, such as lobbies, menus, and breaks. Speech is always kept.</small></span>
+                  <label class="switch"><input id="removeStillScenesToggle" type="checkbox" /><span class="switch-track"></span></label>
+                </div>
+                <div class="full-edit-option">
                   <span class="full-edit-copy"><strong>Remove filler words</strong><small>Uses offline speech recognition to cut “um”, “uh”, “you know”, and similar filler.</small></span>
                   <label class="switch"><input id="removeFillerWordsToggle" type="checkbox" /><span class="switch-track"></span></label>
                 </div>
@@ -3233,6 +3237,7 @@
             resolution: state.resolution,
             viral_title: $("viralTitleToggle").checked,
             remove_silence: isFullLength && $("removeSilenceToggle").checked,
+            remove_still_scenes: isFullLength && $("removeStillScenesToggle").checked,
             remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
             subscribe_animation: isFullLength && $("subscribeAnimationToggle").checked,
           }),
@@ -3273,10 +3278,12 @@
           const removed = Number(summary.removed_seconds) || 0;
           const fillerCount = Number(summary.filler_words_removed) || 0;
           const silenceCount = Number(summary.silence_sections_removed) || 0;
+          const stillCount = Number(summary.still_scenes_removed) || 0;
           const improvements = [];
           if (removed > .05) improvements.push(`${formatTime(removed, true)} removed`);
           if (silenceCount) improvements.push(`${silenceCount} silent pause${silenceCount === 1 ? "" : "s"}`);
           if (fillerCount) improvements.push(`${fillerCount} filler word${fillerCount === 1 ? "" : "s"}`);
+          if (stillCount) improvements.push(`${stillCount} still scene${stillCount === 1 ? "" : "s"}`);
           if (summary.subscribe_animation) improvements.push("subscribe animation added at 00:00");
           if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) improvements.push(`${data.live_caption_word_count} caption words timed`);
           setStatus(
@@ -3364,6 +3371,7 @@
       $("vineBoomToggle").checked = false;
       $("checkSoundToggle").checked = false;
       $("removeSilenceToggle").checked = true;
+      $("removeStillScenesToggle").checked = false;
       $("removeFillerWordsToggle").checked = false;
       $("subscribeAnimationToggle").checked = false;
       $("autoSoundEffectToggle").checked = true;

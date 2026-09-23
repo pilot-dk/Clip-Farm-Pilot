@@ -2919,6 +2919,139 @@ def _speech_pause_cut_intervals(
     return merged
 
 
+# Still scenes: stretches where the picture barely changes, such as a lobby or map
+# screen, a BRB card, or a phone left filming while the streamer rests. Frames are
+# sampled four times a second at 96x54 in grey. A stretch stays still while no
+# more than 5% of the frame differs from its first frame, so a moving face cam,
+# a chat box, or a cursor does not break it, but a slow pan eventually does.
+# Calibrated on stream VODs: Mario Kart lobbies, gym rest breaks between sets,
+# and reaction-stream title cards come out still; driving footage does not.
+_STILL_SAMPLE_FPS = 4
+_STILL_WIDTH, _STILL_HEIGHT = 96, 54
+_STILL_PIXEL_CHANGE = 12          # Grey levels a pixel must move to count as changed.
+_STILL_AREA_LIMIT = 0.05          # Share of the frame that may change while still.
+_STILL_MIN_SECONDS = 5.0
+_STILL_KEEP_START = 1.0           # Kept so each still scene still registers.
+_STILL_KEEP_END = 0.5
+_STILL_SPEECH_MARGIN = 0.30       # Kept around speech inside a still stretch.
+_STILL_CACHE: dict[tuple[object, ...], tuple[tuple[float, float], ...]] = {}
+
+
+def _still_stretches_in_frames(frames, frames_per_second: float = _STILL_SAMPLE_FPS) -> list[tuple[float, float]]:
+    """Still stretches, in seconds, in an iterable of equally spaced grey frames.
+
+    Each frame is compared with the first frame of the stretch it may belong to;
+    a single odd frame, such as a flash or a keyframe pulse, does not end it.
+    """
+    stretches: list[tuple[float, float]] = []
+    anchor: np.ndarray | None = None
+    anchor_index = last_still = strikes = 0
+    index = -1
+    for index, frame in enumerate(frames):
+        frame = np.asarray(frame, dtype=np.int16)
+        if anchor is None:
+            anchor, anchor_index, last_still = frame, index, index
+            continue
+        changed = float(np.mean(np.abs(frame - anchor) > _STILL_PIXEL_CHANGE))
+        if changed <= _STILL_AREA_LIMIT:
+            last_still, strikes = index, 0
+            continue
+        strikes += 1
+        if strikes < 2:
+            continue
+        if (last_still - anchor_index) / frames_per_second >= _STILL_MIN_SECONDS:
+            stretches.append((anchor_index / frames_per_second, last_still / frames_per_second))
+        anchor, anchor_index, last_still, strikes = frame, index, index, 0
+    if anchor is not None and (last_still - anchor_index) / frames_per_second >= _STILL_MIN_SECONDS:
+        stretches.append((anchor_index / frames_per_second, last_still / frames_per_second))
+    return stretches
+
+
+def _still_stretches(source: Path, start: float, end: float) -> list[tuple[float, float]]:
+    """Still stretches in a selection, relative to its start, decoded as a stream."""
+    duration = max(0.1, float(end) - float(start))
+    cache_key = _analysis_cache_key(
+        source, max(0.0, start), max(start + 0.1, end), "still-scenes",
+        _STILL_SAMPLE_FPS, _STILL_PIXEL_CHANGE, _STILL_AREA_LIMIT, _STILL_MIN_SECONDS,
+    )
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        cached = _STILL_CACHE.get(cache_key)
+        if cached is not None:
+            return list(cached)
+    frame_bytes = _STILL_WIDTH * _STILL_HEIGHT
+    process = subprocess.Popen(
+        [
+            # Skipping the deblocking filter decodes about a fifth faster and cannot
+            # matter at this size.
+            ffmpeg_executable(), "-v", "error", "-skip_loop_filter", "all",
+            "-ss", f"{max(0.0, float(start)):.3f}", "-t", f"{duration:.3f}", "-i", str(source), "-an",
+            "-vf", f"fps={_STILL_SAMPLE_FPS},scale={_STILL_WIDTH}:{_STILL_HEIGHT}:flags=area,format=gray",
+            "-f", "rawvideo", "pipe:1",
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+
+    def frames():
+        while True:
+            data = _read_exactly(process.stdout, frame_bytes)
+            if len(data) < frame_bytes:
+                return
+            yield np.frombuffer(data, dtype=np.uint8).reshape(_STILL_HEIGHT, _STILL_WIDTH)
+
+    try:
+        stretches = [
+            (round(a, 3), round(min(b, duration), 3)) for a, b in _still_stretches_in_frames(frames())
+        ]
+    finally:
+        process.kill()
+        process.stdout.close()
+        process.wait()
+    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
+        _store_bounded_cache(_STILL_CACHE, cache_key, tuple(stretches))
+    return stretches
+
+
+def _still_scene_cut_intervals(
+    stretches: list[tuple[float, float]],
+    speech_segments: list[tuple[float, float]] | None,
+    words: list[CaptionWord] | tuple[CaptionWord, ...],
+    levels: np.ndarray | None,
+    duration: float,
+) -> list[tuple[float, float]]:
+    """Cut still stretches down to a moment at each edge, never while anyone speaks."""
+    cuts = [
+        (a + _STILL_KEEP_START, b - _STILL_KEEP_END)
+        for a, b in stretches
+        if b - _STILL_KEEP_END - (a + _STILL_KEEP_START) >= 1.0
+    ]
+    if not cuts:
+        return []
+    # Speech inside a still stretch stays, with a little room either side: a
+    # streamer talking over a paused game or an empty room is still content.
+    spoken = [
+        (a - _STILL_SPEECH_MARGIN, b + _STILL_SPEECH_MARGIN) for a, b in speech_segments or []
+    ]
+    kept: list[tuple[float, float]] = []
+    for cut_start, cut_end in cuts:
+        pieces = [(cut_start, cut_end)]
+        for speech_start, speech_end in spoken:
+            pieces = [
+                piece
+                for piece_start, piece_end in pieces
+                for piece in (
+                    [(piece_start, piece_end)]
+                    if speech_end <= piece_start or speech_start >= piece_end
+                    else [(piece_start, min(piece_end, speech_start)), (max(piece_start, speech_end), piece_end)]
+                )
+            ]
+        kept.extend(piece for piece in pieces if piece[1] - piece[0] >= 1.0)
+    # Words the speech detector missed are spared the same way as in pause removal.
+    return _spare_spoken_words(
+        _merge_cut_intervals(kept, duration), words, levels, speech_segments, duration,
+        tail_keep=_STILL_SPEECH_MARGIN, lead_keep=_STILL_SPEECH_MARGIN,
+    )
+
+
 def _spare_spoken_words(
     cuts: list[tuple[float, float]],
     words: list[CaptionWord] | tuple[CaptionWord, ...],
@@ -3375,6 +3508,7 @@ def _export_full_length_single_pass(
     remove_filler_words: bool,
     subscribe_animation: bool,
     export_metadata: dict[str, object] | None,
+    remove_still_scenes: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     """Analyze once and render a complete landscape or square edit in one generation."""
     if aspect not in {"16:9", "1:1"}:
@@ -3401,6 +3535,7 @@ def _export_full_length_single_pass(
     needs_transcript = bool(
         remove_silence
         or remove_filler_words
+        or remove_still_scenes
         or live_captions
         or title_transcript
         or (auto_sound_effect and selected_sound_effects)
@@ -3412,16 +3547,19 @@ def _export_full_length_single_pass(
         )
         context = (
             _speech_context(source, selection_start, selection_end)
-            if remove_silence or remove_filler_words
+            if remove_silence or remove_filler_words or remove_still_scenes
             else (None, None)
         )
         return silence, context
 
-    # The transcript and the pause analysis don't depend on each other, so they
-    # run side by side: Whisper keeps most cores busy while the pause detector runs.
+    # The transcript, the pause analysis, and the picture analysis don't depend on
+    # each other, so they run side by side.
     transcript_words: list[CaptionWord] = []
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"{APP_SLUG}-analysis") as pool:
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix=f"{APP_SLUG}-analysis") as pool:
         speech_job = pool.submit(analyze_speech)
+        still_job = (
+            pool.submit(_still_stretches, source, selection_start, selection_end) if remove_still_scenes else None
+        )
         if needs_transcript:
             transcript_job = pool.submit(
                 _transcribe_words_cached,
@@ -3436,6 +3574,8 @@ def _export_full_length_single_pass(
                     raise
         silence_cuts, speech_context = speech_job.result()
 
+        still_stretches = still_job.result() if still_job is not None else []
+
     # Pause removal never cuts a word the speech detector missed but Whisper heard.
     silence_cuts = _spare_spoken_words(silence_cuts, transcript_words, *speech_context, selection_duration)
     filler_cuts: list[tuple[float, float]] = []
@@ -3444,13 +3584,18 @@ def _export_full_length_single_pass(
         filler_cuts, filler_count = _filler_word_cut_intervals(
             transcript_words, selection_duration, *speech_context
         )
-    cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts], selection_duration)
+    levels, speech_segments = speech_context
+    still_cuts = _still_scene_cut_intervals(
+        still_stretches, speech_segments, transcript_words, levels, selection_duration
+    )
+    cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts, *still_cuts], selection_duration)
     segments = _kept_segments(cuts, selection_duration)
     output_duration = sum(segment_end - segment_start for segment_start, segment_end in segments)
     if output_duration < min(0.5, selection_duration * 0.10):
         segments = [(0.0, selection_duration)]
         output_duration = selection_duration
         silence_cuts = []
+        still_cuts = []
         filler_count = 0
     # Everything downstream follows the segments actually kept, so a sliver too
     # short to keep counts as removed for captions and sound placement too.
@@ -3765,9 +3910,12 @@ def _export_full_length_single_pass(
                 "removed_seconds": round(max(0.0, selection_duration - output_duration), 3),
                 "silence_sections_removed": len(silence_cuts),
                 "filler_words_removed": filler_count,
+                "still_scenes_removed": len(still_cuts),
+                "still_seconds_removed": round(sum(end - start for start, end in still_cuts), 3),
                 "cut_count": len(cuts),
                 "remove_silence": bool(remove_silence),
                 "remove_filler_words": bool(remove_filler_words),
+                "remove_still_scenes": bool(remove_still_scenes),
                 "subscribe_animation": bool(subscribe_animation),
                 "render_passes": 1,
                 "shared_transcript": bool(needs_transcript),
@@ -3856,6 +4004,7 @@ def export_clip(
     remove_silence: bool = False,
     remove_filler_words: bool = False,
     subscribe_animation: bool = False,
+    remove_still_scenes: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     if edit_mode not in {"clip", "full-length"}:
         raise ValueError("Unknown edit mode.")
@@ -3890,6 +4039,7 @@ def export_clip(
             remove_filler_words=remove_filler_words,
             subscribe_animation=subscribe_animation,
             export_metadata=export_metadata,
+            remove_still_scenes=remove_still_scenes,
         )
 
     info = probe_video(source)
