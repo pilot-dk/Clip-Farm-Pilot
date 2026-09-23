@@ -386,29 +386,27 @@ def transcribe_words(
         thread_count = max(1, min(8, os.cpu_count() or 4))
         command = [
             str(cli), "-m", str(model), "-f", str(audio_path),
-            "-l", "en", "-t", str(thread_count), "-np",
-            # DTW aligns each word to the audio far more closely than Whisper's own
-            # timestamps. It needs flash attention off and the full JSON output.
-            "-nfa", "-dtw", "base.en", "-ojf",
+            "-l", "en", "-t", str(thread_count), "-np", "-ojf",
             "-ml", "1", "-sow", "-of", str(result_base),
         ]
         if include_fillers:
             command += ["--prompt", FILLER_PROMPT]
+        # DTW aligns each word to the audio far more closely than Whisper's own
+        # timestamps. It needs flash attention off and the full JSON output.
+        dtw = ["-nfa", "-dtw", "base.en"]
         timeout_seconds = max(90.0, min(1800.0, duration * 8.0))
         result_path = result_base.with_suffix(".json")
         # On a Mac the engine runs on the GPU through Metal: 1.7x faster than eight
         # CPU threads, with the same words and cut placement on the pause and filler
         # benchmark. Elsewhere, and if the GPU run fails, it runs on the CPU.
-        attempts = [[], ["-ng"]] if sys.platform == "darwin" else [["-ng"]]
-        for extra in attempts:
-            transcription = subprocess.run(
-                command + extra,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=timeout_seconds,
-                env=_runtime_environment(cli),
-            )
+        devices = [[], ["-ng"]] if sys.platform == "darwin" else [["-ng"]]
+        # whisper.cpp's DTW aborts on any segment shorter than its seven-token median
+        # filter (and -np hides the message). So a failed run is tried once more
+        # without DTW on the same device: the words then keep Whisper's own
+        # timestamps, less exact, but the export goes ahead.
+        attempts = [option for device in devices for option in (dtw + device, device)]
+        for options in attempts:
+            transcription = _run_whisper(command + options, cli, timeout_seconds)
             if transcription.returncode == 0 and result_path.is_file():
                 break
         if transcription.returncode != 0 or not result_path.is_file():
@@ -421,6 +419,17 @@ def transcribe_words(
         raise RuntimeError("Live-caption transcription timed out. Try exporting a shorter clip.") from exc
     finally:
         shutil.rmtree(temporary_dir, ignore_errors=True)
+
+
+def _run_whisper(command: list[str], cli: Path, timeout_seconds: float) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=timeout_seconds,
+        env=_runtime_environment(cli),
+    )
 
 
 def _ass_color(hex_color: str) -> str:

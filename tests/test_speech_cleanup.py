@@ -227,7 +227,9 @@ class TranscriptTimingTests(unittest.TestCase):
         words = parse_whisper_words(payload, 2.0)
         self.assertEqual((words[0].start, words[0].end), (0.1, 0.42))
 
-    def _commands(self, include_fillers: bool = False, gpu_fails: bool = False) -> list[list[str]]:
+    def _commands(
+        self, include_fillers: bool = False, gpu_fails: bool = False, dtw_aborts: bool = False
+    ) -> list[list[str]]:
         seen: list[list[str]] = []
 
         def fake_run(command, **kwargs):
@@ -235,6 +237,8 @@ class TranscriptTimingTests(unittest.TestCase):
             if "-of" in command:
                 if gpu_fails and "-ng" not in command:
                     return subprocess.CompletedProcess(command, 1, b"", b"ggml_metal_init: error")
+                if dtw_aborts and "-dtw" in command:
+                    return subprocess.CompletedProcess(command, -6, b"", b"read_audio_data: trying to decode with miniaudio\n")
                 Path(str(command[command.index("-of") + 1]) + ".json").write_text('{"transcription": []}')
             else:
                 Path(str(command[-1])).write_bytes(b"\0" * 256)
@@ -257,10 +261,21 @@ class TranscriptTimingTests(unittest.TestCase):
             self.assertEqual(len(self._commands()), 1)
             self.assertNotIn("-ng", self._commands()[0])
             retried = self._commands(gpu_fails=True)
-        self.assertEqual(len(retried), 2)
-        self.assertIn("-ng", retried[1])
+        # The GPU with and without DTW, then the CPU, which keeps DTW.
+        self.assertEqual([("-ng" in c, "-dtw" in c) for c in retried], [(False, True), (False, False), (True, True)])
         with patch.object(captions.sys, "platform", "win32"):
             self.assertIn("-ng", self._commands()[0])
+
+    def test_a_dtw_abort_on_a_short_segment_is_transcribed_again_without_dtw(self):
+        with patch.object(captions.sys, "platform", "darwin"):
+            commands = self._commands(include_fillers=True, dtw_aborts=True)
+        self.assertEqual(len(commands), 2)
+        self.assertIn("-dtw", commands[0])
+        self.assertNotIn("-dtw", commands[1])
+        self.assertNotIn("-nfa", commands[1])
+        # Still on the GPU, and still with the filler prompt.
+        self.assertNotIn("-ng", commands[1])
+        self.assertIn("--prompt", commands[1])
 
     def test_transcription_uses_dtw_timing(self):
         command = self._command(include_fillers=False)
