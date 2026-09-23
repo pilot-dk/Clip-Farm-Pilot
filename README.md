@@ -160,6 +160,7 @@ Choose **Full YouTube video** at the top of the studio, then load an upload or s
 
 - A gap between two sentences of up to three seconds is tightened to a natural breath: about 0.15 s is kept after you stop and 0.10 s before you start again, so words are never clipped.
 - Longer gaps, and the stretches before your first word and after your last, are treated as content. Gameplay, music, or a quiet moment of concentration stays; only genuine dead air — at least 30 dB quieter than your voice — is removed from them.
+- The speech model occasionally misses a word said over loud game audio, often the first word of a sentence. Pause removal therefore also transcribes the video, and any word Whisper hears inside a pause keeps the same breath around it as the rest of your speech. Fillers, sound tags such as “[music]”, and words over silence are not protected.
 
 **Remove filler words** transcribes the video with the bundled Whisper model, aligned to the audio word by word, and starts it from a sample transcript that keeps hesitations so it writes “um” and “uh” down instead of tidying them away. Each filler is then cut from the quiet dip just before its sound to the dip just after it, so a drawn-out “uhhh” goes completely while the neighbouring words stay intact. Fillers that the speech engine mishears as a real word (for example “I’m”) are left in rather than risk cutting real speech.
 

@@ -20,6 +20,7 @@ from backend.app.video import (
     _filler_extent,
     _filler_word_cut_intervals,
     _speech_frame_seconds,
+    _spare_spoken_words,
     _speech_pause_cut_intervals,
     _tighten_speech_edges,
 )
@@ -83,6 +84,62 @@ class SpeechPauseTests(unittest.TestCase):
         cuts = self._cuts([], levels, 4.0)
         self.assertGreater(covered(cuts, 1.0, 2.0), 0.7)
         self.assertEqual(covered(cuts, 0.0, 1.0) + covered(cuts, 2.0, 4.0), 0.0)
+
+
+class MissedWordTests(unittest.TestCase):
+    # Speech detected at 0-2 s and 3.2-5 s, with game audio 12 dB under the voice between.
+    SEGMENTS = [(0.0, 2.0), (3.2, 5.0)]
+    CUTS = [(2.15, 3.10)]
+
+    def _spare(self, words, levels=None):
+        if levels is None:
+            levels = level_track(5.0, [(0.0, 2.0, 20.0), (2.4, 2.8, 20.0), (3.2, 5.0, 20.0)], floor=8.0)
+        return _spare_spoken_words(self.CUTS, words, levels, self.SEGMENTS, 5.0)
+
+    def test_a_word_the_detector_missed_keeps_its_breath_and_the_rest_of_the_pause_goes(self):
+        cuts = self._spare([CaptionWord("Let's", 2.45, 2.75)])
+        self.assertEqual(covered(cuts, 2.45, 2.75), 0.0)
+        # The same breath as detected speech: 0.10 s before the word and 0.15 s after it.
+        self.assertEqual(cuts, [(2.15, 2.35), (2.9, 3.1)])
+
+    def test_words_the_detector_heard_are_left_to_its_edges(self):
+        # The last word's estimated end runs into the pause; the next sentence's first
+        # word starts just before the detected speech. Neither moves the cut.
+        words = [CaptionWord("left", 1.70, 2.40), CaptionWord("okay", 3.08, 3.40)]
+        self.assertEqual(self._spare(words), self.CUTS)
+
+    def test_silent_words_sound_tags_and_fillers_are_still_cut(self):
+        quiet_gap = level_track(5.0, [(0.0, 2.0, 20.0), (3.2, 5.0, 20.0)], floor=-30.0)
+        self.assertEqual(self._spare([CaptionWord("Okay.", 2.45, 2.75)], quiet_gap), self.CUTS)
+        tag = [CaptionWord("[sounds", 2.40, 2.50), CaptionWord("of", 2.50, 2.60), CaptionWord("running]", 2.60, 2.80)]
+        self.assertEqual(self._spare(tag), self.CUTS)
+        self.assertEqual(self._spare([CaptionWord("um,", 2.45, 2.75)]), self.CUTS)
+
+    def test_a_tag_left_open_stops_hiding_words_after_eight(self):
+        words = [CaptionWord("[music", 0.1, 0.2)] + [CaptionWord("la", 0.2 + 0.1 * n, 0.3 + 0.1 * n) for n in range(7)]
+        words.append(CaptionWord("Let's", 2.45, 2.75))
+        self.assertEqual(covered(self._spare(words), 2.45, 2.75), 0.0)
+
+    def test_a_full_length_export_transcribes_for_pause_removal_and_spares_missed_words(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source, output = Path(temporary) / "source.mp4", Path(temporary) / "edited.mp4"
+            video._run([
+                video.ffmpeg_executable(), "-y", "-v", "error",
+                "-f", "lavfi", "-i", "color=c=navy:s=320x180:r=30:d=5",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=5",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(source),
+            ])
+            levels = level_track(5.0, [], floor=20.0)
+            with patch.object(video, "_speech_pause_cut_intervals", return_value=[(1.0, 3.0)]), \
+                    patch.object(video, "_speech_context", return_value=(levels, [(0.0, 1.0), (3.0, 5.0)])), \
+                    patch.object(video, "transcribe_words", return_value=[CaptionWord("hey", 1.9, 2.1)]) as transcribe:
+                video.export_clip(
+                    source=source, output=output, start=0.0, end=5.0, aspect="16:9", resolution="720p",
+                    edit_mode="full-length", remove_silence=True, title_transcript=False, auto_sound_effect=False,
+                )
+            transcribe.assert_called_once()
+            # 1.0-1.8 and 2.25-3.0 are cut; "hey" and its breath stay.
+            self.assertAlmostEqual(video.probe_video(output).duration, 5.0 - 0.8 - 0.75, delta=0.1)
 
 
 class SpeechEdgeTests(unittest.TestCase):

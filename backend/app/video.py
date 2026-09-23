@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import math
@@ -2632,6 +2633,20 @@ _LONGEST_SPEECH_PAUSE = 3.0
 _DEAD_AIR_DB = 30.0
 
 
+def _level_index(levels: np.ndarray) -> Callable[[float], int]:
+    """Map a time in seconds to its frame in a speech-band level array."""
+    frame = _speech_frame_seconds()
+    centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
+    return lambda seconds: int(min(levels.size, max(0, round((seconds - centre) / frame))))
+
+
+def _speech_reference_level(levels: np.ndarray, segments: list[tuple[float, float]]) -> float:
+    """The typical speech level, or the loudest audio's when nobody talks."""
+    index_at = _level_index(levels)
+    spoken = np.concatenate([levels[index_at(a):index_at(b)] for a, b in segments] or [levels[:0]])
+    return float(np.median(spoken)) if spoken.size else float(np.percentile(levels, 90))
+
+
 def _dead_air(
     levels: np.ndarray,
     segments: list[tuple[float, float]],
@@ -2648,13 +2663,8 @@ def _dead_air(
         return []
     frame = _speech_frame_seconds()
     centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
-
-    def index_at(seconds: float) -> int:
-        return int(min(levels.size, max(0, round((seconds - centre) / frame))))
-
-    spoken = np.concatenate([levels[index_at(a):index_at(b)] for a, b in segments] or [levels[:0]])
-    reference = float(np.median(spoken)) if spoken.size else float(np.percentile(levels, 90))
-    quiet = levels < reference - _DEAD_AIR_DB
+    index_at = _level_index(levels)
+    quiet = levels < _speech_reference_level(levels, segments) - _DEAD_AIR_DB
     first, last = index_at(gap_start), index_at(gap_end)
     stretches: list[tuple[float, float]] = []
     for run_start, run_end in _runs(quiet[first:last]):
@@ -2726,6 +2736,79 @@ def _speech_pause_cut_intervals(
     with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
         _store_bounded_cache(_SILENCE_CUT_CACHE, cache_key, tuple(merged))
     return merged
+
+
+def _spare_spoken_words(
+    cuts: list[tuple[float, float]],
+    words: list[CaptionWord] | tuple[CaptionWord, ...],
+    levels: np.ndarray | None,
+    speech_segments: list[tuple[float, float]] | None,
+    duration: float,
+    tail_keep: float = 0.15,
+    lead_keep: float = 0.10,
+) -> list[tuple[float, float]]:
+    """Take words the speech detector missed back out of pause cuts.
+
+    The detector now and then misses a word, typically the first or last one of a
+    phrase said over game audio, and a short gap between sentences is cut whole,
+    word and all. A word Whisper heard that starts inside such a gap, is not a
+    filler or part of a sound tag such as "[sounds of running]", and is not
+    silent keeps the same breath around it as detected speech; the rest of the
+    pause is still cut. Whisper's confidence does not tell real words from
+    imagined ones here (its "Okay." over silence scores 0.9), but silence does.
+
+    Only the start of a word is trusted: Whisper's DTW places it closely, while
+    its end is an estimate. A word starting within 0.15 s of detected speech is
+    that speech's own first word, already covered by the breath kept before it.
+    """
+    if not cuts or not words:
+        return cuts
+    segments = sorted(speech_segments or [])
+    segment_starts = [start for start, _ in segments]
+    index_at = _level_index(levels) if levels is not None and levels.size else None
+    silent_below = (
+        _speech_reference_level(levels, speech_segments or []) - _DEAD_AIR_DB if index_at else None
+    )
+    spared: list[tuple[float, float]] = []
+    tag_words = 0  # Words so far in an open tag; an unclosed tag ends after eight.
+    for word in words:
+        text = word.text.strip()
+        tag = 0 < tag_words < 8 or text[:1] in {"[", "(", "*", "♪"}
+        tag_words = tag_words + 1 if tag and text[-1:] not in {"]", ")", "*", "♪"} else 0
+        if tag or _normalized_caption_word(word) in FILLER_WORDS or not _normalized_caption_word(word):
+            continue
+        following = bisect.bisect_right(segment_starts, word.start)
+        if following and word.start < segments[following - 1][1]:
+            continue  # Inside detected speech.
+        if following < len(segments) and segments[following][0] - word.start < 0.15:
+            continue
+        if index_at is not None:
+            window = levels[index_at(word.start):max(index_at(word.start) + 1, index_at(word.end))]
+            if window.size and float(np.max(window)) < silent_below:
+                continue
+        spared.append((word.start - lead_keep, word.end + tail_keep))
+    if not spared:
+        return cuts
+    spared.sort()
+    trimmed: list[tuple[float, float]] = []
+    for cut_start, cut_end in cuts:
+        pieces = [(cut_start, cut_end)]
+        for spare_start, spare_end in spared:
+            if spare_start >= cut_end:
+                break
+            if spare_end <= cut_start:
+                continue
+            pieces = [
+                piece
+                for piece_start, piece_end in pieces
+                for piece in (
+                    [(piece_start, piece_end)]
+                    if spare_end <= piece_start or spare_start >= piece_end
+                    else [(piece_start, min(piece_end, spare_start)), (max(piece_start, spare_end), piece_end)]
+                )
+            ]
+        trimmed.extend((start, end) for start, end in pieces if end - start >= 0.15)
+    return _merge_cut_intervals(trimmed, duration)
 
 
 def _kept_segments(cuts: list[tuple[float, float]], duration: float) -> list[tuple[float, float]]:
@@ -3058,6 +3141,9 @@ def _prepare_full_length_source(
             transcript_words = _transcribe_words_cached(source, start, end, include_fillers=True)
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
+        silence_cuts = _spare_spoken_words(
+            silence_cuts, transcript_words, *_speech_context(source, start, end), duration
+        )
         filler_cuts, filler_count = _filler_word_cut_intervals(
             transcript_words, duration, *_speech_context(source, start, end)
         )
@@ -3133,7 +3219,8 @@ def _export_full_length_single_pass(
         raise ValueError("Unknown live-caption colour scheme.")
 
     needs_transcript = bool(
-        remove_filler_words
+        remove_silence
+        or remove_filler_words
         or live_captions
         or title_transcript
         or (auto_sound_effect and selected_sound_effects)
@@ -3144,7 +3231,9 @@ def _export_full_length_single_pass(
             _speech_pause_cut_intervals(source, selection_start, selection_end) if remove_silence else []
         )
         context = (
-            _speech_context(source, selection_start, selection_end) if remove_filler_words else (None, None)
+            _speech_context(source, selection_start, selection_end)
+            if remove_silence or remove_filler_words
+            else (None, None)
         )
         return silence, context
 
@@ -3167,6 +3256,8 @@ def _export_full_length_single_pass(
                     raise
         silence_cuts, speech_context = speech_job.result()
 
+    # Pause removal never cuts a word the speech detector missed but Whisper heard.
+    silence_cuts = _spare_spoken_words(silence_cuts, transcript_words, *speech_context, selection_duration)
     filler_cuts: list[tuple[float, float]] = []
     filler_count = 0
     if remove_filler_words:
