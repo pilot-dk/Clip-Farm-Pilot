@@ -2657,6 +2657,46 @@ def _cut_audio_envelope(
     return np.concatenate(pieces).astype(np.float32, copy=False)
 
 
+# Stream VODs can change picture size or audio channels partway through, for
+# example when the streamer switches their output from 720p to 1080p. FFmpeg
+# normally rebuilds the whole filter graph when that happens, which restarts
+# every trim and the concat joining them: the edit either fails or silently
+# ends at the switch. Edits keep the graph fixed instead. Each kept piece is
+# scaled to one frame size before joining (the scaler follows size changes on
+# its own), and the audio is decoded once to a steady format beforehand.
+_STEADY_INPUT = ("-reinit_filter", "0")
+
+
+def _fit_frame(width: int, height: int) -> str:
+    """Filters that bring every frame, whatever its size, to one output frame."""
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={width}:{height},setsar=1"
+    )
+
+
+def _steady_audio_track(source: Path, start: float, duration: float) -> Path:
+    """Decode a section's audio once, losslessly, at a fixed 48 kHz stereo."""
+    handle = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-audio-", suffix=".flac", delete=False)
+    track = Path(handle.name)
+    handle.close()
+    try:
+        _run([
+            ffmpeg_executable(), "-y", "-v", "error",
+            "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(source),
+            "-map", "0:a:0", "-vn",
+            # async fills any real timestamp gap with silence so the track stays
+            # in step with the video. A forced first_pts would pad again after
+            # every format change, so it is left unset.
+            "-af", "aresample=async=1", "-ac", "2", "-ar", "48000",
+            "-c:a", "flac", str(track),
+        ])
+    except BaseException:
+        track.unlink(missing_ok=True)
+        raise
+    return track
+
+
 def _render_kept_segments(
     source: Path,
     output: Path,
@@ -2665,6 +2705,8 @@ def _render_kept_segments(
 ) -> float:
     """Join retained sections into one smooth, local full-length edit."""
     has_audio = _has_audio(source)
+    info = probe_video(source)
+    width, height = info.width - info.width % 2, info.height - info.height % 2
     filters: list[str] = []
     video_inputs: list[str] = []
     audio_inputs: list[str] = []
@@ -2676,13 +2718,13 @@ def _render_kept_segments(
         total_duration += segment_duration
         filters.append(
             f"[0:v]trim=start={absolute_start:.3f}:end={absolute_end:.3f},"
-            f"setpts=PTS-STARTPTS[v{index}]"
+            f"setpts=PTS-STARTPTS,{_fit_frame(width, height)}[v{index}]"
         )
         video_inputs.append(f"[v{index}]")
         if has_audio:
             fade = min(0.012, segment_duration / 4)
             filters.append(
-                f"[0:a]atrim=start={absolute_start:.3f}:end={absolute_end:.3f},"
+                f"[1:a]atrim=start={relative_start:.3f}:end={relative_end:.3f},"
                 f"asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade:.3f},"
                 f"afade=t=out:st={max(0.0, segment_duration - fade):.3f}:d={fade:.3f}[a{index}]"
             )
@@ -2696,17 +2738,24 @@ def _render_kept_segments(
     else:
         filters.append(f"{''.join(video_inputs)}concat=n={len(segments)}:v=1:a=0[outv]")
 
-    command = [
-        ffmpeg_executable(), "-y", "-v", "error", "-i", str(source),
-        "-filter_complex", ";".join(filters), "-map", "[outv]",
-    ]
-    if has_audio:
-        command += ["-map", "[outa]"]
-    command += [
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
-    ]
-    _run(command)
+    audio_track = (
+        _steady_audio_track(source, selection_start, segments[-1][1]) if has_audio else None
+    )
+    try:
+        command = [ffmpeg_executable(), "-y", "-v", "error", *_STEADY_INPUT, "-i", str(source)]
+        if audio_track is not None:
+            command += ["-i", str(audio_track)]
+        command += ["-filter_complex", ";".join(filters), "-map", "[outv]"]
+        if has_audio:
+            command += ["-map", "[outa]"]
+        command += [
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+        ]
+        _run(command)
+    finally:
+        if audio_track is not None:
+            audio_track.unlink(missing_ok=True)
     return round(total_duration, 3)
 
 
@@ -2881,11 +2930,17 @@ def _export_full_length_single_pass(
 
         ffmpeg = ffmpeg_executable(require_ass=live_caption_ass is not None)
         inputs = [
-            ffmpeg, "-y", "-v", "error",
+            ffmpeg, "-y", "-v", "error", *_STEADY_INPUT,
             "-ss", f"{selection_start:.3f}", "-t", f"{selection_duration:.3f}",
             "-i", str(source),
         ]
         next_input = 1
+        has_audio = _has_audio(source)
+        if has_audio:
+            audio_track = _steady_audio_track(source, selection_start, selection_duration)
+            temporary_paths.append(audio_track)
+            inputs += ["-i", str(audio_track)]
+            next_input += 1
         sound_indexes: dict[SelectedSoundEffect, int] = {}
         for effect in selected_sound_effects:
             if not placements.get(effect):
@@ -2941,7 +2996,6 @@ def _export_full_length_single_pass(
             inputs += ["-loop", "1", "-i", str(rendered_caption_overlay)]
             next_input += 1
 
-        has_audio = _has_audio(source)
         filters: list[str] = []
         video_labels: list[str] = []
         audio_labels: list[str] = []
@@ -2949,13 +3003,13 @@ def _export_full_length_single_pass(
             segment_duration = max(0.001, segment_end - segment_start)
             filters.append(
                 f"[0:v]trim=start={segment_start:.3f}:end={segment_end:.3f},"
-                f"setpts=PTS-STARTPTS[v{index}]"
+                f"setpts=PTS-STARTPTS,{_fit_frame(width, height)}[v{index}]"
             )
             video_labels.append(f"[v{index}]")
             if has_audio:
                 fade = min(0.012, segment_duration / 4)
                 filters.append(
-                    f"[0:a]atrim=start={segment_start:.3f}:end={segment_end:.3f},"
+                    f"[1:a]atrim=start={segment_start:.3f}:end={segment_end:.3f},"
                     f"asetpts=PTS-STARTPTS,afade=t=in:st=0:d={fade:.3f},"
                     f"afade=t=out:st={max(0.0, segment_duration - fade):.3f}:d={fade:.3f}[a{index}]"
                 )
@@ -2971,14 +3025,10 @@ def _export_full_length_single_pass(
             filters.append(f"{''.join(video_labels)}concat=n={len(segments)}:v=1:a=0[joinedv]")
             base_audio_label = None
 
-        base_video_filter = (
-            f"[joinedv]scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={width}:{height},setsar=1"
-        )
+        video_label = "joinedv"
         if filter_chain:
-            base_video_filter += f",{filter_chain}"
-        filters.append(f"{base_video_filter}[basev]")
-        video_label = "basev"
+            filters.append(f"[joinedv]{filter_chain}[basev]")
+            video_label = "basev"
         trigger = min(max(0.0, float(effect_time)), max(0.0, output_duration - 0.05))
         strength = min(1.5, max(0.25, float(visual_strength)))
         if visual_effect == "punch-zoom":

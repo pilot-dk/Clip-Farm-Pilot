@@ -15,6 +15,7 @@ from backend.app.video import (
     _filler_word_cut_intervals,
     _prepare_full_length_source,
     _remap_transcript_after_cuts,
+    _render_kept_segments,
     _run,
     _transcribe_words_cached,
     export_clip,
@@ -260,6 +261,85 @@ class FullLengthEditorTests(unittest.TestCase):
             # while the creator's square caption remains after it finishes.
             self.assertGreater(int(np.max(early[220:860, 120:960])), 180)
             self.assertGreater(int(np.max(late[820:1020, 80:1000])), 220)
+
+    # Three 2-second parts, like a stream that switches 180p mono -> 270p stereo
+    # -> 180p mono. Each part has its own colour and tone to check what landed where.
+    SWITCH_PARTS = (("320x180", 1, "red", 330), ("480x270", 2, "lime", 550), ("320x180", 1, "blue", 880))
+
+    @classmethod
+    def _make_switching_video(cls, root: Path) -> Path:
+        # MPEG-TS carries its codec settings in-band, so joining the parts byte for
+        # byte gives one file whose frame size and channel count change mid-stream.
+        pieces = []
+        for index, (size, channels, colour, frequency) in enumerate(cls.SWITCH_PARTS):
+            part = root / f"part{index}.ts"
+            _run([
+                ffmpeg_executable(), "-y", "-v", "error",
+                "-f", "lavfi", "-i", f"color=c={colour}:s={size}:r=30:d=2",
+                "-f", "lavfi", "-i", f"sine=frequency={frequency}:sample_rate=48000:duration=2",
+                "-ac", str(channels), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-output_ts_offset", str(2 * index), "-f", "mpegts", str(part),
+            ])
+            pieces.append(part.read_bytes())
+        source = root / "switching.ts"
+        source.write_bytes(b"".join(pieces))
+        return source
+
+    @staticmethod
+    def _dominant_frequency(samples: np.ndarray) -> float:
+        spectrum = np.abs(np.fft.rfft(samples * np.hanning(samples.size)))
+        return float(np.argmax(spectrum) * 48_000 / samples.size)
+
+    def test_full_length_edit_survives_resolution_and_channel_switches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self._make_switching_video(root)
+            duration = probe_video(source).duration
+            # Keep 0-1.5 (red), 2.5-3.5 (lime) and 4.5-end (blue): every join
+            # crosses a switch in frame size and channel count.
+            for cuts, expected_duration, checkpoints in (
+                ([(1.5, 2.5), (3.5, 4.5)], duration - 2.0, ((0.75, 0), (2.0, 1), (3.2, 2))),
+                ([], duration, ((1.0, 0), (3.0, 1), (5.0, 2))),
+            ):
+                output = root / f"edited-{len(cuts)}.mp4"
+                with patch("backend.app.video._speech_pause_cut_intervals", return_value=cuts):
+                    export_clip(
+                        source=source,
+                        output=output,
+                        start=0.0,
+                        end=duration,
+                        aspect="16:9",
+                        resolution="720p",
+                        edit_mode="full-length",
+                        remove_silence=True,
+                        title_transcript=False,
+                        auto_sound_effect=False,
+                    )
+
+                info = probe_video(output)
+                self.assertEqual((info.width, info.height), (1280, 720))
+                self.assertAlmostEqual(info.duration, expected_duration, delta=0.15)
+                audio = self._audio(output).astype(np.float64)
+                for second, part in checkpoints:
+                    pixel = self._frame(output, second, root / "frame.png")[360, 640]
+                    self.assertEqual(int(np.argmax(pixel)), part, f"{cuts}: wrong picture at {second}s")
+                    window = audio[int((second - 0.2) * 48_000): int((second + 0.2) * 48_000)]
+                    self.assertAlmostEqual(
+                        self._dominant_frequency(window), self.SWITCH_PARTS[part][3], delta=15,
+                        msg=f"{cuts}: sound out of step with the picture at {second}s",
+                    )
+
+    def test_legacy_segment_render_survives_resolution_and_channel_switches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self._make_switching_video(root)
+            edited = root / "edited.mp4"
+
+            kept = _render_kept_segments(source, edited, 0.0, [(0.0, 1.5), (2.5, 3.5), (4.5, 5.9)])
+
+            info = probe_video(edited)
+            self.assertEqual((info.width, info.height), (320, 180))
+            self.assertAlmostEqual(info.duration, kept, delta=0.15)
 
     def test_full_length_vertical_layout_remains_rejected(self):
         with self.assertRaisesRegex(ValueError, "16:9 or 1:1"):
