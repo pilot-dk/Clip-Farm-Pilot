@@ -183,6 +183,7 @@ Version 1.3 replaces the original loudness-only heuristic with a two-stage local
 1. A memory-safe streaming pass scores second-by-second loudness, reaction bursts, sudden rises, sustained momentum, and contrast with the surrounding VOD.
 2. A diverse shortlist receives targeted visual analysis for motion and scene changes. This avoids decoding every frame of a multi-hour stream.
 3. Each likely payoff is placed roughly two-thirds into the proposed clip, leaving room for setup before it and reaction afterward.
+   With **Auto length**, the default, each clip is instead sized to its own moment: it starts where the energy began to build (with a two-second lead-in and at least six seconds before the payoff), ends once the reaction has died down and had a moment to land, and cuts on the quietest nearby second so it rarely opens or closes mid-word. Clips stay between 10 and 60 seconds, the range Shorts, TikTok, and Reels favour; nothing is padded beyond the moment, because short clips are watched to the end more often. Choose 15, 30, 45, or 60 seconds for a fixed length instead.
 4. Overlapping results and dead-air-heavy windows are suppressed. Every result includes a plain-language reason and separate reaction, energy, and visual indicators.
 
 The analysis runs locally and does not upload VOD audio or frames to an AI provider. Repeating an analysis of the same source during one app session reuses its cached audio features.

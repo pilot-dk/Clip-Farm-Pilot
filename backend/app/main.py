@@ -15,7 +15,7 @@ import time
 import uuid
 from html import escape
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,7 +102,8 @@ def _unique_viral_title(
 
 
 class AnalyzeRequest(BaseModel):
-    target_duration: int = Field(30, ge=8, le=90)
+    # "auto" lets each clip's length follow its moment instead of a fixed length.
+    target_duration: Literal["auto"] | Annotated[int, Field(ge=8, le=90)] = 30
     limit: int = Field(5, ge=1, le=10)
 
 

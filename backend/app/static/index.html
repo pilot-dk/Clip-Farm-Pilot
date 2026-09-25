@@ -1662,9 +1662,10 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.4 4.1L17.5 8l-4.1 1.4L12 13.5l-1.4-4.1L6.5 8l4.1-1.4L12 3ZM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
                   Auto-Find Clips
                 </button>
-                <select id="clipDuration" aria-label="Target clip duration">
+                <select id="clipDuration" aria-label="Target clip duration" title="Auto sizes each clip to its moment, from 10 to 60 seconds">
+                  <option value="auto" selected>Auto length</option>
                   <option value="15">15 sec</option>
-                  <option value="30" selected>30 sec</option>
+                  <option value="30">30 sec</option>
                   <option value="45">45 sec</option>
                   <option value="60">60 sec</option>
                 </select>
@@ -3135,7 +3136,7 @@
           <div class="candidate-meta">
             <span class="score-badge">${Math.round(candidate.score)}</span>
             <span class="candidate-copy">
-              <span class="candidate-time">${formatTime(candidate.start)} – ${formatTime(candidate.end)}</span>
+              <span class="candidate-time">${formatTime(candidate.start)} – ${formatTime(candidate.end)} · ${Math.round(candidate.end - candidate.start)}s</span>
               <span class="candidate-name">${escapeHtml(candidate.label || `Moment ${index + 1}`)}</span>
               <span class="candidate-reason">${escapeHtml(candidate.reason || "Strong combined signal")}</span>
               <span class="candidate-signals">${signalChips}</span>
@@ -3166,7 +3167,10 @@
         const response = await fetch(`/api/videos/${state.videoId}/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target_duration: Number($("clipDuration").value), limit: 5 }),
+          body: JSON.stringify({
+            target_duration: $("clipDuration").value === "auto" ? "auto" : Number($("clipDuration").value),
+            limit: 5,
+          }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(apiError(data, "Analysis failed."));

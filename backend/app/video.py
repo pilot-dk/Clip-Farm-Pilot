@@ -568,6 +568,94 @@ def _window_candidate(signals: dict[str, np.ndarray], peak_second: int, duration
     # Place the payoff late enough to preserve setup/context and still keep the reaction.
     start = min(latest_start, max(0.0, float(peak_second) - window * 0.68))
     end = min(duration, start + window)
+    return _scored_window(signals, peak_second, start, end)
+
+
+# Auto length: a clip spans the moment itself rather than a fixed length. It starts
+# where the energy began to build, with a short lead-in for context, and ends once
+# the reaction has died down and had a beat to land. Short-form viewers leave
+# early, so nothing is padded beyond the moment, within the 10-60 s range that
+# Shorts, TikTok and Reels favour.
+AUTO_CLIP_MIN_SECONDS = 10.0
+AUTO_CLIP_MAX_SECONDS = 60.0
+_AUTO_BUILD_LOOKBACK = 40         # Longest build-up followed back from the payoff.
+_AUTO_REACTION_LOOKAHEAD = 20     # Longest reaction followed after it.
+_AUTO_LEAD_IN = 2.0               # Context before the build-up starts.
+_AUTO_MIN_SETUP = 6.0             # Seconds always kept before the payoff.
+_AUTO_TAIL = 1.5                  # Lets the reaction land before the cut.
+
+
+def _auto_window(signals: dict[str, np.ndarray], peak_second: int, duration: float) -> tuple[float, float]:
+    """The start and end of the moment around a payoff, sized by its own energy."""
+    salience = _moving_average(signals["salience"], 3)
+    energy = signals["energy"]
+    last = salience.size - 1
+    peak = min(max(0, int(peak_second)), last)
+    around = salience[max(0, peak - 90):min(salience.size, peak + 61)]
+    baseline = float(np.percentile(around, 30)) if around.size else 0.0
+    height = float(salience[peak]) - baseline
+    if height < 0.05:
+        # No clear rise above the surroundings to measure: use a typical length.
+        return _typical_window(peak, duration, 30.0)
+    threshold = baseline + 0.30 * height
+
+    # Back from the payoff until the energy has been below the threshold for 3 s.
+    build_start, quiet = peak, 0
+    for second in range(peak - 1, max(-1, peak - _AUTO_BUILD_LOOKBACK - 1), -1):
+        quiet = quiet + 1 if salience[second] < threshold else 0
+        if quiet >= 3:
+            break
+        if quiet == 0:
+            build_start = second
+    # Forward until it has been below the threshold for 2 s.
+    reaction_end, quiet = peak, 0
+    for second in range(peak + 1, min(last + 1, peak + _AUTO_REACTION_LOOKAHEAD + 1)):
+        quiet = quiet + 1 if salience[second] < threshold else 0
+        if quiet >= 2:
+            break
+        if quiet == 0:
+            reaction_end = second
+
+    start = min(build_start - _AUTO_LEAD_IN, peak - _AUTO_MIN_SETUP)
+    end = reaction_end + 1 + _AUTO_TAIL
+    length = end - start
+    if length < AUTO_CLIP_MIN_SECONDS:
+        # Too short to follow: grow it, mostly before the payoff where context lives.
+        missing = AUTO_CLIP_MIN_SECONDS - length
+        start -= 0.7 * missing
+        end += 0.3 * missing
+    elif length > AUTO_CLIP_MAX_SECONDS:
+        start = end - AUTO_CLIP_MAX_SECONDS  # Keep the payoff; lose the oldest build-up.
+
+    # Cut on the quietest nearby second, so a clip does not open or close mid-word.
+    def quietest(centre: float, before: int, after: int) -> float:
+        first = max(0, int(round(centre)) - before)
+        final = min(energy.size, int(round(centre)) + after + 1)
+        if final <= first:
+            return centre
+        return float(first + int(np.argmin(energy[first:final])))
+
+    start = quietest(start, 1, 1)
+    end = quietest(end, 1, 2) + 0.5
+    start = max(0.0, start, end - AUTO_CLIP_MAX_SECONDS)
+    end = min(duration, end)
+    if end - start < min(AUTO_CLIP_MIN_SECONDS, duration):
+        return _typical_window(peak, duration, AUTO_CLIP_MIN_SECONDS)
+    return start, end
+
+
+def _typical_window(peak_second: int, duration: float, window: float) -> tuple[float, float]:
+    start = min(max(0.0, duration - window), max(0.0, float(peak_second) - window * 0.68))
+    return start, min(duration, start + window)
+
+
+def _auto_candidate(signals: dict[str, np.ndarray], peak_second: int, duration: float) -> dict:
+    start, end = _auto_window(signals, peak_second, duration)
+    return _scored_window(signals, peak_second, start, end)
+
+
+def _scored_window(signals: dict[str, np.ndarray], peak_second: int, start: float, end: float) -> dict:
+    """Score a window's audio: reaction, momentum, contrast, build-up, payoff placement."""
     start_index = int(math.floor(start))
     end_index = max(start_index + 1, min(len(signals["salience"]), int(math.ceil(end))))
 
@@ -624,13 +712,23 @@ def _candidate_overlap(first: dict, second: dict) -> float:
     return overlap / max(union, 1e-6)
 
 
+def _candidate_containment(first: dict, second: dict) -> float:
+    """How much of the shorter clip lies inside the other: auto clips differ in length."""
+    overlap = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
+    shorter = min(first["end"] - first["start"], second["end"] - second["start"])
+    return overlap / max(shorter, 1e-6)
+
+
 def _preliminary_candidates(
     signals: dict[str, np.ndarray],
     duration: float,
-    target_duration: int,
+    target_duration: int | None,
     limit: int,
 ) -> list[dict]:
-    window = max(8, min(int(target_duration), max(8, int(math.ceil(duration)))))
+    """Shortlist windows around salient peaks; target_duration None sizes each one itself."""
+    auto = target_duration is None
+    # Auto windows still space their peaks as far apart as typical 30 s clips would.
+    window = max(8, min(30 if auto else int(target_duration), max(8, int(math.ceil(duration)))))
     salience = signals["salience"]
     if float(np.max(salience, initial=0.0)) < 0.04:
         # With no useful audio, spread visual probes across the entire VOD rather
@@ -655,11 +753,15 @@ def _preliminary_candidates(
     pool_size = max(12, limit * 4)
     selected: list[dict] = []
     for peak_second in local_maxima:
-        candidate = _window_candidate(signals, peak_second, duration, window)
+        candidate = (
+            _auto_candidate(signals, peak_second, duration) if auto
+            else _window_candidate(signals, peak_second, duration, window)
+        )
         if candidate["end"] - candidate["start"] < min(5.0, duration):
             continue
         if any(
             _candidate_overlap(candidate, existing) > 0.52
+            or (auto and _candidate_containment(candidate, existing) > 0.60)
             or abs(candidate["peak"] - existing["peak"]) < window * 0.38
             for existing in selected
         ):
@@ -722,7 +824,7 @@ def _explain_candidate(candidate: dict) -> tuple[str, str]:
     return "Promising moment", "Best combined audio and visual signal in this section"
 
 
-def _finalize_candidates(candidates: list[dict], target_duration: int, limit: int) -> list[dict]:
+def _finalize_candidates(candidates: list[dict], target_duration: int | None, limit: int) -> list[dict]:
     if not candidates:
         return []
     qualities = np.asarray([candidate["quality"] for candidate in candidates], dtype=np.float32)
@@ -749,7 +851,8 @@ def _finalize_candidates(candidates: list[dict], target_duration: int, limit: in
     for candidate in candidates:
         if any(
             _candidate_overlap(candidate, existing) > 0.34
-            or abs(candidate["peak"] - existing["peak"]) < max(5.0, target_duration * 0.48)
+            or (target_duration is None and _candidate_containment(candidate, existing) > 0.40)
+            or abs(candidate["peak"] - existing["peak"]) < max(5.0, (target_duration or 30) * 0.48)
             for existing in picks
         ):
             continue
@@ -762,18 +865,21 @@ def _finalize_candidates(candidates: list[dict], target_duration: int, limit: in
     return picks
 
 
-def analyze_viral_candidates(path: Path, target_duration: int = 30, limit: int = 5) -> list[dict]:
+def analyze_viral_candidates(path: Path, target_duration: int | str | None = 30, limit: int = 5) -> list[dict]:
     """Rank clip-worthy moments using reactions, momentum, contrast, and visuals.
 
     The full VOD gets a streaming audio pass that is safe for multi-hour files.
     Only a diverse shortlist is decoded visually, avoiding an expensive frame-by-
     frame scan of the entire recording. Results preserve setup before each likely
     payoff, reject dead-air-heavy windows, and explain why every clip was picked.
+    A target_duration of "auto" (or None) lets each clip's length follow its moment.
     """
     info = probe_video(path)
     if info.duration <= 0:
         return []
-    requested_duration = max(8, min(int(target_duration), 90))
+    requested_duration = (
+        None if target_duration in (None, "auto") else max(8, min(int(target_duration), 90))
+    )
     requested_limit = max(1, min(int(limit), 10))
 
     try:
@@ -807,7 +913,7 @@ def analyze_viral_candidates(path: Path, target_duration: int = 30, limit: int =
 
     picks = _finalize_candidates(candidates, requested_duration, requested_limit)
     if not picks:
-        end = min(float(requested_duration), info.duration)
+        end = min(float(requested_duration or 30), info.duration)
         return [{
             "start": 0.0,
             "end": end,

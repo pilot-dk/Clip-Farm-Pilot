@@ -359,9 +359,10 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         raise RuntimeError("The bundled video library did not persist the VOD source.")
 
     candidates = analyze_viral_candidates(cached_source, target_duration=15, limit=3)
-    if not candidates or not all(
-        item.get("label") and item.get("reason") and item.get("signals")
-        for item in candidates
+    auto_candidates = analyze_viral_candidates(cached_source, target_duration="auto", limit=3)
+    if not candidates or not auto_candidates or not all(
+        item.get("label") and item.get("reason") and item.get("signals") and item["end"] > item["start"]
+        for item in [*candidates, *auto_candidates]
     ):
         raise RuntimeError("The bundled multi-signal clip detector did not return explained candidates.")
 
