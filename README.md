@@ -35,7 +35,7 @@ Build the packages from source with:
 
 ## Web app for iPhone, iPad, Android, and desktop
 
-Clip Farm Pilot v1.20.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
+Clip Farm Pilot v1.21.0 is an installable Progressive Web App (PWA). The streamlined editor works in mobile Safari and Chrome, includes phone-safe spacing and touch controls, and can be added to a home screen without an App Store download.
 
 The web release adds:
 
@@ -74,7 +74,7 @@ Then open `http://localhost:8000`. Copy `.env.example` when configuring another 
 
 ### macOS — Apple Silicon
 
-1. Unzip `Clip-Farm-Pilot-macOS-v1.20.0-Apple-Silicon.zip`.
+1. Unzip `Clip-Farm-Pilot-macOS-v1.21.0-Apple-Silicon.zip`.
 2. Drag **Clip Farm Pilot.app** into your Applications folder.
 3. Right-click **Clip Farm Pilot.app** and choose **Open** the first time.
 
@@ -82,7 +82,7 @@ This build is ad-hoc signed but not Apple-notarized, so macOS may require the ri
 
 ### Windows — x64 or ARM64
 
-1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.20.0-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.20.0-x64.zip` for an Intel/AMD PC.
+1. In **Settings → System → About**, check **System type**. Download `Clip-Farm-Pilot-Windows-v1.21.0-arm64.zip` for an ARM-based PC, or `Clip-Farm-Pilot-Windows-v1.21.0-x64.zip` for an Intel/AMD PC.
 2. Unzip the download.
 3. Open the **ClipFarmPilot** folder and run `ClipFarmPilot.exe`.
 4. If Windows SmartScreen appears, choose **More info → Run anyway**.
@@ -91,7 +91,7 @@ The Windows build is currently unsigned. Both downloads are native packages and 
 
 ### Linux — x64 or ARM64
 
-1. Extract `Clip-Farm-Pilot-Linux-v1.20.0-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.20.0-arm64.tar.gz` on an ARM64 computer.
+1. Extract `Clip-Farm-Pilot-Linux-v1.21.0-x64.tar.gz` on an Intel/AMD computer or `Clip-Farm-Pilot-Linux-v1.21.0-arm64.tar.gz` on an ARM64 computer.
 2. Open the **ClipFarmPilot** folder and run `./ClipFarmPilot`.
 
 The Linux builds target Ubuntu 24.04 and compatible distributions on their matching architecture. They use the system GTK 3 and WebKitGTK 4.1 libraries. On Ubuntu, install them with `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` if they are not already present.
@@ -403,8 +403,8 @@ The result is written to `dist/Clip Farm Pilot.app`. To ship through the Mac App
 On native Windows x64 or ARM64 with matching Python 3.12 and Node.js installations:
 
 ```powershell
-./build_windows.ps1 -Version 1.20.0 -Architecture x64
-./build_windows.ps1 -Version 1.20.0 -Architecture arm64
+./build_windows.ps1 -Version 1.21.0 -Architecture x64
+./build_windows.ps1 -Version 1.21.0 -Architecture arm64
 ```
 
 On Ubuntu 24.04 x64 or ARM64 with matching Python 3.12, Node.js, GTK 3, and WebKitGTK 4.1 installations:
