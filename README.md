@@ -230,6 +230,15 @@ The recommendation appears in the editor, becomes the default filename in the de
 
 Title analysis uses the same bundled offline English speech engine as live captions and never sends the clip to a third-party AI service. Creator-entered square text takes priority when present, then the spoken transcript, VOD title, and energy pattern. A strong title can improve packaging, but no title can guarantee virality.
 
+## Mute swear words
+
+Turn on **Mute swear words**, above the Export button in both the **Viral clips** and **Full YouTube video** workspaces, to silence strong language so uploads stay advertiser-friendly. The video is transcribed offline, and each swear word is muted from a quarter of a second before it to just after it, with a short fade so the mute does not click. The speech engine places these words a little late, so the mute starts early on purpose; it costs about a fifth of a second of the neighbouring speech, usually the tail of the word before.
+
+- Strong and moderate profanity and slurs are muted. Mild words such as “damn” and “hell” are left alone: YouTube's advertiser-friendly guidelines do not limit ads for them.
+- Words that only sound or look similar — “duck”, “ship”, “class”, “cocktail”, “headshot” — are not touched.
+- With **live captions** on, a muted word is shown as its first letter and asterisks, and the viral title is written without it, since on-screen text and titles count too.
+- On test speech with swear words at known times, in six voices over quiet, game, and loud game audio, 97% of them came out at least 85% silent. A word the speech engine does not hear cannot be muted, so listen through anything important before you upload.
+
 ## Live captions
 
 Open **Live captions**, enable the switch, then choose a colour scheme, **Caption height**, and **Caption size** before exporting. Clip Farm Pilot extracts the selected clip's audio, transcribes English speech with the bundled offline `base.en` Whisper.cpp model, groups the result into short readable phrases, and highlights each word for its own spoken time range. The result is burned into the MP4 and works in 16:9, 9:16, 1:1, and gaming layouts.

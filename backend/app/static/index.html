@@ -1921,6 +1921,15 @@
                   <strong id="viralTitleText"></strong>
                 </div>
               </div>
+              <div class="viral-title-control">
+                <div class="switch-row">
+                  <div class="switch-copy"><strong>Mute swear words</strong><small>Silences strong language so uploads stay advertiser-friendly. Captions and titles are censored too.</small></div>
+                  <label class="switch">
+                    <input id="muteProfanityToggle" type="checkbox" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+              </div>
               <button class="button primary full" type="button" id="exportButton" disabled>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
                 <span id="exportButtonLabel">Export Clip</span>
@@ -2651,7 +2660,12 @@
       if (!width || !height) return "";
       const size = fps ? `${width}×${height} at ${fps} fps` : `${width}×${height}`;
       const encoder = String(data.video_encoder || "");
-      return encoder && encoder !== "libx264" ? `${size} · ${encoder} hardware encoding` : size;
+      const muted = Number(data.muted_swear_words) || 0;
+      return [
+        size,
+        encoder && encoder !== "libx264" ? `${encoder} hardware encoding` : "",
+        muted ? `${muted} swear word${muted === 1 ? "" : "s"} muted` : "",
+      ].filter(Boolean).join(" · ");
     }
 
     function updateRatio(ratio) {
@@ -3242,6 +3256,7 @@
             viral_title: $("viralTitleToggle").checked,
             remove_silence: isFullLength && $("removeSilenceToggle").checked,
             remove_still_scenes: isFullLength && $("removeStillScenesToggle").checked,
+            mute_profanity: $("muteProfanityToggle").checked,
             remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
             subscribe_animation: isFullLength && $("subscribeAnimationToggle").checked,
           }),
@@ -3376,6 +3391,7 @@
       $("checkSoundToggle").checked = false;
       $("removeSilenceToggle").checked = true;
       $("removeStillScenesToggle").checked = false;
+      $("muteProfanityToggle").checked = false;
       $("removeFillerWordsToggle").checked = false;
       $("subscribeAnimationToggle").checked = false;
       $("autoSoundEffectToggle").checked = true;

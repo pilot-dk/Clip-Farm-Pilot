@@ -35,6 +35,7 @@ from .captions import (
     transcribe_words,
     write_live_caption_ass,
 )
+from .profanity import masked as _masked_swear_word, profane_indexes
 
 Aspect = Literal["16:9", "9:16", "1:1"]
 Resolution = Literal["720p", "1080p", "2160p"]
@@ -3399,11 +3400,81 @@ def _steady_audio_command(ffmpeg: str, source: Path, start: float, duration: flo
     ]
 
 
-def _copy_kept_audio(reader, writer, segments: list[tuple[float, float]]) -> bool:
+# Muting swear words. Whisper's DTW places a swear word's start about 0.1 s late on
+# average and up to 0.28 s late (their opening "f" and "sh" are quiet), while its
+# end runs 0.02-0.3 s long. On speech with swear words at known times, muting from
+# 0.25 s before the word to 0.04 s after it silenced 85% or more of 95% of the
+# words Whisper heard, at the cost of about 0.17 s of the neighbouring speech
+# each, mostly the tail of the word before.
+_MUTE_LEAD_SECONDS = 0.25
+_MUTE_TAIL_SECONDS = 0.04
+_MUTE_FADE_SECONDS = 0.012        # Ramp at each edge of a mute so it does not click.
+
+
+def _swear_word_mutes(
+    words: list[CaptionWord] | tuple[CaptionWord, ...], duration: float
+) -> tuple[list[tuple[float, float]], int]:
+    """Stretches to silence for the swear words in a transcript, and how many there were."""
+    found = profane_indexes([word.text for word in words])
+    spans = sorted(
+        (max(0.0, words[index].start - _MUTE_LEAD_SECONDS), min(duration, words[index].end + _MUTE_TAIL_SECONDS))
+        for index in found
+    )
+    merged: list[list[float]] = []
+    for start, end in spans:
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1] + 2 * _MUTE_FADE_SECONDS:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(round(start, 3), round(end, 3)) for start, end in merged], len(found)
+
+
+def _without_swear_words(words: list[CaptionWord], keep_masked: bool) -> list[CaptionWord]:
+    """A transcript with its swear words masked ("f***") or left out."""
+    found = set(profane_indexes([word.text for word in words]))
+    if keep_masked:
+        return [
+            CaptionWord(_masked_swear_word(word.text), word.start, word.end) if index in found else word
+            for index, word in enumerate(words)
+        ]
+    return [word for index, word in enumerate(words) if index not in found]
+
+
+def _mute_volume_filter(mutes: list[tuple[float, float]]) -> str:
+    """An FFmpeg audio filter that silences each stretch, ramping at its edges."""
+    fade = _MUTE_FADE_SECONDS
+    gains = "*".join(
+        f"clip(max(({start:.3f}-t)/{fade},(t-{end:.3f})/{fade}),0,1)" for start, end in mutes
+    )
+    # Short frames let the per-frame volume follow the ramps closely.
+    return f"asetnsamples=n=256:p=0,volume='{gains}':eval=frame"
+
+
+def _mute_gain(low: int, high: int, mutes: list[tuple[int, int]], fade: int) -> np.ndarray | None:
+    """The gain for samples low..high given muted stretches in samples, or None if untouched."""
+    gain: np.ndarray | None = None
+    for start, end in mutes:
+        if end + fade <= low or start - fade >= high:
+            continue
+        positions = np.arange(low, high, dtype=np.float64)
+        shape = np.clip(np.maximum((start - positions) / fade, (positions - end) / fade), 0.0, 1.0)
+        gain = shape if gain is None else np.minimum(gain, shape)
+    return gain
+
+
+def _copy_kept_audio(
+    reader,
+    writer,
+    segments: list[tuple[float, float]],
+    mutes: list[tuple[float, float]] | tuple[tuple[float, float], ...] = (),
+) -> bool:
     """Copy the kept segments of a raw 16-bit stereo stream, fading each join.
 
-    Every segment fades in and out over 12 ms so the joins never click. Returns
-    True when it stopped after the last segment, before the stream ended.
+    Every segment fades in and out over 12 ms so the joins never click, and the
+    muted stretches (in the same source timeline as the segments) are silenced.
+    Returns True when it stopped after the last segment, before the stream ended.
     """
     frame_bytes = 2 * _EDIT_CHANNELS
     kept = [
@@ -3411,6 +3482,8 @@ def _copy_kept_audio(reader, writer, segments: list[tuple[float, float]]) -> boo
         for start, end in segments
     ]
     kept = [(start, end) for start, end in kept if end > start]
+    muted = [(round(start * _EDIT_SAMPLE_RATE), round(end * _EDIT_SAMPLE_RATE)) for start, end in mutes]
+    mute_fade = max(1, round(_MUTE_FADE_SECONDS * _EDIT_SAMPLE_RATE))
     position = 0
     index = 0
     while index < len(kept):
@@ -3426,9 +3499,12 @@ def _copy_kept_audio(reader, writer, segments: list[tuple[float, float]]) -> boo
             if high > low:
                 piece = samples[low - position: high - position]
                 fade = max(1, min(round(_EDIT_FADE_SECONDS * _EDIT_SAMPLE_RATE), (end - start) // 4))
+                gain = _mute_gain(low, high, muted, mute_fade) if muted else None
                 if low - start < fade or end - high < fade:
                     offsets = np.arange(low - start, high - start, dtype=np.float64)
-                    gain = np.minimum(1.0, np.minimum((offsets + 1.0) / fade, (end - start - offsets) / fade))
+                    edges = np.minimum(1.0, np.minimum((offsets + 1.0) / fade, (end - start - offsets) / fade))
+                    gain = edges if gain is None else np.minimum(gain, edges)
+                if gain is not None:
                     piece = np.clip(np.rint(piece * gain[:, None]), -32768, 32767).astype("<i2")
                 writer.write(piece.tobytes())
             if end > block_end:
@@ -3444,6 +3520,7 @@ def _run_with_kept_audio(
     start: float,
     duration: float,
     segments: list[tuple[float, float]],
+    mutes: list[tuple[float, float]] | tuple[tuple[float, float], ...] = (),
 ) -> None:
     """Run an FFmpeg command that reads the edit's audio as raw PCM on stdin."""
     with tempfile.TemporaryFile() as decode_errors, tempfile.TemporaryFile() as encode_errors:
@@ -3458,7 +3535,7 @@ def _run_with_kept_audio(
             )
             try:
                 try:
-                    read_to_end = not _copy_kept_audio(decoder.stdout, encoder.stdin, segments)
+                    read_to_end = not _copy_kept_audio(decoder.stdout, encoder.stdin, segments, mutes)
                 except BrokenPipeError:
                     pass  # The encoder stopped early; its exit status says why.
                 finally:
@@ -3615,6 +3692,7 @@ def _export_full_length_single_pass(
     subscribe_animation: bool,
     export_metadata: dict[str, object] | None,
     remove_still_scenes: bool = False,
+    mute_profanity: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     """Analyze once and render a complete landscape or square edit in one generation."""
     if aspect not in {"16:9", "1:1"}:
@@ -3642,6 +3720,7 @@ def _export_full_length_single_pass(
         remove_silence
         or remove_filler_words
         or remove_still_scenes
+        or mute_profanity
         or live_captions
         or title_transcript
         or (auto_sound_effect and selected_sound_effects)
@@ -3676,6 +3755,8 @@ def _export_full_length_single_pass(
             except (OSError, RuntimeError, ValueError) as exc:
                 if remove_filler_words:
                     raise ValueError(f"Filler-word removal needs the bundled offline speech engine: {exc}") from exc
+                if mute_profanity:
+                    raise ValueError(f"Muting swear words needs the bundled offline speech engine: {exc}") from exc
                 if live_captions:
                     raise
         silence_cuts, speech_context = speech_job.result()
@@ -3708,6 +3789,12 @@ def _export_full_length_single_pass(
     cuts = _gaps_between(segments, selection_duration)
     output_duration = round(output_duration, 3)
     cleaned_words = _remap_transcript_after_cuts(transcript_words, cuts, selection_duration)
+    # Swear words are silenced in the sound, shown masked in captions, and kept
+    # out of the words a title is written from.
+    mutes, muted_words = _swear_word_mutes(transcript_words, selection_duration) if mute_profanity else ([], 0)
+    title_words = _without_swear_words(cleaned_words, keep_masked=False) if mute_profanity else cleaned_words
+    if mute_profanity:
+        cleaned_words = _without_swear_words(cleaned_words, keep_masked=True)
 
     placements: dict[SelectedSoundEffect, list[float]] = {}
     if selected_sound_effects:
@@ -3872,7 +3959,9 @@ def _export_full_length_single_pass(
                 str(audio_track),
             ]
             if has_audio:
-                _run_with_kept_audio(audio_command, source, selection_start, selection_duration, segments)
+                _run_with_kept_audio(
+                    audio_command, source, selection_start, selection_duration, segments, mutes
+                )
             else:
                 _run(audio_command)
 
@@ -4009,7 +4098,8 @@ def _export_full_length_single_pass(
             export_metadata["frame_rate"] = format_frame_rate(frame_rate)
             export_metadata["video_encoder"] = video_encoder
             export_metadata["live_caption_word_count"] = len(cleaned_words) if live_captions else 0
-            export_metadata["title_transcript"] = " ".join(word.text for word in cleaned_words)[:2_000]
+            export_metadata["title_transcript"] = " ".join(word.text for word in title_words)[:2_000]
+            export_metadata["muted_swear_words"] = muted_words
             export_metadata["full_length_summary"] = {
                 "original_duration": round(selection_duration, 3),
                 "output_duration": output_duration,
@@ -4022,6 +4112,8 @@ def _export_full_length_single_pass(
                 "remove_silence": bool(remove_silence),
                 "remove_filler_words": bool(remove_filler_words),
                 "remove_still_scenes": bool(remove_still_scenes),
+                "mute_profanity": bool(mute_profanity),
+                "muted_swear_words": muted_words,
                 "subscribe_animation": bool(subscribe_animation),
                 "render_passes": 1,
                 "shared_transcript": bool(needs_transcript),
@@ -4111,6 +4203,7 @@ def export_clip(
     remove_filler_words: bool = False,
     subscribe_animation: bool = False,
     remove_still_scenes: bool = False,
+    mute_profanity: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     if edit_mode not in {"clip", "full-length"}:
         raise ValueError("Unknown edit mode.")
@@ -4146,6 +4239,7 @@ def export_clip(
             subscribe_animation=subscribe_animation,
             export_metadata=export_metadata,
             remove_still_scenes=remove_still_scenes,
+            mute_profanity=mute_profanity,
         )
 
     info = probe_video(source)
@@ -4178,13 +4272,19 @@ def export_clip(
     live_caption_ass: Path | None = None
     live_caption_word_count = 0
     transcript_words = []
-    if live_captions or title_transcript or (auto_sound_effect and selected_sound_effects):
+    if live_captions or title_transcript or mute_profanity or (auto_sound_effect and selected_sound_effects):
         try:
             transcript_words = _transcribe_words_cached(source, start, end)
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError) as exc:
+            if mute_profanity:
+                raise ValueError(f"Muting swear words needs the bundled offline speech engine: {exc}") from exc
             if live_captions:
                 raise
             transcript_words = []
+    # Swear words are silenced in the sound, shown masked in captions, and kept
+    # out of the words a title is written from.
+    mutes, muted_words = _swear_word_mutes(transcript_words, duration) if mute_profanity else ([], 0)
+    title_words = _without_swear_words(transcript_words, keep_masked=False) if mute_profanity else transcript_words
     sound_effect_placements: dict[SelectedSoundEffect, list[float]] = {}
     if selected_sound_effects:
         if auto_sound_effect:
@@ -4201,7 +4301,7 @@ def export_clip(
             sound_effect_placements = {effect: [manual_time] for effect in selected_sound_effects}
     if live_captions:
         live_caption_word_count = len(transcript_words)
-        words = transcript_words
+        words = _without_swear_words(transcript_words, keep_masked=True) if mute_profanity else transcript_words
         if words:
             caption_file = tempfile.NamedTemporaryFile(
                 prefix=f"{APP_SLUG}-live-captions-", suffix=".ass", delete=False
@@ -4229,7 +4329,8 @@ def export_clip(
         export_metadata["live_caption_word_count"] = live_caption_word_count
         export_metadata["live_caption_margin"] = live_caption_margin(*ASPECT_SIZES[aspect], live_caption_height)
         export_metadata["live_caption_font_size"] = live_caption_font_size(*ASPECT_SIZES[aspect], live_caption_scale)
-        export_metadata["title_transcript"] = " ".join(word.text for word in transcript_words)[:2_000]
+        export_metadata["title_transcript"] = " ".join(word.text for word in title_words)[:2_000]
+        export_metadata["muted_swear_words"] = muted_words
 
     has_effects = bool(selected_sound_effects) or visual_effect != "none"
     has_postprocessing = has_effects or live_caption_ass is not None
@@ -4253,6 +4354,8 @@ def export_clip(
 
     def audio_map(index: int) -> str:
         return f"{index}:a" if repaired_audio else "0:a?"
+
+    mute_filter = ["-af", _mute_volume_filter(mutes)] if mutes and _has_audio(source) else []
 
     try:
         if layout == "gaming":
@@ -4285,7 +4388,7 @@ def export_clip(
             encode(lambda codec: common[:-2] + repaired_audio + common[-2:] + [
                 "-filter_complex", filter_complex,
                 "-map", "[outv]", "-map", audio_map(1),
-                *codec,
+                *codec, *mute_filter,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
                 str(render_target),
@@ -4315,7 +4418,7 @@ def export_clip(
                 encode(lambda codec: common[:-2] + ["-i", str(overlay_path)] + repaired_audio + common[-2:] + [
                     "-filter_complex", filter_complex,
                     "-map", "[outv]", "-map", audio_map(2),
-                    *codec,
+                    *codec, *mute_filter,
                     "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart",
                     str(render_target),
@@ -4333,7 +4436,7 @@ def export_clip(
             encode(lambda codec: common[:-2] + repaired_audio + common[-2:] + [
                 "-vf", vf,
                 "-map", "0:v:0", "-map", audio_map(1),
-                *codec,
+                *codec, *mute_filter,
                 "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart",
                 str(render_target),

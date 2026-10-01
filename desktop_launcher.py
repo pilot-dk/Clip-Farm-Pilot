@@ -468,6 +468,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         remove_silence=True,
         remove_filler_words=True,
         remove_still_scenes=True,
+        mute_profanity=True,
         export_metadata=cleaned_metadata,
     )
     cleaned_summary = cleaned_metadata.get("full_length_summary", {})
@@ -476,6 +477,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         not cleaned_summary.get("remove_silence")
         or not cleaned_summary.get("remove_filler_words")
         or not cleaned_summary.get("remove_still_scenes")
+        or not cleaned_summary.get("mute_profanity")
         or cleaned_info.duration <= 0.5
         or cleaned_info.frame_rate != info.frame_rate
     ):
