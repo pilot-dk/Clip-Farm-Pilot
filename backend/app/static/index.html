@@ -659,7 +659,19 @@
     .progress-bar { width: 0%; height: 100%; border-radius: inherit; background: var(--accent); transition: width .18s ease; }
     .progress-text { display: flex; justify-content: space-between; margin-top: 6px; color: var(--muted); font-size: 10px; }
 
-    .auto-find-row { display: grid; grid-template-columns: minmax(0,1fr) 88px; gap: 8px; }
+    .auto-find-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+    .auto-find-row > .button { grid-column: 1 / -1; }
+    .candidate-pick { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+    .candidate-status { color: var(--muted-2); font-size: 10px; font-weight: 750; }
+    .candidate.exporting { border-color: var(--accent); }
+    .candidate.exported .candidate-status { color: var(--success); }
+    .candidate.failed .candidate-status { color: #ff8a8a; }
+    .bulk-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .bulk-bar[hidden] { display: none; }
+    .bulk-select-all { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; cursor: pointer; }
+    .bulk-select-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+    .bulk-actions { display: inline-flex; gap: 6px; }
+    .bulk-actions .button[hidden] { display: none; }
     select { padding: 0 34px 0 11px; appearance: none; background-image: linear-gradient(45deg, transparent 50%, #7c8290 50%), linear-gradient(135deg, #7c8290 50%, transparent 50%); background-position: calc(100% - 16px) 17px, calc(100% - 11px) 17px; background-size: 5px 5px; background-repeat: no-repeat; }
 
     .button {
@@ -1669,8 +1681,21 @@
                   <option value="45">45 sec</option>
                   <option value="60">60 sec</option>
                 </select>
+                <select id="clipCount" aria-label="How many clips to find" title="How many clips Auto-Find returns">
+                  <option value="5">5 clips</option>
+                  <option value="10" selected>10 clips</option>
+                  <option value="20">20 clips</option>
+                  <option value="30">30 clips</option>
+                </select>
               </div>
               <div class="candidates" id="candidates"><div class="candidate-empty">Load a video to scan for candidate clips.</div></div>
+              <div class="bulk-bar" id="bulkBar" hidden>
+                <label class="bulk-select-all"><input type="checkbox" id="bulkSelectAll" checked /><span id="bulkCount">All clips selected</span></label>
+                <span class="bulk-actions">
+                  <button class="button secondary small" type="button" id="bulkSaveButton" hidden>Save exported clips</button>
+                  <button class="button primary small" type="button" id="bulkExportButton">Export selected</button>
+                </span>
+              </div>
             </div>
 
             <div class="section" id="fullLengthSection" hidden>
@@ -2784,6 +2809,7 @@
     function resetCandidates() {
       state.selectedCandidate = null;
       $("candidates").innerHTML = '<div class="candidate-empty">Use Auto-Find Clips to rank high-energy moments.</div>';
+      $("bulkBar").hidden = true;
     }
 
     function loadLocalPreview(file) {
@@ -3130,6 +3156,11 @@
 
     function renderCandidates(candidates) {
       $("candidates").innerHTML = "";
+      state.candidates = candidates;
+      state.bulkExports = [];
+      $("bulkSaveButton").hidden = true;
+      $("bulkBar").hidden = !candidates.length;
+      $("bulkSelectAll").checked = true;
       if (!candidates.length) {
         $("candidates").innerHTML = '<div class="candidate-empty">No candidate moments were found.</div>';
         return;
@@ -3148,12 +3179,14 @@
           .join("");
         item.innerHTML = `
           <div class="candidate-meta">
+            <input class="candidate-pick" type="checkbox" checked aria-label="Include in bulk export" />
             <span class="score-badge">${Math.round(candidate.score)}</span>
             <span class="candidate-copy">
               <span class="candidate-time">${formatTime(candidate.start)} – ${formatTime(candidate.end)} · ${Math.round(candidate.end - candidate.start)}s</span>
               <span class="candidate-name">${escapeHtml(candidate.label || `Moment ${index + 1}`)}</span>
               <span class="candidate-reason">${escapeHtml(candidate.reason || "Strong combined signal")}</span>
               <span class="candidate-signals">${signalChips}</span>
+              <span class="candidate-status"></span>
             </span>
           </div>
           <button class="button secondary small" type="button">Use</button>`;
@@ -3166,8 +3199,139 @@
           setVideoTime(candidate.start);
           setStatus("success", `${candidate.label || `Moment ${index + 1}`} selected`, `${Math.round(candidate.score)}/100 clip score · ${candidate.reason || "Strong combined signal"} · ${formatTime(candidate.end - candidate.start, true)} clip.`);
         });
+        item.querySelector(".candidate-pick").addEventListener("change", updateBulkSelection);
         $("candidates").appendChild(item);
       });
+      updateBulkSelection();
+    }
+
+    function candidatePicks() {
+      return [...document.querySelectorAll("#candidates .candidate-pick")];
+    }
+
+    function updateBulkSelection() {
+      const picks = candidatePicks();
+      const chosen = picks.filter((box) => box.checked).length;
+      $("bulkSelectAll").checked = chosen === picks.length && picks.length > 0;
+      $("bulkSelectAll").indeterminate = chosen > 0 && chosen < picks.length;
+      $("bulkCount").textContent = chosen === picks.length ? `All ${picks.length} clips selected` : `${chosen} of ${picks.length} clips selected`;
+      if (!state.bulkRunning) $("bulkExportButton").textContent = chosen ? `Export ${chosen} clip${chosen === 1 ? "" : "s"}` : "Export selected";
+    }
+
+    async function exportSelectedClips() {
+      if (!state.videoId) return;
+      if (state.bulkRunning) {
+        state.bulkStop = true;
+        $("bulkExportButton").textContent = "Stopping after this clip…";
+        return;
+      }
+      const cards = [...document.querySelectorAll("#candidates .candidate")];
+      const chosen = candidatePicks().map((box, index) => (box.checked ? index : -1)).filter((index) => index >= 0);
+      if (!chosen.length) {
+        toast("Tick at least one clip to export.");
+        return;
+      }
+      state.bulkRunning = true;
+      state.bulkStop = false;
+      state.bulkExports = [];
+      $("bulkSaveButton").hidden = true;
+      const locked = ["analyzeButton", "exportButton", "topExportButton", "bulkSelectAll"];
+      locked.forEach((id) => { $(id).disabled = true; });
+      candidatePicks().forEach((box) => { box.disabled = true; });
+      $("bulkExportButton").textContent = "Stop after this clip";
+      const failed = [];
+      try {
+        for (const [position, index] of chosen.entries()) {
+          if (state.bulkStop) break;
+          const candidate = state.candidates[index];
+          const card = cards[index];
+          card.classList.remove("exported", "failed");
+          card.classList.add("exporting");
+          card.querySelector(".candidate-status").textContent = "Exporting…";
+          setStatus(
+            "working",
+            `Exporting clip ${position + 1} of ${chosen.length}`,
+            `${candidate.label || `Moment ${index + 1}`} · ${formatTime(candidate.start)} – ${formatTime(candidate.end)} · ${state.ratio} with your current settings.`,
+          );
+          try {
+            const response = await fetch(`/api/videos/${state.videoId}/export`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(exportRequestBody({ start: Number(candidate.start), end: Number(candidate.end) })),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(apiError(data, "Export failed."));
+            const filename = data.suggested_filename || `Clip Farm Pilot clip ${index + 1}.mp4`;
+            state.bulkExports.push({ export_id: data.export_id, filename });
+            card.classList.add("exported");
+            card.querySelector(".candidate-status").textContent = `Exported · ${filename.replace(/\.mp4$/i, "")}`;
+          } catch (error) {
+            failed.push(error.message || "Export failed.");
+            card.classList.add("failed");
+            card.querySelector(".candidate-status").textContent = `Not exported: ${error.message || "export failed"}`;
+          } finally {
+            card.classList.remove("exporting");
+          }
+        }
+      } finally {
+        state.bulkRunning = false;
+        locked.forEach((id) => { $(id).disabled = false; });
+        candidatePicks().forEach((box) => { box.disabled = false; });
+        updateBulkSelection();
+      }
+      const stopped = state.bulkStop && state.bulkExports.length + failed.length < chosen.length;
+      const notes = [
+        failed.length ? `${failed.length} could not be exported` : "",
+        stopped ? "stopped early" : "",
+      ].filter(Boolean).join(" · ");
+      if (!state.bulkExports.length) {
+        setStatus("error", "No clips were exported", failed[0] || "Export stopped before the first clip finished.");
+        return;
+      }
+      await saveBulkExports(notes);
+    }
+
+    async function saveBulkExports(notes = "") {
+      const exports = state.bulkExports || [];
+      if (!exports.length) return;
+      const count = exports.length;
+      const noun = `${count} clip${count === 1 ? "" : "s"}`;
+      const suffix = notes ? ` · ${notes}` : "";
+      try {
+        if (window.pywebview?.api?.save_exports) {
+          setStatus("working", "Choose a folder", `Pick where to save ${noun}. Each is named after its title.`);
+          const result = await window.pywebview.api.save_exports(exports);
+          if (result?.status === "saved") {
+            $("bulkSaveButton").hidden = true;
+            setStatus("success", `${result.count} clip${result.count === 1 ? "" : "s"} saved`, `Saved to ${result.folder}${suffix}`);
+            toast(`${result.count} clip${result.count === 1 ? "" : "s"} saved.`);
+          } else {
+            $("bulkSaveButton").hidden = false;
+            setStatus("success", `${noun} ready`, `Saving was cancelled. Press Save exported clips when you are ready${suffix}.`);
+          }
+          return;
+        }
+        setStatus("working", `Bundling ${noun}`, "Preparing one ZIP download…");
+        const response = await fetch("/api/exports/archive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: exports }),
+        });
+        if (!response.ok) throw new Error(apiError(await response.json().catch(() => ({})), "The ZIP could not be created."));
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "Clip Farm Pilot clips.zip";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        $("bulkSaveButton").hidden = false;
+        setStatus("success", `${noun} downloaded`, `One ZIP with every clip named after its title${suffix}.`);
+      } catch (error) {
+        $("bulkSaveButton").hidden = false;
+        setStatus("error", "Could not save the clips", `${error.message || "Please try again."}${suffix}`);
+      }
     }
 
     async function analyzeVideo() {
@@ -3176,6 +3340,7 @@
       setBusy(button, true, "Scanning…");
       setStatus("working", "Finding strong moments", "Scanning reactions, momentum, contrast, and visual action across the stream.");
       $("candidates").innerHTML = '<div class="candidate-empty">Analyzing the livestream…</div>';
+      $("bulkBar").hidden = true;
 
       try {
         const response = await fetch(`/api/videos/${state.videoId}/analyze`, {
@@ -3183,7 +3348,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             target_duration: $("clipDuration").value === "auto" ? "auto" : Number($("clipDuration").value),
-            limit: 5,
+            limit: Number($("clipCount").value) || 10,
           }),
         });
         const data = await response.json();
@@ -3192,10 +3357,49 @@
         setStatus("success", "Clips found", `${(data.candidates || []).length} candidate moments ranked and ready to preview.`);
       } catch (error) {
         $("candidates").innerHTML = '<div class="candidate-empty">Analysis did not finish. Try again.</div>';
+        $("bulkBar").hidden = true;
         setStatus("error", "Analysis failed", error.message);
       } finally {
         setBusy(button, false);
       }
+    }
+
+    function exportRequestBody(range) {
+      const isFullLength = state.editMode === "full-length";
+      return {
+        start: range.start,
+        end: range.end,
+        edit_mode: state.editMode,
+        aspect: state.ratio,
+        layout: isFullLength ? "standard" : state.layout,
+        face_corner: $("faceCorner").value,
+        face_width_fraction: Number($("faceWidth").value) / 100,
+        face_height_fraction: Number($("faceHeight").value) / 100,
+        face_inset_x_fraction: Number($("faceInsetX").value) / 100,
+        face_inset_y_fraction: Number($("faceInsetY").value) / 100,
+        caption_text: state.ratio === "1:1" ? $("captionText").value : "",
+        caption_font_scale: Number($("captionSize").value) / 100,
+        caption_position: document.querySelector('input[name="captionPosition"]:checked')?.value || "center",
+        caption_overlay_data_url: renderSquareCaptionOverlay(),
+        video_filter: $("videoFilter").value,
+        sound_effects: selectedSoundEffects(),
+        visual_effect: $("visualEffect").value,
+        effect_time: Number($("effectTime").value) || 0,
+        auto_sound_effect: $("autoSoundEffectToggle").checked,
+        sound_volume: Number($("soundVolume").value) / 100,
+        visual_strength: Number($("visualStrength").value) / 100,
+        live_captions: $("liveCaptionsToggle").checked,
+        live_caption_scheme: $("liveCaptionScheme").value,
+        live_caption_height: Math.max(0, Math.min(100, Number($("liveCaptionHeight").value) || 0)) / 100,
+        live_caption_scale: Math.max(50, Math.min(175, Number($("liveCaptionSize").value) || 100)) / 100,
+        resolution: state.resolution,
+        viral_title: $("viralTitleToggle").checked,
+        remove_silence: isFullLength && $("removeSilenceToggle").checked,
+        remove_still_scenes: isFullLength && $("removeStillScenesToggle").checked,
+        mute_profanity: $("muteProfanityToggle").checked,
+        remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
+        subscribe_animation: isFullLength && $("subscribeAnimationToggle").checked,
+      };
     }
 
     async function exportClip() {
@@ -3226,40 +3430,7 @@
         const response = await fetch(`/api/videos/${state.videoId}/export`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            start: range.start,
-            end: range.end,
-            edit_mode: state.editMode,
-            aspect: state.ratio,
-            layout: isFullLength ? "standard" : state.layout,
-            face_corner: $("faceCorner").value,
-            face_width_fraction: Number($("faceWidth").value) / 100,
-            face_height_fraction: Number($("faceHeight").value) / 100,
-            face_inset_x_fraction: Number($("faceInsetX").value) / 100,
-            face_inset_y_fraction: Number($("faceInsetY").value) / 100,
-            caption_text: state.ratio === "1:1" ? $("captionText").value : "",
-            caption_font_scale: Number($("captionSize").value) / 100,
-            caption_position: document.querySelector('input[name="captionPosition"]:checked')?.value || "center",
-            caption_overlay_data_url: renderSquareCaptionOverlay(),
-            video_filter: $("videoFilter").value,
-            sound_effects: selectedSoundEffects(),
-            visual_effect: $("visualEffect").value,
-            effect_time: Number($("effectTime").value) || 0,
-            auto_sound_effect: $("autoSoundEffectToggle").checked,
-            sound_volume: Number($("soundVolume").value) / 100,
-            visual_strength: Number($("visualStrength").value) / 100,
-            live_captions: $("liveCaptionsToggle").checked,
-            live_caption_scheme: $("liveCaptionScheme").value,
-            live_caption_height: Math.max(0, Math.min(100, Number($("liveCaptionHeight").value) || 0)) / 100,
-            live_caption_scale: Math.max(50, Math.min(175, Number($("liveCaptionSize").value) || 100)) / 100,
-            resolution: state.resolution,
-            viral_title: $("viralTitleToggle").checked,
-            remove_silence: isFullLength && $("removeSilenceToggle").checked,
-            remove_still_scenes: isFullLength && $("removeStillScenesToggle").checked,
-            mute_profanity: $("muteProfanityToggle").checked,
-            remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
-            subscribe_animation: isFullLength && $("subscribeAnimationToggle").checked,
-          }),
+          body: JSON.stringify(exportRequestBody(range)),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(apiError(data, "Export failed."));
@@ -3422,6 +3593,7 @@
       $("endTime").value = 30;
       enableEditor(false);
       $("candidates").innerHTML = '<div class="candidate-empty">Upload a video to scan for candidate clips.</div>';
+      $("bulkBar").hidden = true;
       setStatus("ready", "Ready", "Add a livestream recording to begin.");
       switchSource("file");
     }
@@ -3494,6 +3666,18 @@
     dropZone.addEventListener("drop", (event) => selectFile(event.dataTransfer.files[0]));
 
     $("analyzeButton").addEventListener("click", analyzeVideo);
+
+    $("bulkExportButton").addEventListener("click", exportSelectedClips);
+
+    $("bulkSaveButton").addEventListener("click", () => saveBulkExports());
+
+    $("bulkSelectAll").addEventListener("change", (event) => {
+
+      candidatePicks().forEach((box) => { box.checked = event.target.checked; });
+
+      updateBulkSelection();
+
+    });
     $("exportButton").addEventListener("click", exportClip);
     $("topExportButton").addEventListener("click", exportClip);
     $("downloadLink").addEventListener("click", saveRenderedClip);

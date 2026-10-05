@@ -866,6 +866,11 @@ def _finalize_candidates(candidates: list[dict], target_duration: int | None, li
     return picks
 
 
+# Up to 30 clips per scan. The visual check grows with the count (about 18 s
+# for 20 clips from an hour-long VOD); a short video simply yields fewer.
+MAX_CLIP_CANDIDATES = 30
+
+
 def analyze_viral_candidates(path: Path, target_duration: int | str | None = 30, limit: int = 5) -> list[dict]:
     """Rank clip-worthy moments using reactions, momentum, contrast, and visuals.
 
@@ -881,7 +886,7 @@ def analyze_viral_candidates(path: Path, target_duration: int | str | None = 30,
     requested_duration = (
         None if target_duration in (None, "auto") else max(8, min(int(target_duration), 90))
     )
-    requested_limit = max(1, min(int(limit), 10))
+    requested_limit = max(1, min(int(limit), MAX_CLIP_CANDIDATES))
 
     try:
         audio = _audio_analysis_per_second(path)
@@ -1054,6 +1059,9 @@ def _clean_title_subject(value: str, word_limit: int = 9, character_limit: int =
 def _transcript_title_subject(transcript_text: str) -> str:
     """Choose a short, concrete phrase from the actual words in the exported clip."""
     normalized = unicodedata.normalize("NFKC", str(transcript_text or ""))
+    # The speech engine writes sounds as tags ("(gunshots)", "[BLANK_AUDIO]",
+    # "*laughs*"); they are not words anyone said.
+    normalized = re.sub(r"\[[^\]]*\]|\([^)]*\)|(?<!\S)\*[^*\s][^*]*\*(?!\S)", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     if not normalized:
         return ""

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from backend.app.video import AudioAnalysis, VideoInfo, analyze_viral_candidates
+from backend.app.video import MAX_CLIP_CANDIDATES, AudioAnalysis, VideoInfo, analyze_viral_candidates
 
 
 def audio_track(duration: int, events: list[tuple[int, int, float]]) -> AudioAnalysis:
@@ -150,6 +150,36 @@ class ClipDetectionTests(unittest.TestCase):
         self.assertAlmostEqual(best["end"] - best["start"], 30.0, places=2)
         self.assertLessEqual(best["start"], 88)
         self.assertGreaterEqual(best["end"], 88)
+
+    # Many clips per scan
+
+    def test_an_hour_long_vod_yields_twenty_separate_clips(self):
+        events = [(start, start + 8, 0.6 + (start % 7) * 0.05) for start in range(60, 3540, 140)]
+        for target in (30, "auto"):
+            clips = self.analyze(3600, audio_track(3600, events), target=target, limit=20)
+
+            self.assertEqual(len(clips), 20, target)
+            for index, first in enumerate(clips):
+                for second in clips[index + 1:]:
+                    overlap = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
+                    shorter = min(first["end"] - first["start"], second["end"] - second["start"])
+                    self.assertLessEqual(overlap / shorter, 0.40, (first, second))
+
+    def test_a_scan_returns_at_most_thirty_clips(self):
+        events = [(start, start + 6, 0.8) for start in range(40, 3560, 90)]
+        clips = self.analyze(3600, audio_track(3600, events), target=30, limit=99)
+        self.assertEqual(len(clips), MAX_CLIP_CANDIDATES)
+
+    def test_the_api_accepts_up_to_thirty_clips_per_scan(self):
+        from pydantic import ValidationError
+
+        from backend.app.main import AnalyzeRequest
+
+        self.assertEqual(AnalyzeRequest(limit=20).limit, 20)
+        self.assertEqual(AnalyzeRequest(limit=MAX_CLIP_CANDIDATES).limit, MAX_CLIP_CANDIDATES)
+        for invalid in (0, MAX_CLIP_CANDIDATES + 1):
+            with self.assertRaises(ValidationError):
+                AnalyzeRequest(limit=invalid)
 
     def test_the_api_accepts_auto_as_a_length(self):
         from pydantic import ValidationError

@@ -141,7 +141,8 @@ The editor now includes:
 - Check Sound favours wins, confirmations, and positive payoffs; Vine Boom favours awkward lines, questions, sudden pauses, and surprising beats.
 - A manual timing override for creators who want every selected sound at one exact playhead position.
 - Lens flare, punch zoom, and white flash visual effects with adjustable strength and precise playhead-based timing.
-- **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection.
+- **Auto-Find Clips** with multi-signal ranking, clear explanations, and one-click selection. Choose 5, 10, 20, or 30 clips per scan.
+- **Bulk export** of found clips: tick the ones you want and press **Export N clips** to render them one after another with your current settings, then save them all to one folder.
 - **Export Clip** actions in the toolbar and editor panel.
 - Rendering status, errors, success feedback, and a finished MP4 save button.
 - A native desktop **Save As** window after rendering, with a reusable **Save exported MP4** button if saving is cancelled.
@@ -187,6 +188,14 @@ Version 1.3 replaces the original loudness-only heuristic with a two-stage local
 4. Overlapping results and dead-air-heavy windows are suppressed. Every result includes a plain-language reason and separate reaction, energy, and visual indicators.
 
 The analysis runs locally and does not upload VOD audio or frames to an AI provider. Repeating an analysis of the same source during one app session reuses its cached audio features.
+
+### Find and export many clips at once
+
+Set the clip count next to the length picker to **5**, **10** (the default), **20**, or **30**, then press **Auto-Find Clips**. Twenty clips from an hour-long VOD take about 18 seconds to find; a short video simply yields fewer, because clips never repeat each other.
+
+Every found clip has a tick box, and all are ticked to start with. Untick the ones you do not want (or use the box beside the count to tick or untick them all), then press **Export N clips**. Clip Farm Pilot renders them one at a time with the settings you have chosen — aspect, resolution, captions, sounds, Mute swear words, and so on — and marks each card as it finishes. Press the button again to stop after the clip in progress.
+
+When the last clip is done, the desktop app asks once for a folder and saves every clip there under its title. A clip is never written over a file that is already there; it is numbered instead, as in `Big Finish (2).mp4`. If you cancel, press **Save exported clips** to choose a folder later. In a browser, the clips download as one ZIP, `Clip Farm Pilot clips.zip`.
 
 ## Direct publishing to YouTube, Instagram, and TikTok
 

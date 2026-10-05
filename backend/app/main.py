@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from html import escape
 from pathlib import Path
 from typing import Annotated, Literal
@@ -20,6 +21,7 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
@@ -28,12 +30,14 @@ from .brand import APP_NAME, APP_SLUG, APP_VERSION, env
 from .captions import caption_engine_status
 from .social import SocialPublishError, SocialPublisher
 from .video import (
+    MAX_CLIP_CANDIDATES,
     analyze_viral_candidates,
     center_caption_overlay,
     export_clip,
     format_frame_rate,
     generate_viral_title,
     probe_video,
+    safe_export_filename,
 )
 from .vod import CachedVideoLibrary, VodImportManager
 
@@ -104,7 +108,7 @@ def _unique_viral_title(
 class AnalyzeRequest(BaseModel):
     # "auto" lets each clip's length follow its moment instead of a fixed length.
     target_duration: Literal["auto"] | Annotated[int, Field(ge=8, le=90)] = 30
-    limit: int = Field(5, ge=1, le=10)
+    limit: int = Field(5, ge=1, le=MAX_CLIP_CANDIDATES)
 
 
 class VodImportRequest(BaseModel):
@@ -489,6 +493,54 @@ def export(video_id: str, req: ExportRequest):
         "muted_swear_words": int(export_metadata.get("muted_swear_words", 0)),
         "full_length_summary": export_metadata.get("full_length_summary", {}),
     }
+
+
+class ExportArchiveItem(BaseModel):
+    export_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    filename: str = Field(min_length=1, max_length=160)
+
+
+class ExportArchiveRequest(BaseModel):
+    items: list[ExportArchiveItem] = Field(min_length=1, max_length=MAX_CLIP_CANDIDATES)
+
+
+@app.post("/api/exports/archive")
+def export_archive(req: ExportArchiveRequest):
+    """Bundle several exported clips into one ZIP, each under its title."""
+    sources: list[tuple[Path, str]] = []
+    used: set[str] = set()
+    for item in req.items:
+        source = (EXPORTS / f"{item.export_id}.mp4").resolve()
+        if source.parent != EXPORTS.resolve() or not source.is_file():
+            raise HTTPException(404, "An exported clip is no longer available. Export it again.")
+        sources.append((source, _unique_name(safe_export_filename(Path(item.filename).stem), used)))
+    handle = tempfile.NamedTemporaryFile(prefix=f"{APP_SLUG}-clips-", suffix=".zip", delete=False)
+    archive = Path(handle.name)
+    handle.close()
+    try:
+        # MP4 is already compressed, so the clips are stored rather than deflated.
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as bundle:
+            for source, name in sources:
+                bundle.write(source, arcname=name)
+    except BaseException:
+        archive.unlink(missing_ok=True)
+        raise
+    return FileResponse(
+        archive,
+        media_type="application/zip",
+        filename=f"{APP_NAME} clips.zip",
+        background=BackgroundTask(archive.unlink, missing_ok=True),
+    )
+
+
+def _unique_name(filename: str, used: set[str]) -> str:
+    """The filename, numbered "(2)", "(3)"... if an earlier clip already has it."""
+    stem, suffix = Path(filename).stem, Path(filename).suffix or ".mp4"
+    candidate, number = f"{stem}{suffix}", 2
+    while candidate.lower() in used:
+        candidate, number = f"{stem} ({number}){suffix}", number + 1
+    used.add(candidate.lower())
+    return candidate
 
 
 @app.get("/api/exports/{filename}")

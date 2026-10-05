@@ -53,6 +53,22 @@ class ViralTitleTests(unittest.TestCase):
         self.assertEqual(result["strategy"], "transcript_big_finish")
         self.assertIn("The Craziest Goal I Have Ever Scored", result["title"])
 
+    def test_sound_tags_in_the_transcript_never_become_the_title(self):
+        energy = np.array([0.1, 0.3, 0.8, 0.4], dtype=np.float32)
+        with patch("backend.app.video._audio_rms_per_second", return_value=energy):
+            sound_only = generate_viral_title(Path("rendered.mp4"), transcript_text="(gunshots)", variation_seed="a")
+            mixed = generate_viral_title(
+                Path("rendered.mp4"),
+                transcript_text="[BLANK_AUDIO] *laughs* that was the craziest goal (crowd cheering) ever",
+                variation_seed="b",
+            )
+
+        self.assertEqual(sound_only["strategy"].split("_")[0], "energy")
+        self.assertNotIn("unshots", sound_only["title"])
+        self.assertIn("The Craziest Goal Ever", mixed["title"])
+        for text in ("BLANK", "Laughs", "Cheering"):
+            self.assertNotIn(text, mixed["title"])
+
     def test_explainer_transcript_uses_an_informative_curiosity_hook(self):
         with patch("backend.app.video._audio_rms_per_second", return_value=np.array([0.2, 0.3, 0.4])):
             result = generate_viral_title(

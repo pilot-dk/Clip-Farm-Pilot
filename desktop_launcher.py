@@ -49,10 +49,12 @@ class DesktopApi:
         self._uploads_dir = uploads_dir.resolve() if uploads_dir else None
         self._window = None
         self._save_dialog_type = 30
+        self._folder_dialog_type = 20
 
-    def _bind_window(self, window, save_dialog_type: int) -> None:
+    def _bind_window(self, window, save_dialog_type: int, folder_dialog_type: int = 20) -> None:
         self._window = window
         self._save_dialog_type = save_dialog_type
+        self._folder_dialog_type = folder_dialog_type
 
     def save_export(self, export_id: str, suggested_name: str = DEFAULT_CLIP_FILENAME) -> dict:
         if not self._ITEM_ID.fullmatch(export_id or ""):
@@ -86,6 +88,46 @@ class DesktopApi:
         if destination.resolve() != source:
             shutil.copy2(source, destination)
         return {"status": "saved", "path": str(destination)}
+
+    def save_exports(self, items: list) -> dict:
+        """Save several exported clips into one folder chosen once, each under its title."""
+        sources: list[tuple[Path, str]] = []
+        for item in items or []:
+            export_id = str((item or {}).get("export_id", ""))
+            if not self._ITEM_ID.fullmatch(export_id):
+                raise ValueError("One of the exported clips could not be identified.")
+            source = (self._exports_dir / f"{export_id}.mp4").resolve()
+            if source.parent != self._exports_dir or not source.is_file():
+                raise FileNotFoundError("An exported clip is no longer available. Please export it again.")
+            name = Path(str(item.get("filename") or DEFAULT_CLIP_FILENAME)).name[:120]
+            sources.append((source, name if name.lower().endswith(".mp4") else f"{name}.mp4"))
+        if not sources:
+            raise ValueError("Choose at least one exported clip to save.")
+        if self._window is None:
+            raise RuntimeError("The desktop save window is not ready.")
+
+        downloads = Path.home() / "Downloads"
+        selected = self._window.create_file_dialog(
+            self._folder_dialog_type,
+            directory=str(downloads if downloads.is_dir() else Path.home()),
+        )
+        chosen = selected[0] if isinstance(selected, (tuple, list)) and selected else selected
+        # Qt reports a cancelled folder choice as an empty path.
+        if not chosen:
+            return {"status": "cancelled"}
+        folder = Path(chosen).expanduser()
+        folder.mkdir(parents=True, exist_ok=True)
+        saved: list[str] = []
+        for source, name in sources:
+            destination = folder / name
+            number = 2
+            # Never overwrite: a clip whose title is already in the folder is numbered.
+            while destination.exists():
+                destination = folder / f"{Path(name).stem} ({number}).mp4"
+                number += 1
+            shutil.copy2(source, destination)
+            saved.append(str(destination))
+        return {"status": "saved", "folder": str(folder), "count": len(saved), "paths": saved}
 
     def reveal_video(self, video_id: str) -> dict:
         """Reveal one of Clip Farm Pilot's cached source videos in the system file manager."""
@@ -308,6 +350,23 @@ def _test_save_bridge(
         raise RuntimeError("The native save test did not create an MP4.")
     if destination.read_bytes() != (exports_dir / f"{export_id}.mp4").read_bytes():
         raise RuntimeError("The saved MP4 does not match the rendered export.")
+
+    class TestFolderWindow:
+        def create_file_dialog(self, *args, **kwargs):
+            return (str(destination_dir / "bulk"),)
+
+    desktop_api._bind_window(TestFolderWindow(), 30, 20)
+    bulk = desktop_api.save_exports([
+        {"export_id": export_id, "filename": "Bulk clip.mp4"},
+        {"export_id": export_id, "filename": "Bulk clip.mp4"},
+    ])
+    bulk_paths = [Path(path) for path in bulk.get("paths", [])]
+    if (
+        bulk.get("status") != "saved"
+        or [path.name for path in bulk_paths] != ["Bulk clip.mp4", "Bulk clip (2).mp4"]
+        or not all(path.is_file() for path in bulk_paths)
+    ):
+        raise RuntimeError("The native bulk save test did not save every clip into the chosen folder.")
 
 
 def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path, library, static_dir: Path) -> None:
@@ -587,7 +646,7 @@ def main() -> int:
             min_size=(980, 650),
             background_color="#090a0d",
         )
-        desktop_api._bind_window(window, webview.FileDialog.SAVE)
+        desktop_api._bind_window(window, webview.FileDialog.SAVE, webview.FileDialog.FOLDER)
 
         def close_test_window():
             # A slow desktop toolkit can take far longer than the two seconds the
