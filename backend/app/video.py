@@ -57,6 +57,25 @@ VideoFilter = Literal[
 
 EFFECT_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
+
+@dataclass(frozen=True)
+class IntroAnimation:
+    """A creator-supplied transparent animation shown at the start of a full video."""
+
+    name: str
+    asset: Path
+    duration: float
+    has_sound: bool
+
+
+# Both are 60 fps: the Twitch follow animation is 342 frames without sound, the
+# YouTube subscribe animation 223 frames with its own sound.
+TWITCH_FOLLOW_ANIMATION = IntroAnimation("Twitch follow", EFFECT_ASSETS_DIR / "twitch-follow.mov", 5.700, False)
+SUBSCRIBE_ANIMATION = IntroAnimation("YouTube subscribe", EFFECT_ASSETS_DIR / "youtube-subscribe.mov", 3.717, True)
+# While an intro animation's own sound plays, the video's sound is lowered to
+# this level so the two do not fight.
+_INTRO_SOUND_DUCK = 0.82
+
 ASPECT_SIZES: dict[Aspect, tuple[int, int]] = {
     "16:9": (1920, 1080),
     "9:16": (1080, 1920),
@@ -3671,6 +3690,28 @@ def _prepare_full_length_source(
     }
 
 
+def _intro_animation_schedule(
+    twitch_follow: bool, subscribe: bool, output_duration: float
+) -> list[tuple[IntroAnimation, float]]:
+    """The chosen intro animations with the second each one starts.
+
+    Each starts at 00:00 on its own. With both chosen, the Twitch follow animation
+    plays first and the YouTube subscribe animation starts the moment it ends. One
+    that would only start after the video has ended is left out.
+    """
+    schedule: list[tuple[IntroAnimation, float]] = []
+    start = 0.0
+    for animation, chosen in ((TWITCH_FOLLOW_ANIMATION, twitch_follow), (SUBSCRIBE_ANIMATION, subscribe)):
+        if not chosen:
+            continue
+        if not animation.asset.is_file():
+            raise RuntimeError(f"The bundled {animation.name} animation is missing.")
+        if start < output_duration:
+            schedule.append((animation, round(start, 3)))
+        start += animation.duration
+    return schedule
+
+
 def _export_full_length_single_pass(
     source: Path,
     output: Path,
@@ -3701,6 +3742,7 @@ def _export_full_length_single_pass(
     export_metadata: dict[str, object] | None,
     remove_still_scenes: bool = False,
     mute_profanity: bool = False,
+    twitch_follow_animation: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     """Analyze once and render a complete landscape or square edit in one generation."""
     if aspect not in {"16:9", "1:1"}:
@@ -3841,9 +3883,7 @@ def _export_full_length_single_pass(
                 live_caption_scale,
             )
 
-        subscribe_asset = EFFECT_ASSETS_DIR / "youtube-subscribe.mov"
-        if subscribe_animation and not subscribe_asset.is_file():
-            raise RuntimeError("The bundled YouTube subscribe animation is missing.")
+        intro_animations = _intro_animation_schedule(twitch_follow_animation, subscribe_animation, output_duration)
 
         # First the audio: the kept speech with its sound effects and the subscribe
         # chime mixed in, stored losslessly. It takes seconds; the AAC encode then
@@ -3868,11 +3908,12 @@ def _export_full_length_single_pass(
             sound_indexes[effect] = next_audio_input
             audio_inputs += ["-i", str(sound_path)]
             next_audio_input += 1
-        subscribe_audio_index: int | None = None
-        if subscribe_animation:
-            subscribe_audio_index = next_audio_input
-            audio_inputs += ["-i", str(subscribe_asset)]
-            next_audio_input += 1
+        intro_sounds: list[tuple[IntroAnimation, float, int]] = []
+        for animation, animation_start in intro_animations:
+            if animation.has_sound:
+                intro_sounds.append((animation, animation_start, next_audio_input))
+                audio_inputs += ["-i", str(animation.asset)]
+                next_audio_input += 1
 
         audio_filters: list[str] = []
         volume = min(2.0, max(0.0, float(sound_volume)))
@@ -3898,9 +3939,11 @@ def _export_full_length_single_pass(
                 duck_events.append((effect, effect_trigger))
 
         extra_audio_labels = list(effect_labels)
-        if subscribe_audio_index is not None:
-            audio_filters.append(f"[{subscribe_audio_index}:a]asetpts=PTS-STARTPTS[subscribeaudio]")
-            extra_audio_labels.append("subscribeaudio")
+        for intro_number, (_animation, animation_start, intro_index) in enumerate(intro_sounds):
+            # A sound starts with its animation, which may follow another one.
+            delay = f",adelay={round(animation_start * 1000)}:all=1" if animation_start > 0 else ""
+            audio_filters.append(f"[{intro_index}:a]asetpts=PTS-STARTPTS{delay}[introaudio{intro_number}]")
+            extra_audio_labels.append(f"introaudio{intro_number}")
         base_audio_label: str | None = "0:a" if has_audio else None
         if base_audio_label is None and extra_audio_labels:
             audio_filters.append(
@@ -3919,8 +3962,11 @@ def _export_full_length_single_pass(
             audio_label = "mixbase"
         if audio_label is not None and extra_audio_labels:
             volume_expressions: list[str] = []
-            if subscribe_audio_index is not None:
-                volume_expressions.append("if(lt(t\\,3.717)\\,0.82\\,1)")
+            for animation, animation_start, _intro_index in intro_sounds:
+                volume_expressions.append(
+                    f"if(gte(t\\,{animation_start:.3f})*lt(t\\,{animation_start + animation.duration:.3f})\\,"
+                    f"{_INTRO_SOUND_DUCK:g}\\,1)"
+                )
             if effect_labels and volume > 0:
                 duck_gain = max(0.30, 1.0 - 0.70 * min(1.0, volume))
                 for effect, effect_trigger in duck_events:
@@ -3993,10 +4039,10 @@ def _export_full_length_single_pass(
             inputs += ["-loop", "1", "-i", str(overlay_path)]
             next_input += 1
 
-        subscribe_index: int | None = None
-        if subscribe_animation:
-            subscribe_index = next_input
-            inputs += ["-i", str(subscribe_asset)]
+        intro_video_indexes: list[int] = []
+        for animation, _animation_start in intro_animations:
+            intro_video_indexes.append(next_input)
+            inputs += ["-i", str(animation.asset)]
             next_input += 1
 
         creator_caption_index: int | None = None
@@ -4066,17 +4112,22 @@ def _export_full_length_single_pass(
             caption_path = str(live_caption_ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
             filters.append(f"[{video_label}]ass=filename='{caption_path}'[captioned]")
             video_label = "captioned"
-        if subscribe_index is not None:
+        for intro_number, ((_animation, animation_start), intro_index) in enumerate(
+            zip(intro_animations, intro_video_indexes)
+        ):
+            # Each animation fills the frame without cropping, centred, and starts
+            # at its own time; the video shows through until then and after it ends.
+            offset = f"+{animation_start:.3f}/TB" if animation_start > 0 else ""
             filters.append(
-                f"[{subscribe_index}:v]setpts=PTS-STARTPTS,"
+                f"[{intro_index}:v]setpts=PTS-STARTPTS{offset},format=rgba,"
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba[subscribe]"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0[intro{intro_number}]"
             )
             filters.append(
-                f"[{video_label}][subscribe]overlay=0:(H-h)/2:eof_action=pass:"
-                "shortest=0:format=auto[withsubscribe]"
+                f"[{video_label}][intro{intro_number}]overlay=0:(H-h)/2:eof_action=pass:"
+                f"shortest=0:format=auto[withintro{intro_number}]"
             )
-            video_label = "withsubscribe"
+            video_label = f"withintro{intro_number}"
         if creator_caption_index is not None:
             filters.append(
                 f"[{creator_caption_index}:v]scale={width}:{height}:flags=lanczos,format=rgba[creatorcaption]"
@@ -4122,7 +4173,18 @@ def _export_full_length_single_pass(
                 "remove_still_scenes": bool(remove_still_scenes),
                 "mute_profanity": bool(mute_profanity),
                 "muted_swear_words": muted_words,
-                "subscribe_animation": bool(subscribe_animation),
+                # Whether each animation is in the video, which a very short video
+                # may not have room for, and when each one plays.
+                "twitch_follow_animation": any(item is TWITCH_FOLLOW_ANIMATION for item, _ in intro_animations),
+                "subscribe_animation": any(item is SUBSCRIBE_ANIMATION for item, _ in intro_animations),
+                "intro_animations": [
+                    {
+                        "name": animation.name,
+                        "start": animation_start,
+                        "end": round(min(animation_start + animation.duration, output_duration), 3),
+                    }
+                    for animation, animation_start in intro_animations
+                ],
                 "render_passes": 1,
                 "shared_transcript": bool(needs_transcript),
                 "quality": "single-pass-crf18",
@@ -4142,7 +4204,7 @@ def _export_full_length_single_pass(
 
 def _apply_subscribe_animation(source: Path, output: Path) -> None:
     """Overlay the complete creator-supplied YouTube animation from frame zero."""
-    asset = EFFECT_ASSETS_DIR / "youtube-subscribe.mov"
+    asset = SUBSCRIBE_ANIMATION.asset
     if not asset.is_file():
         raise RuntimeError("The bundled YouTube subscribe animation is missing.")
     info = probe_video(source)
@@ -4154,7 +4216,8 @@ def _apply_subscribe_animation(source: Path, output: Path) -> None:
     audio_label: str | None = None
     if _has_audio(source):
         filters += [
-            "[0:a]asetpts=PTS-STARTPTS,volume='if(lt(t,3.717),0.82,1)':eval=frame[baseaudio]",
+            f"[0:a]asetpts=PTS-STARTPTS,volume='if(lt(t,{SUBSCRIBE_ANIMATION.duration:.3f}),"
+            f"{_INTRO_SOUND_DUCK:g},1)':eval=frame[baseaudio]",
             "[1:a]asetpts=PTS-STARTPTS[subscribeaudio]",
             "[baseaudio][subscribeaudio]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
             "alimiter=limit=0.95[outa]",
@@ -4212,6 +4275,7 @@ def export_clip(
     subscribe_animation: bool = False,
     remove_still_scenes: bool = False,
     mute_profanity: bool = False,
+    twitch_follow_animation: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     if edit_mode not in {"clip", "full-length"}:
         raise ValueError("Unknown edit mode.")
@@ -4248,6 +4312,7 @@ def export_clip(
             export_metadata=export_metadata,
             remove_still_scenes=remove_still_scenes,
             mute_profanity=mute_profanity,
+            twitch_follow_animation=twitch_follow_animation,
         )
 
     info = probe_video(source)

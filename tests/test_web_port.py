@@ -70,11 +70,14 @@ class WebPortTests(unittest.TestCase):
             remove_silence=True,
             remove_filler_words=False,
             subscribe_animation=True,
+            twitch_follow_animation=True,
         )
         self.assertEqual(request.edit_mode, "full-length")
         self.assertTrue(request.remove_silence)
         self.assertFalse(request.remove_filler_words)
         self.assertTrue(request.subscribe_animation)
+        self.assertTrue(request.twitch_follow_animation)
+        self.assertFalse(main.ExportRequest(start=0, end=600).twitch_follow_animation)
 
     def test_full_length_square_request_is_allowed(self):
         request = main.ExportRequest(start=0, end=600, edit_mode="full-length", aspect="1:1")

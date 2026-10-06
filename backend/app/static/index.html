@@ -550,6 +550,7 @@
       border-radius: 9px;
       background: rgba(8, 25, 38, .48);
     }
+    .full-edit-option.twitch-option { border-color: rgba(145, 70, 255, .34); }
     .full-edit-option.subscribe-option { border-color: rgba(91, 214, 255, .24); }
     .full-edit-copy { display: grid; gap: 4px; min-width: 0; }
     .full-edit-copy strong { color: #f1f5f7; font-size: 12px; }
@@ -1714,8 +1715,12 @@
                   <span class="full-edit-copy"><strong>Remove filler words</strong><small>Uses offline speech recognition to cut “um”, “uh”, “you know”, and similar filler.</small></span>
                   <label class="switch"><input id="removeFillerWordsToggle" type="checkbox" /><span class="switch-track"></span></label>
                 </div>
+                <div class="full-edit-option twitch-option">
+                  <span class="full-edit-copy"><strong>Twitch follow animation</strong><small>Shows your complete Twitch follow animation at the very start of the finished video. With the YouTube subscribe animation also on, this one plays first.</small></span>
+                  <label class="switch"><input id="twitchFollowToggle" type="checkbox" /><span class="switch-track"></span></label>
+                </div>
                 <div class="full-edit-option subscribe-option">
-                  <span class="full-edit-copy"><strong>YouTube subscribe animation</strong><small>Shows your complete supplied animation, with sound, at the very start of the finished video.</small></span>
+                  <span class="full-edit-copy"><strong>YouTube subscribe animation</strong><small>Shows your complete supplied animation, with sound, at the very start of the finished video, or straight after the Twitch follow animation when both are on.</small></span>
                   <label class="switch"><input id="subscribeAnimationToggle" type="checkbox" /><span class="switch-track"></span></label>
                 </div>
               </div>
@@ -3398,6 +3403,7 @@
         remove_still_scenes: isFullLength && $("removeStillScenesToggle").checked,
         mute_profanity: $("muteProfanityToggle").checked,
         remove_filler_words: isFullLength && $("removeFillerWordsToggle").checked,
+        twitch_follow_animation: isFullLength && $("twitchFollowToggle").checked,
         subscribe_animation: isFullLength && $("subscribeAnimationToggle").checked,
       };
     }
@@ -3427,10 +3433,11 @@
       );
 
       try {
+        const requestBody = exportRequestBody(range);
         const response = await fetch(`/api/videos/${state.videoId}/export`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(exportRequestBody(range)),
+          body: JSON.stringify(requestBody),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(apiError(data, "Export failed."));
@@ -3474,7 +3481,12 @@
           if (silenceCount) improvements.push(`${silenceCount} silent pause${silenceCount === 1 ? "" : "s"}`);
           if (fillerCount) improvements.push(`${fillerCount} filler word${fillerCount === 1 ? "" : "s"}`);
           if (stillCount) improvements.push(`${stillCount} still scene${stillCount === 1 ? "" : "s"}`);
-          if (summary.subscribe_animation) improvements.push("subscribe animation added at 00:00");
+          if (summary.twitch_follow_animation) improvements.push("Twitch follow animation added at 00:00");
+          if (summary.subscribe_animation) {
+            improvements.push(summary.twitch_follow_animation ? "subscribe animation right after it" : "subscribe animation added at 00:00");
+          } else if (requestBody.subscribe_animation) {
+            improvements.push("too short for the subscribe animation after the Twitch one");
+          }
           if ($("liveCaptionsToggle").checked && Number(data.live_caption_word_count) > 0) improvements.push(`${data.live_caption_word_count} caption words timed`);
           setStatus(
             "success",
@@ -3564,6 +3576,7 @@
       $("removeStillScenesToggle").checked = false;
       $("muteProfanityToggle").checked = false;
       $("removeFillerWordsToggle").checked = false;
+      $("twitchFollowToggle").checked = false;
       $("subscribeAnimationToggle").checked = false;
       $("autoSoundEffectToggle").checked = true;
       $("visualEffect").value = "none";

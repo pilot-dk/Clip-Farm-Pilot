@@ -513,7 +513,8 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     )
     # Pause and filler removal run the bundled Silero detector and Whisper with DTW
     # timing and the filler prompt, and still-scene removal decodes the picture, so
-    # each platform's own binaries are exercised.
+    # each platform's own binaries are exercised. The Twitch follow animation is
+    # ProRes 4444 with transparency, which the bundled FFmpeg has to decode.
     cleaned_id = uuid.uuid4().hex
     cleaned_metadata: dict[str, object] = {}
     export_clip(
@@ -528,6 +529,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         remove_filler_words=True,
         remove_still_scenes=True,
         mute_profanity=True,
+        twitch_follow_animation=True,
         export_metadata=cleaned_metadata,
     )
     cleaned_summary = cleaned_metadata.get("full_length_summary", {})
@@ -537,10 +539,13 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         or not cleaned_summary.get("remove_filler_words")
         or not cleaned_summary.get("remove_still_scenes")
         or not cleaned_summary.get("mute_profanity")
+        or not cleaned_summary.get("twitch_follow_animation")
         or cleaned_info.duration <= 0.5
         or cleaned_info.frame_rate != info.frame_rate
     ):
-        raise RuntimeError("The bundled pause, filler, and still-scene cleanup did not produce the expected video.")
+        raise RuntimeError(
+            "The bundled pause, filler, still-scene cleanup and Twitch follow animation did not produce the expected video."
+        )
     expected_manual_time = [0.6]
     if (
         landscape_sound_times.get("vine-boom") != expected_manual_time

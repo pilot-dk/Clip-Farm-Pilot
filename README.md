@@ -113,7 +113,7 @@ The editor now includes:
 - Separate **Viral clips** and **Full YouTube video** workspaces without leaving the current project.
 - A full-length **16:9** or **1:1 square** editor with independent **Remove silent pauses** and **Remove filler words** switches.
 - Pause trimming that listens for gaps in your voice rather than silence, so it works over game audio and music, and keeps a short natural breath at speech boundaries — plus word-timed removal for “um”, “uh”, “you know”, and similar filler.
-- The supplied transparent YouTube subscribe animation, fully visible and centred at the very start with its original sound.
+- The supplied transparent Twitch follow animation and YouTube subscribe animation, each fully visible and centred at the very start; with both on, the Twitch one plays first and the subscribe one, with its original sound, right after it.
 - Filters, live captions, smart Vine Boom and Check Sound placement, visual effects, original title suggestions, saving, and direct publishing in the full-length workspace.
 - Drag-and-drop or file-picker livestream upload with upload progress.
 - YouTube and Twitch VOD link importing with download progress.
@@ -175,7 +175,7 @@ Stream VODs sometimes switch resolution or audio channels partway through, for e
 
 Some stream recordings also switch their AAC audio between mono and stereo while the file declares a single layout. FFmpeg's decoder misreads every frame after such a switch, which garbles the sound and hides speech from captions, pause removal, and filler removal. Clip Farm Pilot checks each video's audio once per session (under a second for an hour-long VOD) and, when it finds this, decodes every frame in the layout it was recorded in and keeps the result as a temporary lossless copy on the video's own timeline. Clips, full-length edits, captions, and all audio analysis then use that copy.
 
-Enable **YouTube subscribe animation** to place the complete supplied transparent animation at 00:00. It is scaled to the selected 16:9 or square frame without cropping, centred, mixed with its original audio, and disappears when its 3.72-second animation ends. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
+Enable **Twitch follow animation** to place the complete supplied transparent Twitch follow animation at 00:00. It runs for 5.7 seconds and has no sound, so the video's own sound is left as it is. Enable **YouTube subscribe animation** to place the complete supplied transparent subscribe animation at 00:00; it runs for 3.72 seconds and is mixed with its original audio, with the video's sound lowered slightly underneath. With both on, the Twitch follow animation plays first and the subscribe animation starts the moment it ends, at 00:05.7. Each is scaled to the selected 16:9 or square frame without cropping, centred, and disappears when it ends. A video too short to reach 00:05.7 shows only the Twitch animation, and the status line says so. Full-length editing and speech analysis run locally in the desktop app; no source video is uploaded to an AI provider.
 
 ### How Auto-Find Clips ranks moments
 

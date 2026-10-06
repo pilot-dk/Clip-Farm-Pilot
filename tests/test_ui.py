@@ -117,6 +117,12 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn('subscribe_animation: isFullLength', self.html)
         self.assertIn("function setEditMode(mode, announce = true)", self.html)
 
+    def test_twitch_follow_toggle_sits_above_the_subscribe_toggle_in_play_order(self):
+        self.assertIn('id="twitchFollowToggle" type="checkbox" />', self.html)
+        self.assertIn('twitch_follow_animation: isFullLength && $("twitchFollowToggle").checked', self.html)
+        self.assertIn('$("twitchFollowToggle").checked = false;', self.html)
+        self.assertLess(self.html.index('id="twitchFollowToggle"'), self.html.index('id="subscribeAnimationToggle"'))
+
 
 if __name__ == "__main__":
     unittest.main()
