@@ -111,14 +111,35 @@ class IntroRenderTests(unittest.TestCase):
         )
         return float(np.abs(frame - background)[rows, columns].mean())
 
-    def loudness(self, path: Path, start: float, end: float) -> float:
+    @staticmethod
+    def samples(path: Path) -> np.ndarray:
         raw = subprocess.run(
             [ffmpeg_executable(), "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", str(RATE),
              "-f", "s16le", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
         ).stdout
-        samples = np.frombuffer(raw, dtype="<i2").astype(np.float64)[int(start * RATE):int(end * RATE)]
+        return np.frombuffer(raw, dtype="<i2").astype(np.float64)
+
+    def loudness(self, path: Path, start: float, end: float) -> float:
+        samples = self.samples(path)[int(start * RATE):int(end * RATE)]
         return float(np.sqrt(np.mean(samples ** 2)))
+
+    def click_time(self, path: Path) -> float:
+        """When the Follow button's click starts: the first sample far louder than the quiet tone."""
+        loud = np.nonzero(np.abs(self.samples(path)) > 0.15 * 32768)[0]
+        self.assertTrue(loud.size, f"No click in {path.name}")
+        return float(loud[0] / RATE)
+
+    def level(self, output: Path, start: float, end: float) -> float:
+        """The render's loudness against the same edit without any animation."""
+        plain, _summary = self.render("16:9", twitch=False, subscribe=False)
+        return self.loudness(output, start, end) / self.loudness(plain, start, end)
+
+    def assert_lowered_by_the_animation(self, output: Path, start: float, end: float):
+        self.assertAlmostEqual(self.level(output, start, end), video._INTRO_SOUND_DUCK, delta=0.02)
+
+    def assert_untouched(self, output: Path, start: float, end: float):
+        self.assertAlmostEqual(self.level(output, start, end), 1.0, delta=0.02)
 
     # On a 1280 x 720 frame the Twitch banner sits at about x 297-1023, y 528-679
     # once it has slid open, and the YouTube animation fills a band at y 157-562.
@@ -138,8 +159,13 @@ class IntroRenderTests(unittest.TestCase):
         self.assertTrue(summary["twitch_follow_animation"])
         self.assertFalse(summary["subscribe_animation"])
         self.assertEqual(summary["intro_animations"], [{"name": "Twitch follow", "start": 0.0, "end": 5.7}])
-        # It has no sound of its own, so the video's sound is left exactly as it was.
-        self.assertAlmostEqual(self.loudness(output, 0.2, 5.5), self.loudness(self.source, 0.2, 5.5), delta=60)
+        # Its click lands exactly where it does in the animation, as the Follow
+        # button is pressed; the video's sound dips slightly only while it plays.
+        self.assertAlmostEqual(self.click_time(output), self.click_time(TWITCH_FOLLOW_ANIMATION.asset), delta=0.005)
+        self.assertAlmostEqual(self.click_time(output), 2.433, delta=0.01)
+        self.assert_lowered_by_the_animation(output, 0.2, 2.3)
+        self.assert_lowered_by_the_animation(output, 2.8, 5.6)
+        self.assert_untouched(output, 5.9, 10.3)
 
     def test_with_both_the_subscribe_animation_and_its_sound_follow_the_twitch_animation(self):
         output, summary = self.render("16:9", twitch=True, subscribe=True)
@@ -161,11 +187,15 @@ class IntroRenderTests(unittest.TestCase):
                 {"name": "YouTube subscribe", "start": 5.7, "end": 9.417},
             ],
         )
-        # The subscribe sound plays with its animation, not over the Twitch one.
-        source_early, source_late = self.loudness(self.source, 0.2, 5.5), self.loudness(self.source, 5.9, 8.5)
-        self.assertAlmostEqual(self.loudness(output, 0.2, 5.5), source_early, delta=60)
-        self.assertGreater(self.loudness(output, 5.9, 8.5), source_late * 1.3)
-        self.assertAlmostEqual(self.loudness(output, 9.6, 10.3), self.loudness(self.source, 9.6, 10.3), delta=60)
+        # The Twitch click plays in its place, and the subscribe sound plays with
+        # its own animation rather than over the Twitch one.
+        self.assertAlmostEqual(self.click_time(output), self.click_time(TWITCH_FOLLOW_ANIMATION.asset), delta=0.005)
+        self.assert_lowered_by_the_animation(output, 0.2, 2.3)
+        self.assert_lowered_by_the_animation(output, 2.8, 5.6)
+        self.assertGreater(self.level(output, 5.9, 8.5), 1.3)
+        # Where the subscribe sound is silent, 0.45-1.05 s into it, the dip still holds.
+        self.assert_lowered_by_the_animation(output, 6.15, 6.75)
+        self.assert_untouched(output, 9.6, 10.3)
 
     def test_the_subscribe_animation_alone_still_starts_at_zero(self):
         output, summary = self.render("16:9", twitch=False, subscribe=True)
@@ -174,7 +204,9 @@ class IntroRenderTests(unittest.TestCase):
         self.assertLess(self.change(output, 1.1, *self.BELOW_SUBSCRIBE_BAND), 3.0)
         self.assertLess(self.change(output, 4.2, *self.WHOLE_FRAME), 3.0)
         self.assertEqual(summary["intro_animations"], [{"name": "YouTube subscribe", "start": 0.0, "end": 3.717}])
-        self.assertGreater(self.loudness(output, 0.2, 2.8), self.loudness(self.source, 0.2, 2.8) * 1.3)
+        self.assertGreater(self.level(output, 0.2, 2.8), 1.3)
+        self.assert_lowered_by_the_animation(output, 0.45, 1.05)
+        self.assert_untouched(output, 4.0, 10.3)
 
     def test_a_square_video_shows_the_whole_twitch_animation_letterboxed(self):
         output, summary = self.render("1:1", twitch=True, subscribe=False)

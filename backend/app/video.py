@@ -68,13 +68,18 @@ class IntroAnimation:
     has_sound: bool
 
 
-# Both are 60 fps: the Twitch follow animation is 342 frames without sound, the
-# YouTube subscribe animation 223 frames with its own sound.
-TWITCH_FOLLOW_ANIMATION = IntroAnimation("Twitch follow", EFFECT_ASSETS_DIR / "twitch-follow.mov", 5.700, False)
+# Both are 60 fps with their own sound: the Twitch follow animation is 342 frames
+# and clicks as its Follow button is pressed, at 2.43 s; the YouTube subscribe
+# animation is 223 frames.
+TWITCH_FOLLOW_ANIMATION = IntroAnimation("Twitch follow", EFFECT_ASSETS_DIR / "twitch-follow.mov", 5.700, True)
 SUBSCRIBE_ANIMATION = IntroAnimation("YouTube subscribe", EFFECT_ASSETS_DIR / "youtube-subscribe.mov", 3.717, True)
 # While an intro animation's own sound plays, the video's sound is lowered to
 # this level so the two do not fight.
 _INTRO_SOUND_DUCK = 0.82
+# Catches peaks where sounds are mixed in. FFmpeg's limiter otherwise turns the
+# whole mix up until its 0.95 ceiling reaches full scale, which made the video
+# 0.45 dB louder and left no headroom for the AAC encode.
+_PEAK_LIMITER = "alimiter=limit=0.95:level=0"
 
 ASPECT_SIZES: dict[Aspect, tuple[int, int]] = {
     "16:9": (1920, 1080),
@@ -2504,7 +2509,7 @@ def _apply_effects(
                     base_audio = "ducked"
                 filters.append(
                     f"[{base_audio}]{effect_inputs}amix=inputs={len(effect_labels) + 1}:"
-                    "duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]"
+                    f"duration=first:dropout_transition=0:normalize=0,{_PEAK_LIMITER}[aout]"
                 )
             else:
                 if len(effect_labels) > 1:
@@ -2517,7 +2522,7 @@ def _apply_effects(
                     effect_source = effect_labels[0]
                 filters.append(
                     f"[{effect_source}]apad=whole_dur={duration:.3f},"
-                    f"atrim=0:{duration:.3f},alimiter=limit=0.95[aout]"
+                    f"atrim=0:{duration:.3f},{_PEAK_LIMITER}[aout]"
                 )
             audio_label = "aout"
 
@@ -3885,9 +3890,10 @@ def _export_full_length_single_pass(
 
         intro_animations = _intro_animation_schedule(twitch_follow_animation, subscribe_animation, output_duration)
 
-        # First the audio: the kept speech with its sound effects and the subscribe
-        # chime mixed in, stored losslessly. It takes seconds; the AAC encode then
-        # happens inside the video encode, alongside the picture, at no extra time.
+        # First the audio: the kept speech with its sound effects and the intro
+        # animations' sounds mixed in, stored losslessly. It takes seconds; the AAC
+        # encode then happens inside the video encode, alongside the picture, at no
+        # extra time.
         has_audio = _has_audio(source)
         audio_ffmpeg = ffmpeg_executable()
         audio_inputs: list[str] = []
@@ -3996,7 +4002,7 @@ def _export_full_length_single_pass(
             audio_filters.append(
                 f"{mix_inputs}amix=inputs={len(extra_audio_labels) + 1}:"
                 "duration=first:dropout_transition=0:normalize=0,"
-                "alimiter=limit=0.95[outa]"
+                f"{_PEAK_LIMITER}[outa]"
             )
             audio_label = "outa"
 
@@ -4220,7 +4226,7 @@ def _apply_subscribe_animation(source: Path, output: Path) -> None:
             f"{_INTRO_SOUND_DUCK:g},1)':eval=frame[baseaudio]",
             "[1:a]asetpts=PTS-STARTPTS[subscribeaudio]",
             "[baseaudio][subscribeaudio]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-            "alimiter=limit=0.95[outa]",
+            f"{_PEAK_LIMITER}[outa]",
         ]
         audio_label = "outa"
     else:
