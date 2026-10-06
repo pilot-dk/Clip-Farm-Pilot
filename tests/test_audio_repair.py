@@ -100,6 +100,26 @@ class SwitchingAacTests(unittest.TestCase):
         # Seeking lands on the same moment as in the video.
         self.assertEqual(_tone(_pcm(audio_source(self.source), start=4.0), 1.0), (440, 440))
 
+    def test_mono_frames_are_as_loud_as_stereo_ones(self):
+        samples = _pcm(audio_source(self.source))
+
+        # Each part was made at the same level in each of its channels, so a mono
+        # stretch must not drop 3 dB when it is spread over two channels.
+        levels = [
+            float(np.sqrt(np.mean(samples[int((second - 0.4) * 48_000):int((second + 0.4) * 48_000), channel] ** 2)))
+            for second in (1.0, 3.0, 5.0) for channel in range(2)
+        ]
+        self.assertLess(max(levels) / min(levels), 1.03, levels)
+
+    def test_audio_repaired_by_an_older_version_is_repaired_again(self):
+        current = audio_source(self.source)
+        video._AUDIO_REPAIRS.clear()
+        with patch.object(video, "_AUDIO_REPAIR_VERSION", video._AUDIO_REPAIR_VERSION + 1):
+            newer = audio_source(self.source)
+
+        self.assertNotEqual(newer, current)
+        self.assertTrue(newer.is_file())
+
     def test_exports_use_the_repaired_audio(self):
         clip = self.root / "clip.mp4"
         full = self.root / "full.mp4"

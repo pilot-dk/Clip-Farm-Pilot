@@ -1811,6 +1811,9 @@ _AUDIO_REPAIR_LOCK = threading.Lock()
 _AUDIO_REPAIRS: dict[tuple[str, int, int], Path | None] = {}
 _AUDIO_REPAIR_DIR = Path(tempfile.gettempdir()) / f"{APP_SLUG}-repaired-audio"
 _AUDIO_REPAIR_KEEP = 4
+# Part of each repaired file's name, so audio repaired the old way is repaired
+# again: version 2 keeps mono stretches at their full level.
+_AUDIO_REPAIR_VERSION = 2
 _ADTS_SAMPLE_RATES = (96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350)
 
 
@@ -1856,7 +1859,7 @@ def _repair_switching_aac(source: Path, key: tuple[str, int, int]) -> Path | Non
     """A FLAC of the source's audio when its AAC frames switch layout, else None."""
     ffmpeg = ffmpeg_executable()
     _AUDIO_REPAIR_DIR.mkdir(parents=True, exist_ok=True)
-    name = hashlib.sha256(repr(key).encode()).hexdigest()[:24]
+    name = hashlib.sha256(repr((key, _AUDIO_REPAIR_VERSION)).encode()).hexdigest()[:24]
     repaired = _AUDIO_REPAIR_DIR / f"{name}.flac"
     if repaired.is_file():
         return repaired
@@ -1937,7 +1940,7 @@ def _decode_onto_timeline(
     frame_bytes = 2 * _EDIT_CHANNELS
     decoder = subprocess.Popen(
         [
-            ffmpeg, "-v", "error", "-f", "aac", "-i", str(relabelled),
+            ffmpeg, "-v", "error", "-f", "aac", "-i", str(relabelled), "-af", _STEREO_SOUND,
             "-ac", str(_EDIT_CHANNELS), "-ar", str(sample_rate), "-f", "s16le", "pipe:1",
         ],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -3340,6 +3343,12 @@ def _cut_audio_envelope(
 _STEADY_INPUT = ("-reinit_filter", "0")
 _EDIT_SAMPLE_RATE = 48_000
 _EDIT_CHANNELS = 2
+# Mono sound goes into both stereo channels at its full level. FFmpeg's own
+# conversion lowers each channel by 3 dB, which left a mono recording, and the
+# mono stretches of one that switches layout, 3 dB quieter in the edit. Named
+# channels let the same filter pass stereo through untouched even when a stream
+# switches, and surround is folded down to stereo first, as FFmpeg always has.
+_STEREO_SOUND = "aformat=channel_layouts=mono|stereo,pan=stereo|FL=FL+FC|FR=FR+FC"
 _EDIT_FADE_SECONDS = 0.012
 # The edited audio waits in a fast, lossless FLAC: an hour takes a few seconds and
 # about 200 MB, where encoding AAC up front would add a minute before the picture.
@@ -3427,7 +3436,7 @@ def _steady_audio_command(ffmpeg: str, source: Path, start: float, duration: flo
         # async fills any real timestamp gap with silence so the audio stays in
         # step with the video. A forced first_pts would pad again after every
         # format change, so it is left unset.
-        "-af", "aresample=async=1",
+        "-af", f"aresample=async=1,{_STEREO_SOUND}",
         "-ac", str(_EDIT_CHANNELS), "-ar", str(_EDIT_SAMPLE_RATE), "-f", "s16le", "-",
     ]
 
