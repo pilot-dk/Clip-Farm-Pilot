@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from .brand import APP_SLUG, env
+from .profanity import is_profane
 
 
 LiveCaptionScheme = Literal["pilot-lime", "ocean", "sunset", "neon-pink", "violet"]
@@ -367,13 +369,12 @@ def transcribe_words(
     duration = max(0.1, float(end) - float(start))
     temporary_dir = Path(tempfile.mkdtemp(prefix=f"{APP_SLUG}-captions-"))
     audio_path = temporary_dir / "speech.wav"
-    result_base = temporary_dir / "words"
     try:
         audio_result = subprocess.run(
             [
                 ffmpeg, "-y", "-v", "error",
                 "-ss", f"{max(0.0, float(start)):.3f}", "-i", str(source),
-                "-t", f"{duration:.3f}", "-vn", "-ar", "16000", "-ac", "1",
+                "-t", f"{duration:.3f}", "-vn", "-ar", str(_WHISPER_RATE), "-ac", "1",
                 "-c:a", "pcm_s16le", str(audio_path),
             ],
             stdout=subprocess.PIPE,
@@ -382,43 +383,225 @@ def transcribe_words(
         )
         if audio_result.returncode != 0 or not audio_path.is_file() or audio_path.stat().st_size < 128:
             return []
+        pieces = _write_pieces(audio_path, temporary_dir)
+        if not pieces:
+            return []
 
         thread_count = max(1, min(8, os.cpu_count() or 4))
         command = [
-            str(cli), "-m", str(model), "-f", str(audio_path),
-            "-l", "en", "-t", str(thread_count), "-np", "-ojf",
-            "-ml", "1", "-sow", "-of", str(result_base),
+            str(cli), "-m", str(model), "-l", "en", "-t", str(thread_count), "-np", "-ojf", "-ml", "1", "-sow",
         ]
         if include_fillers:
             command += ["--prompt", FILLER_PROMPT]
         # DTW aligns each word to the audio far more closely than Whisper's own
         # timestamps. It needs flash attention off and the full JSON output.
         dtw = ["-nfa", "-dtw", "base.en"]
-        timeout_seconds = max(90.0, min(1800.0, duration * 8.0))
-        result_path = result_base.with_suffix(".json")
+        timeout_seconds = max(90.0, min(3600.0, duration * 8.0))
         # On a Mac the engine runs on the GPU through Metal: 1.7x faster than eight
         # CPU threads, with the same words and cut placement on the pause and filler
         # benchmark. Elsewhere, and if the GPU run fails, it runs on the CPU.
         devices = [[], ["-ng"]] if sys.platform == "darwin" else [["-ng"]]
         # whisper.cpp's DTW aborts on any segment shorter than its seven-token median
-        # filter (and -np hides the message). So a failed run is tried once more
-        # without DTW on the same device: the words then keep Whisper's own
-        # timestamps, less exact, but the export goes ahead.
-        attempts = [option for device in devices for option in (dtw + device, device)]
-        for options in attempts:
-            transcription = _run_whisper(command + options, cli, timeout_seconds)
-            if transcription.returncode == 0 and result_path.is_file():
-                break
-        if transcription.returncode != 0 or not result_path.is_file():
-            message = transcription.stderr.decode("utf-8", errors="replace").strip().splitlines()
-            detail = message[-1] if message else "The offline speech engine did not finish."
-            raise RuntimeError(f"Live-caption transcription failed: {detail}")
-        with result_path.open("r", encoding="utf-8") as handle:
-            return parse_whisper_words(json.load(handle), duration)
+        # filter (and -np hides the message). So a piece that stops the engine is
+        # tried again without DTW on the same device: its words then keep Whisper's
+        # own timestamps, less exact, but the export goes ahead.
+        attempts = [(device, option) for device in devices for option in (dtw + device, device)]
+        results = _transcribe_pieces(command, [path for path, _, _ in pieces], attempts, cli, timeout_seconds)
+        words: list[CaptionWord] = []
+        for index, (_, piece_start, piece_end) in enumerate(pieces):
+            for word in parse_whisper_words(results.get(index, {}), piece_end - piece_start):
+                words.append(CaptionWord(word.text, round(word.start + piece_start, 3), round(word.end + piece_start, 3)))
+        return without_hallucinations(words)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("Live-caption transcription timed out. Try exporting a shorter clip.") from exc
     finally:
         shutil.rmtree(temporary_dir, ignore_errors=True)
+
+
+# Whisper writes each stretch of a long recording with the words before it as
+# context, and over music or game audio that context can trap it: a stream that
+# opened on menu music came back as "(music)" 296 times without a single word, and
+# an eating video as "Mmm" over and over. A recording is therefore transcribed in
+# pieces of about 25 seconds, each on its own, cut where the audio is quietest so
+# no word is split. One run of the engine takes every piece, so the model loads
+# once, and each piece starts from the filler prompt when there is one.
+_WHISPER_RATE = 16_000
+_PIECE_SECONDS = 25.0
+_PIECE_SEARCH_SECONDS = (4.0, 3.0)  # How far before and after each mark a cut may go.
+_PIECE_LONGEST_SECONDS = 29.5       # Whisper hears 30 seconds at a time.
+_PIECE_SHORTEST_SECONDS = 1.0
+
+
+def _piece_bounds(samples, rate: int = _WHISPER_RATE) -> list[tuple[int, int]]:
+    """Where to cut a recording into pieces, at the quietest moment near every mark."""
+    import numpy as np
+
+    total = len(samples)
+    if total == 0:
+        return []
+    frame = rate // 50  # 20 ms
+    frames = total // frame
+    energy = (
+        np.square(samples[: frames * frame].astype(np.float32)).reshape(frames, frame).mean(axis=1)
+        if frames else np.zeros(0, dtype=np.float32)
+    )
+    bounds: list[tuple[int, int]] = []
+    start = 0
+    while total - start > _PIECE_LONGEST_SECONDS * rate:
+        mark = start + _PIECE_SECONDS * rate
+        lowest = int(max(start + _PIECE_SHORTEST_SECONDS * rate, mark - _PIECE_SEARCH_SECONDS[0] * rate))
+        highest = int(min(start + _PIECE_LONGEST_SECONDS * rate, mark + _PIECE_SEARCH_SECONDS[1] * rate, total))
+        window = energy[lowest // frame:max(lowest // frame + 1, highest // frame)]
+        cut = (lowest // frame + int(np.argmin(window))) * frame + frame // 2 if window.size else int(mark)
+        bounds.append((start, cut))
+        start = cut
+    bounds.append((start, total))
+    return bounds
+
+
+def _write_pieces(audio_path: Path, folder: Path) -> list[tuple[Path, float, float]]:
+    """Split a 16 kHz mono WAV into pieces; each is (path, start, end) in seconds."""
+    import numpy as np
+
+    with wave.open(str(audio_path), "rb") as handle:
+        rate = handle.getframerate()
+        samples = np.frombuffer(handle.readframes(handle.getnframes()), dtype="<i2")
+    pieces: list[tuple[Path, float, float]] = []
+    for index, (first, last) in enumerate(_piece_bounds(samples, rate)):
+        if last - first < rate // 10:
+            continue
+        path = folder / f"piece{index:05d}.wav"
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(rate)
+            handle.writeframes(samples[first:last].tobytes())
+        pieces.append((path, first / rate, last / rate))
+    return pieces
+
+
+def _transcribe_pieces(
+    command: list[str],
+    pieces: list[Path],
+    attempts: list[tuple[list[str], list[str]]],
+    cli: Path,
+    timeout_seconds: float,
+) -> dict[int, dict]:
+    """Run the engine over every piece; return each piece's JSON by its index.
+
+    The engine works through its files in order and stops at the first one it
+    cannot finish, so after a failed run that piece is retried on its own with
+    the remaining settings and the rest carry on with the current ones. When even
+    the first piece fails and only another device can transcribe it, the rest
+    move to that device.
+    """
+    results: dict[int, dict] = {}
+
+    def collect(index: int) -> bool:
+        output = Path(f"{pieces[index]}.json")
+        if not output.is_file():
+            return False
+        try:
+            results[index] = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            results[index] = {}
+        output.unlink(missing_ok=True)
+        return True
+
+    pending = list(range(len(pieces)))
+    level = 0
+    while pending:
+        device, options = attempts[level]
+        run = _run_whisper(
+            command + options + [part for index in pending for part in ("-f", str(pieces[index]))],
+            cli, timeout_seconds,
+        )
+        finished = {index for index in pending if collect(index)}
+        pending = [index for index in pending if index not in finished]
+        if not pending:
+            break
+        stuck = pending.pop(0)
+        rescued = None
+        for position in range(level + 1, len(attempts)):
+            run = _run_whisper(command + attempts[position][1] + ["-f", str(pieces[stuck])], cli, timeout_seconds)
+            if collect(stuck):
+                rescued = position
+                break
+        if rescued is None:
+            message = run.stderr.decode("utf-8", errors="replace").strip().splitlines()
+            detail = message[-1] if message else "The offline speech engine did not finish."
+            raise RuntimeError(f"Live-caption transcription failed: {detail}")
+        if not finished and attempts[rescued][0] != device:
+            level = next(position for position, (other, _) in enumerate(attempts) if other == attempts[rescued][0])
+    return results
+
+
+# Words Whisper writes for hesitation rather than meaning.
+_HESITATIONS = {"ah", "eh", "er", "erm", "hm", "hmm", "mhm", "mm", "mmm", "uh", "uhh", "um", "umm"}
+# A hesitation with no real word this close is Whisper filling silence or music.
+_HESITATION_REACH = 1.5
+
+
+def _plain(word: CaptionWord) -> str:
+    return re.sub(r"[^a-z0-9']+", "", word.text.lower())
+
+
+def _sound_tag(word: CaptionWord) -> bool:
+    return word.text.strip()[:1] in {"[", "(", "*", "♪"} or not _plain(word)
+
+
+def without_hallucinations(words: list[CaptionWord]) -> list[CaptionWord]:
+    """Drop what Whisper writes when it hears no one: repetition loops and lone hesitations.
+
+    A loop is one word repeated three or more times spread over silence ("yeah"
+    every four seconds through a stretch of gameplay), a word or a phrase of up to
+    four words said four or more times in a row ("Get out of here!" five times),
+    or a longer sentence said three times in a row ("I don't want to get out of
+    here." through a whole stream); its first occurrence stays. Hesitations count
+    only beside real speech. Sound tags such as "(music)" are kept: other steps
+    read them. Swear words always stay, however often they repeat: muting one that
+    was never said costs a moment of sound, while dropping a real one would leave
+    it audible.
+    """
+    spoken = [index for index, word in enumerate(words) if not _sound_tag(word)]
+    dropped: set[int] = set()
+    position = 0
+    while position < len(spoken):
+        longest = 0
+        for size in range(1, 13):
+            phrase = [_plain(words[i]) for i in spoken[position:position + size]]
+            if len(phrase) < size:
+                break
+            count = 1
+            while [_plain(words[i]) for i in spoken[position + count * size:position + (count + 1) * size]] == phrase:
+                count += 1
+            occurrences = [words[spoken[position + n * size]] for n in range(count)]
+            spaced = count >= 3 and size == 1 and min(
+                later.start - earlier.start for earlier, later in zip(occurrences, occurrences[1:])
+            ) >= 2.0
+            if spaced:
+                dropped.update(spoken[position:position + count])
+                longest = count
+                break
+            if count >= (4 if size <= 4 else 3):
+                dropped.update(spoken[position + size:position + count * size])
+                longest = count * size
+                break
+        position += max(1, longest)
+    kept = [word for index, word in enumerate(words) if index not in dropped or is_profane(word.text)]
+    real = [word for word in kept if not _sound_tag(word) and _plain(word) not in _HESITATIONS]
+    starts = [word.start for word in real]
+    result: list[CaptionWord] = []
+    for word in kept:
+        if _plain(word) in _HESITATIONS:
+            nearby = bisect.bisect_left(starts, word.start - _HESITATION_REACH - 2.0)
+            if not any(
+                other.start - _HESITATION_REACH <= word.end and other.end + _HESITATION_REACH >= word.start
+                for other in real[nearby:nearby + 12]
+            ):
+                continue
+        result.append(word)
+    return result
 
 
 def _run_whisper(command: list[str], cli: Path, timeout_seconds: float) -> subprocess.CompletedProcess:

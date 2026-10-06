@@ -314,7 +314,6 @@ _FFMPEG_ASS_SUPPORT: dict[str, bool] = {}
 _TRANSCRIPT_CACHE: dict[tuple[object, ...], tuple[CaptionWord, ...]] = {}
 _TRANSCRIPT_CACHE_LOCK = threading.RLock()
 _TRANSCRIPT_CACHE_LIMIT = 6
-_SILENCE_CUT_CACHE: dict[tuple[object, ...], tuple[tuple[float, float], ...]] = {}
 _CLIP_ENVELOPE_CACHE: dict[tuple[object, ...], tuple[np.ndarray, float]] = {}
 _SCENE_CHANGE_CACHE: dict[tuple[object, ...], tuple[float, ...]] = {}
 _FULL_LENGTH_ANALYSIS_CACHE_LOCK = threading.RLock()
@@ -2568,6 +2567,14 @@ FILLER_PHRASES = {
     ("sort", "of"),
     ("you", "know"),
 }
+# A short word said twice while the speaker finds their feet ("I I think", "the
+# the"): the first goes. Only words people stumble on count, so an emphatic "no no
+# no" or "go go go" stays as said.
+STUTTER_WORDS = {
+    "a", "an", "and", "at", "but", "for", "he", "i", "i'm", "in", "is", "it", "it's", "just", "like", "my",
+    "of", "on", "she", "so", "that", "the", "they", "this", "to", "was", "we", "with", "you",
+}
+_STUTTER_GAP = 0.6  # Longest silence between the two that still reads as a stumble.
 
 
 def _normalized_caption_word(word: CaptionWord) -> str:
@@ -2681,6 +2688,23 @@ def _filler_word_cut_intervals(
     removed_words = 0
     index = 0
     while index < len(words):
+        if (
+            normalized[index] in STUTTER_WORDS
+            and index + 1 < len(words)
+            and normalized[index + 1] == normalized[index]
+            and words[index + 1].start - words[index].end <= _STUTTER_GAP
+        ):
+            # The repeat starts the moment the stumble ends, so the cut stops just
+            # short of it; both words are speech, so the transcript places it.
+            first, following = words[index], words[index + 1]
+            left_room = max(0.0, first.start - (words[index - 1].end if index else 0.0))
+            start = max(0.0, first.start - min(0.04, left_room * 0.45))
+            end = following.start - 0.03
+            if end - start >= 0.06:
+                intervals.append((start, end))
+                removed_words += 1
+            index += 1
+            continue
         phrase_length = 0
         if index + 1 < len(words) and tuple(normalized[index:index + 2]) in FILLER_PHRASES:
             phrase_length = 2
@@ -2711,6 +2735,16 @@ def _filler_word_cut_intervals(
                     outer_limit = min(outer_limit, segment_end + 0.05)
                     break
             sound_start, sound_end = _filler_extent(levels, first.start, outer_limit)
+            # Whisper can place a filler a second off, even on the last word before
+            # it: one stuck to that word with a long silence after it was said in
+            # the silence. With no pause in the audio around a filler and no gap to
+            # the word before, there is nothing to place the cut by either. Both are
+            # left rather than risk cutting the word, and so is a filler whose timing
+            # collapsed to a single instant.
+            misplaced = left_room < 0.05 and (right_room > 0.6 or (sound_start is None and sound_end is None))
+            if misplaced or last.end - first.start < 0.06:
+                index += phrase_length
+                continue
             start = sound_start if sound_start is not None else first.start + 0.02
             # Over game audio a quiet "mm" can sink to the background level, so the
             # audio alone may end the cut early; the transcript's end of the filler
@@ -2951,9 +2985,25 @@ def _speech_context(
 # A gap in speech up to this long is a pause between sentences and is tightened.
 # A longer gap is usually content -- gameplay, a song, a moment of concentration --
 # so only its genuinely quiet parts are removed.
-_LONGEST_SPEECH_PAUSE = 3.0
+_LONGEST_SPEECH_PAUSE = 6.0
 # "Genuinely quiet" means at least this far below the level of the speech itself.
 _DEAD_AIR_DB = 30.0
+# Gameplay keeps moving through a pause in the commentary, while a talking head, a
+# menu or a lobby barely does: in the streams measured, over half the picture
+# changed between frames in play and a few percent on a webcam. A pause is only
+# tightened where less than this share changes, so a fight is never jump-cut just
+# to shorten a pause.
+_ACTION_MOTION = 0.12
+# Over loud background audio the speech detector notices a sentence a fifth of a
+# second or more after it starts, and Whisper can miss its first word too. So the
+# breath kept before speech resumes grows with the background: from `lead_keep`
+# when it is this far or more below the speech, to `lead_keep` plus the extra when
+# it is as loud. A gap of over three seconds is only treated as a pause where the
+# background is at least `_QUIET_PAUSE_DB` below the speech, where onsets are sure.
+_NOISY_BACKGROUND_DB = 15.0
+_NOISY_EXTRA_LEAD = 0.25
+_QUIET_PAUSE_DB = 10.0
+_SHORT_SPEECH_PAUSE = 3.0
 
 
 def _level_index(levels: np.ndarray) -> Callable[[float], int]:
@@ -2997,6 +3047,88 @@ def _dead_air(
     return stretches
 
 
+def _heard_words(
+    words: list[CaptionWord] | tuple[CaptionWord, ...] | None,
+    levels: np.ndarray | None,
+    speech_segments: list[tuple[float, float]] | None,
+) -> list[CaptionWord]:
+    """Words Whisper heard that are real speech: not a sound tag such as
+    "[sounds of running]" and not silent. Whisper's confidence does not tell real
+    words from imagined ones (its "Okay." over silence scores 0.9), but silence does.
+    """
+    index_at = _level_index(levels) if levels is not None and levels.size else None
+    silent_below = (
+        _speech_reference_level(levels, speech_segments or []) - _DEAD_AIR_DB if index_at else None
+    )
+    heard: list[CaptionWord] = []
+    tag_words = 0  # Words so far in an open tag; an unclosed tag ends after eight.
+    for word in words or ():
+        text = word.text.strip()
+        tag = 0 < tag_words < 8 or text[:1] in {"[", "(", "*", "♪"}
+        tag_words = tag_words + 1 if tag and text[-1:] not in {"]", ")", "*", "♪"} else 0
+        if tag or not _normalized_caption_word(word):
+            continue
+        if index_at is not None:
+            window = levels[index_at(word.start):max(index_at(word.start) + 1, index_at(word.end))]
+            if window.size and float(np.max(window)) < silent_below:
+                continue
+        heard.append(word)
+    return heard
+
+
+def _speech_map(
+    speech_segments: list[tuple[float, float]],
+    words: list[CaptionWord] | tuple[CaptionWord, ...] | None,
+    levels: np.ndarray | None,
+    duration: float,
+) -> list[tuple[float, float]]:
+    """Where someone speaks: the speech detector's segments joined with the words Whisper heard.
+
+    Over game audio and music the detector misses most speech -- in one stream it
+    found 50 of the 440 words Whisper heard, even at its most sensitive -- while
+    Whisper places the start of each word closely. Its word ends are estimates that
+    run long, so the joined stretches are trimmed back to where the voice stops,
+    as the detector's own segments are. Game voice lines count as speech too;
+    pauses next to them are only tightened where the picture is calm.
+    """
+    heard = _merge_cut_intervals(
+        [(word.start, word.end) for word in _heard_words(words, levels, speech_segments)], duration
+    )
+    if levels is not None and levels.size:
+        heard = [
+            _trim_heard_end(levels, start, end, heard[index + 1][0] if index + 1 < len(heard) else duration)
+            for index, (start, end) in enumerate(heard)
+        ]
+    return _merge_cut_intervals([*(speech_segments or []), *heard], duration)
+
+
+def _trim_heard_end(levels: np.ndarray, start: float, end: float, next_start: float) -> tuple[float, float]:
+    """Pull an estimated word end back to the last moment the voice stands above the quiet after it."""
+    index_at = _level_index(levels)
+    frame = _speech_frame_seconds()
+    centre = _SPEECH_WINDOW_SAMPLES / (2 * _SPEECH_SAMPLE_RATE)
+    after = levels[index_at(end):index_at(min(next_start, end + 0.4))]
+    if after.size < 5:
+        return start, end
+    first = index_at(max(start + 0.08, end - 0.6))
+    window = levels[first:index_at(end)]
+    loud = np.flatnonzero(window > float(np.median(after)) + 3.0)
+    if not loud.size:
+        return start, end
+    trimmed = (first + loud[-1]) * frame + centre + 0.03
+    return start, round(max(start + 0.08, min(end, trimmed)), 3)
+
+
+def _is_action(motion: np.ndarray | None, start: float, end: float) -> bool:
+    """Whether the picture is busy over a stretch, judged by the frame-to-frame change."""
+    if motion is None or motion.size == 0:
+        return False
+    first = max(0, int(start * _STILL_SAMPLE_FPS))
+    last = max(first + 1, int(math.ceil(end * _STILL_SAMPLE_FPS)))
+    window = motion[first:last]
+    return bool(window.size) and float(np.median(window)) >= _ACTION_MOTION
+
+
 def _speech_pause_cut_intervals(
     source: Path,
     start: float,
@@ -3004,30 +3136,33 @@ def _speech_pause_cut_intervals(
     minimum_pause: float = 0.40,
     tail_keep: float = 0.15,
     lead_keep: float = 0.10,
+    words: list[CaptionWord] | tuple[CaptionWord, ...] | None = None,
+    motion: np.ndarray | None = None,
 ) -> list[tuple[float, float]]:
     """Find removable pauses in speech, keeping a short natural breath at each edge.
 
-    Gaps between sentences up to three seconds are tightened whatever is playing
-    underneath. Longer gaps, and the stretches before the first word and after the
-    last, keep their audible content and lose only dead air.
+    Speech is where the detector or Whisper hears it (see `_speech_map`). Gaps
+    between sentences up to six seconds are tightened unless the picture is busy
+    through them (`motion`, the frame-to-frame change, shows gameplay going on).
+    Longer gaps, and the stretches before the first word and after the last, keep
+    their audible content and lose only dead air.
     `tail_keep` is left after speech ends and `lead_keep` before it resumes, so a
     tightened pause is about a quarter of a second, like a natural breath.
     """
     duration = max(0.1, float(end) - float(start))
-    cache_key = _analysis_cache_key(
-        source, max(0.0, start), max(start + 0.1, end), "speech-pauses",
-        round(minimum_pause, 3), round(tail_keep, 3), round(lead_keep, 3),
-        _LONGEST_SPEECH_PAUSE, _DEAD_AIR_DB,
-    )
-    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
-        cached = _SILENCE_CUT_CACHE.get(cache_key)
-        if cached is not None:
-            return list(cached)
     try:
-        segments = _speech_segments(source, start, end)
+        detected = _speech_segments(source, start, end)
         levels = _speech_band_levels(source, start, end)
     except (OSError, RuntimeError):
         return []
+    segments = _speech_map(detected, words, levels, duration) if words else detected
+    speech_level = _speech_reference_level(levels, segments) if levels.size else 0.0
+    index_at = _level_index(levels)
+
+    def margin_below_speech(gap_start: float, gap_end: float) -> float:
+        window = levels[index_at(gap_start):index_at(gap_end)]
+        return speech_level - float(np.median(window)) if window.size else _NOISY_BACKGROUND_DB
+
     # The gaps between speech, including dead air before the first word and after the last.
     boundaries = [0.0]
     for segment_start, segment_end in segments:
@@ -3041,24 +3176,27 @@ def _speech_pause_cut_intervals(
         opening, closing = index == 0, index + 2 >= len(boundaries)
         # Only a gap between two stretches of speech is a pause between sentences.
         # Before the first word or after the last it may be an intro or gameplay.
-        if not opening and not closing and gap_end - gap_start <= _LONGEST_SPEECH_PAUSE:
-            stretches = [(gap_start, gap_end)]
+        margin = margin_below_speech(gap_start, gap_end)
+        pause = (
+            not opening and not closing and gap_end - gap_start <= _LONGEST_SPEECH_PAUSE
+            and (gap_end - gap_start <= _SHORT_SPEECH_PAUSE or margin >= _QUIET_PAUSE_DB)
+        )
+        if pause:
+            stretches = [] if _is_action(motion, gap_start, gap_end) else [(gap_start, gap_end)]
         else:
             stretches = _dead_air(levels, segments, gap_start, gap_end, minimum_pause)
+        noise = min(1.0, max(0.0, (_NOISY_BACKGROUND_DB - margin) / _NOISY_BACKGROUND_DB))
         for stretch_start, stretch_end in stretches:
             # Keep a breath beside speech; dead air before the first word or after the
             # last keeps a little less, and quiet inside a long gap keeps the same.
             touches_speech_before = stretch_start <= gap_start + 0.01 and not opening
             touches_speech_after = stretch_end >= gap_end - 0.01 and not closing
             left_keep = tail_keep if touches_speech_before else 0.08
-            right_keep = lead_keep if touches_speech_after else 0.08
+            right_keep = lead_keep + noise * _NOISY_EXTRA_LEAD if touches_speech_after else 0.08
             cut_start, cut_end = stretch_start + left_keep, stretch_end - right_keep
             if cut_end - cut_start >= 0.15:
                 cuts.append((cut_start, cut_end))
-    merged = _merge_cut_intervals(cuts, duration)
-    with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
-        _store_bounded_cache(_SILENCE_CUT_CACHE, cache_key, tuple(merged))
-    return merged
+    return _merge_cut_intervals(cuts, duration)
 
 
 # Still scenes: stretches where the picture barely changes, such as a lobby or map
@@ -3073,10 +3211,29 @@ _STILL_WIDTH, _STILL_HEIGHT = 96, 54
 _STILL_PIXEL_CHANGE = 12          # Grey levels a pixel must move to count as changed.
 _STILL_AREA_LIMIT = 0.05          # Share of the frame that may change while still.
 _STILL_MIN_SECONDS = 5.0
-_STILL_KEEP_START = 1.0           # Kept so each still scene still registers.
-_STILL_KEEP_END = 0.5
+_STILL_KEEP_START = 0.5           # Kept so each still scene still registers.
+_STILL_KEEP_END = 0.3
 _STILL_SPEECH_MARGIN = 0.30       # Kept around speech inside a still stretch.
-_STILL_CACHE: dict[tuple[object, ...], tuple[tuple[float, float], ...]] = {}
+_PICTURE_CACHE: dict[tuple[object, ...], tuple[np.ndarray, tuple[tuple[float, float], ...]]] = {}
+
+# Dead time: a menu, a lobby, a loading screen or a rest between sets sits almost
+# perfectly still between the odd button press, while live gameplay keeps moving.
+# In one Black Ops stream the class menus changed under 1% of the picture between
+# frames and play 55%, yet each press in a menu restarted the still test above.
+# So the change from one frame to the next is watched too. Play changes on nearly
+# every frame, while a menu sits still between jumps even as someone clicks through
+# it, so a moment is dead when at least a quarter of the frames around it, over
+# three seconds, change by under 2% of the picture -- or under 15% of the video's
+# typical change, so a calm webcam is judged by its own standard. Presses of up to
+# a second and a half are allowed inside, and each stretch then ends on its own
+# still frames, so no moving frame at either edge is cut. Killcam replays move, so
+# they stay.
+_DEAD_MOTION = 0.02
+_DEAD_MOTION_SHARE = 0.15
+_DEAD_SMOOTH_SECONDS = 3.0
+_DEAD_STILL_SHARE = 25  # Percent of the frames around a moment that must be still.
+_DEAD_BURST_SECONDS = 1.5
+_DEAD_MIN_SECONDS = 4.0
 
 
 def _still_stretches_in_frames(frames, frames_per_second: float = _STILL_SAMPLE_FPS) -> list[tuple[float, float]]:
@@ -3109,17 +3266,50 @@ def _still_stretches_in_frames(frames, frames_per_second: float = _STILL_SAMPLE_
     return stretches
 
 
+def _dead_stretches(motion: np.ndarray, frames_per_second: float = _STILL_SAMPLE_FPS) -> list[tuple[float, float]]:
+    """Dead stretches, in seconds, from the frame-to-frame change of a picture.
+
+    `motion[i]` is the share of the picture that changed from frame i to frame i+1.
+    """
+    if motion.size == 0:
+        return []
+    radius = max(1, int(round(_DEAD_SMOOTH_SECONDS * frames_per_second / 2)))
+    padded = np.pad(motion, radius, mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, 2 * radius + 1)
+    limit = min(_DEAD_MOTION, _DEAD_MOTION_SHARE * float(np.median(motion)))
+    dead = np.percentile(windows, _DEAD_STILL_SHARE, axis=1) <= limit
+    # A press in a menu is a short burst of change between still stretches.
+    for first, last in _runs(~dead):
+        if 0 < first and last < dead.size and (last - first) / frames_per_second <= _DEAD_BURST_SECONDS:
+            dead[first:last] = True
+    stretches: list[tuple[float, float]] = []
+    for first, last in _runs(dead):
+        # The window reaches past the edges of a still stretch; pull them back in.
+        while first < last and motion[first] > limit:
+            first += 1
+        while last > first and motion[last - 1] > limit:
+            last -= 1
+        if (last - first) / frames_per_second >= _DEAD_MIN_SECONDS:
+            stretches.append((round(first / frames_per_second, 3), round(last / frames_per_second, 3)))
+    return stretches
+
+
 def _still_stretches(source: Path, start: float, end: float) -> list[tuple[float, float]]:
     """Still stretches in a selection, relative to its start, decoded as a stream."""
+    return _picture_analysis(source, start, end)[1]
+
+
+def _picture_analysis(source: Path, start: float, end: float) -> tuple[np.ndarray, list[tuple[float, float]]]:
+    """The frame-to-frame change of a selection's picture and its still stretches, from one decode."""
     duration = max(0.1, float(end) - float(start))
     cache_key = _analysis_cache_key(
-        source, max(0.0, start), max(start + 0.1, end), "still-scenes",
+        source, max(0.0, start), max(start + 0.1, end), "picture",
         _STILL_SAMPLE_FPS, _STILL_PIXEL_CHANGE, _STILL_AREA_LIMIT, _STILL_MIN_SECONDS,
     )
     with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
-        cached = _STILL_CACHE.get(cache_key)
+        cached = _PICTURE_CACHE.get(cache_key)
         if cached is not None:
-            return list(cached)
+            return cached[0], list(cached[1])
     frame_bytes = _STILL_WIDTH * _STILL_HEIGHT
     process = subprocess.Popen(
         [
@@ -3133,12 +3323,20 @@ def _still_stretches(source: Path, start: float, end: float) -> list[tuple[float
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
 
+    changes: list[float] = []
+
     def frames():
+        previous = None
         while True:
             data = _read_exactly(process.stdout, frame_bytes)
             if len(data) < frame_bytes:
                 return
-            yield np.frombuffer(data, dtype=np.uint8).reshape(_STILL_HEIGHT, _STILL_WIDTH)
+            frame = np.frombuffer(data, dtype=np.uint8).reshape(_STILL_HEIGHT, _STILL_WIDTH)
+            current = frame.astype(np.int16)
+            if previous is not None:
+                changes.append(float(np.mean(np.abs(current - previous) > _STILL_PIXEL_CHANGE)))
+            previous = current
+            yield frame
 
     try:
         stretches = [
@@ -3148,9 +3346,10 @@ def _still_stretches(source: Path, start: float, end: float) -> list[tuple[float
         process.kill()
         process.stdout.close()
         process.wait()
+    motion = np.asarray(changes, dtype=np.float32)
     with _FULL_LENGTH_ANALYSIS_CACHE_LOCK:
-        _store_bounded_cache(_STILL_CACHE, cache_key, tuple(stretches))
-    return stretches
+        _store_bounded_cache(_PICTURE_CACHE, cache_key, (motion, tuple(stretches)))
+    return motion, stretches
 
 
 def _still_scene_cut_intervals(
@@ -3222,25 +3421,13 @@ def _spare_spoken_words(
         return cuts
     segments = sorted(speech_segments or [])
     segment_starts = [start for start, _ in segments]
-    index_at = _level_index(levels) if levels is not None and levels.size else None
-    silent_below = (
-        _speech_reference_level(levels, speech_segments or []) - _DEAD_AIR_DB if index_at else None
-    )
     spared: list[tuple[float, float]] = []
-    tag_words = 0  # Words so far in an open tag; an unclosed tag ends after eight.
-    for word in words:
-        text = word.text.strip()
-        tag = 0 < tag_words < 8 or text[:1] in {"[", "(", "*", "♪"}
-        tag_words = tag_words + 1 if tag and text[-1:] not in {"]", ")", "*", "♪"} else 0
-        if tag or _normalized_caption_word(word) in FILLER_WORDS or not _normalized_caption_word(word):
+    for word in _heard_words(words, levels, speech_segments):
+        if _normalized_caption_word(word) in FILLER_WORDS:
             continue
         following = bisect.bisect_right(segment_starts, word.start)
         if following and word.start < segments[following - 1][1]:
             continue  # Inside detected speech.
-        if index_at is not None:
-            window = levels[index_at(word.start):max(index_at(word.start) + 1, index_at(word.end))]
-            if window.size and float(np.max(window)) < silent_below:
-                continue
         spared.append((word.start - lead_keep, word.end + tail_keep))
     if not spared:
         return cuts
@@ -3790,24 +3977,20 @@ def _export_full_length_single_pass(
         or (auto_sound_effect and selected_sound_effects)
     )
 
-    def analyze_speech() -> tuple[list[tuple[float, float]], tuple[np.ndarray | None, list | None]]:
-        silence = (
-            _speech_pause_cut_intervals(source, selection_start, selection_end) if remove_silence else []
-        )
-        context = (
-            _speech_context(source, selection_start, selection_end)
-            if remove_silence or remove_filler_words or remove_still_scenes
-            else (None, None)
-        )
-        return silence, context
+    def analyze_speech() -> tuple[np.ndarray | None, list | None]:
+        if remove_silence or remove_filler_words or remove_still_scenes:
+            return _speech_context(source, selection_start, selection_end)
+        return None, None
 
-    # The transcript, the pause analysis, and the picture analysis don't depend on
-    # each other, so they run side by side.
+    # The transcript, the speech analysis, and the picture analysis don't depend on
+    # each other, so they run side by side. Pause removal reads the picture too:
+    # a pause is not tightened while gameplay is moving.
     transcript_words: list[CaptionWord] = []
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix=f"{APP_SLUG}-analysis") as pool:
         speech_job = pool.submit(analyze_speech)
-        still_job = (
-            pool.submit(_still_stretches, source, selection_start, selection_end) if remove_still_scenes else None
+        picture_job = (
+            pool.submit(_picture_analysis, source, selection_start, selection_end)
+            if remove_silence or remove_still_scenes else None
         )
         if needs_transcript:
             transcript_job = pool.submit(
@@ -3823,21 +4006,35 @@ def _export_full_length_single_pass(
                     raise ValueError(f"Muting swear words needs the bundled offline speech engine: {exc}") from exc
                 if live_captions:
                     raise
-        silence_cuts, speech_context = speech_job.result()
+        speech_context = speech_job.result()
+        motion, still_stretches = picture_job.result() if picture_job is not None else (None, [])
 
-        still_stretches = still_job.result() if still_job is not None else []
-
+    levels, detected_speech = speech_context
+    # Speech is where the detector or Whisper hears it.
+    speech_segments = (
+        _speech_map(detected_speech, transcript_words, levels, selection_duration)
+        if detected_speech is not None else None
+    )
+    silence_cuts = (
+        _speech_pause_cut_intervals(
+            source, selection_start, selection_end, words=transcript_words, motion=motion,
+        )
+        if remove_silence else []
+    )
     # Pause removal never cuts a word the speech detector missed but Whisper heard.
-    silence_cuts = _spare_spoken_words(silence_cuts, transcript_words, *speech_context, selection_duration)
+    silence_cuts = _spare_spoken_words(silence_cuts, transcript_words, levels, detected_speech, selection_duration)
     filler_cuts: list[tuple[float, float]] = []
     filler_count = 0
     if remove_filler_words:
         filler_cuts, filler_count = _filler_word_cut_intervals(
-            transcript_words, selection_duration, *speech_context
+            transcript_words, selection_duration, levels, speech_segments
         )
-    levels, speech_segments = speech_context
+    if remove_still_scenes and motion is not None:
+        # Menus, lobbies and loading screens join the stretches that are fully still.
+        still_stretches = _merge_cut_intervals([*still_stretches, *_dead_stretches(motion)], selection_duration)
     still_cuts = _still_scene_cut_intervals(
-        still_stretches, speech_segments, transcript_words, levels, selection_duration
+        still_stretches if remove_still_scenes else [], speech_segments, transcript_words, levels,
+        selection_duration,
     )
     cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts, *still_cuts], selection_duration)
     segments = _kept_segments(cuts, selection_duration)

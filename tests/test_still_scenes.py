@@ -10,6 +10,7 @@ import numpy as np
 from backend.app import video
 from backend.app.captions import CaptionWord
 from backend.app.video import (
+    _dead_stretches,
     _run,
     _still_scene_cut_intervals,
     _still_stretches_in_frames,
@@ -69,14 +70,42 @@ class StillDetectionTests(unittest.TestCase):
         self.assertTrue(all(end - start < 6.0 for start, end in stretches))
 
 
+class DeadTimeTests(unittest.TestCase):
+    """`motion` is the share of the picture changing between frames, four times a second."""
+
+    @staticmethod
+    def motion(*stretches: tuple[float, float]) -> np.ndarray:
+        return np.concatenate([np.full(int(seconds * FPS), level, dtype=np.float32) for seconds, level in stretches])
+
+    def test_a_menu_with_button_presses_between_gameplay_is_dead(self):
+        # Gameplay, then 20 s of a menu sitting still apart from a one-second press
+        # every five seconds, then gameplay again.
+        menu = [stretch for _ in range(4) for stretch in ((4.0, 0.0), (1.0, 0.30))]
+        stretches = _dead_stretches(self.motion((10.0, 0.55), *menu, (10.0, 0.55)))
+        self.assertEqual(len(stretches), 1)
+        start, end = stretches[0]
+        self.assertAlmostEqual(start, 10.0, delta=1.0)
+        self.assertAlmostEqual(end, 30.0, delta=1.5)
+
+    def test_live_gameplay_and_short_pauses_in_it_are_not_dead(self):
+        self.assertEqual(_dead_stretches(self.motion((20.0, 0.55), (3.0, 0.0), (20.0, 0.55))), [])
+
+    def test_a_calm_webcam_is_judged_by_its_own_standard(self):
+        # A talking head changes about 4% of the picture; sitting dead still for
+        # eight seconds is dead time, while its ordinary calm is not.
+        stretches = _dead_stretches(self.motion((30.0, 0.04), (8.0, 0.002), (30.0, 0.04)))
+        self.assertEqual(len(stretches), 1)
+        self.assertAlmostEqual(stretches[0][1] - stretches[0][0], 8.0, delta=1.0)
+
+
 class StillCutTests(unittest.TestCase):
     def test_each_still_scene_keeps_a_moment_at_both_edges(self):
         cuts = _still_scene_cut_intervals([(3.0, 13.0)], [], [], None, 20.0)
-        self.assertEqual(cuts, [(4.0, 12.5)])
+        self.assertEqual(cuts, [(3.5, 12.7)])
 
     def test_speech_inside_a_still_scene_is_kept_with_room_around_it(self):
         cuts = _still_scene_cut_intervals([(3.0, 23.0)], [(10.0, 12.0)], [], None, 30.0)
-        self.assertEqual(cuts, [(4.0, 9.7), (12.3, 22.5)])
+        self.assertEqual(cuts, [(3.5, 9.7), (12.3, 22.7)])
 
     def test_a_word_the_speech_detector_missed_is_kept_too(self):
         levels = np.full(int(30 / video._speech_frame_seconds()), 20.0, dtype=np.float32)
@@ -84,8 +113,8 @@ class StillCutTests(unittest.TestCase):
         self.assertEqual(sum(max(0.0, min(15.3, b) - max(15.0, a)) for a, b in cuts), 0.0)
 
     def test_short_leftovers_are_not_cut(self):
-        # Speech at 2.2-3.8 s leaves 1.0-1.9 s and 4.1-5.0 s: both under a second.
-        self.assertEqual(_still_scene_cut_intervals([(0.0, 5.5)], [(2.2, 3.8)], [], None, 10.0), [])
+        # Speech at 1.5-3.0 s leaves 0.5-1.2 s and 3.3-4.2 s: both under a second.
+        self.assertEqual(_still_scene_cut_intervals([(0.0, 4.5)], [(1.5, 3.0)], [], None, 10.0), [])
 
 
 class StillExportTests(unittest.TestCase):
@@ -117,9 +146,9 @@ class StillExportTests(unittest.TestCase):
             summary = metadata["full_length_summary"]
             self.assertTrue(summary["remove_still_scenes"])
             self.assertEqual(summary["still_scenes_removed"], 1)
-            # The frozen 10 s keeps 1 s at its start and 0.5 s at its end.
-            self.assertAlmostEqual(summary["still_seconds_removed"], 8.5, delta=0.5)
-            self.assertAlmostEqual(probe_video(output).duration, 16.0 - 8.5, delta=0.5)
+            # The frozen 10 s keeps half a second at its start and 0.3 s at its end.
+            self.assertAlmostEqual(summary["still_seconds_removed"], 9.2, delta=0.5)
+            self.assertAlmostEqual(probe_video(output).duration, 16.0 - 9.2, delta=0.5)
 
 
 if __name__ == "__main__":

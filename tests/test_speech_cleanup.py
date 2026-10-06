@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ from backend.app.video import (
     _filler_extent,
     _filler_word_cut_intervals,
     _speech_frame_seconds,
+    _speech_map,
     _spare_spoken_words,
     _speech_pause_cut_intervals,
     _tighten_speech_edges,
@@ -50,15 +52,56 @@ class SpeechPauseTests(unittest.TestCase):
                 patch.object(video, "_analysis_cache_key", side_effect=lambda *a, **k: object()):
             return _speech_pause_cut_intervals(Path("unused.mp4"), 0.0, duration)
 
+    def _cuts_with(self, segments, levels, duration, words=None, motion=None):
+        with patch.object(video, "_speech_segments", return_value=segments), \
+                patch.object(video, "_speech_band_levels", return_value=levels):
+            return _speech_pause_cut_intervals(Path("unused.mp4"), 0.0, duration, words=words, motion=motion)
+
     def test_a_pause_between_sentences_is_tightened_even_over_game_audio(self):
         # Speech 0-2 s and 3.2-5 s; the game audio in between is only 12 dB quieter.
         levels = level_track(5.0, [(0.0, 2.0, 20.0), (3.2, 5.0, 20.0)], floor=8.0)
         cuts = self._cuts([(0.0, 2.0), (3.2, 5.0)], levels, 5.0)
         self.assertEqual(len(cuts), 1)
         start, end = cuts[0]
-        # A breath is kept on both sides: more after speech ends than before it resumes.
+        # A breath is kept on both sides: more after speech ends than before it
+        # resumes, plus a little for the game audio, which can hide an onset.
         self.assertAlmostEqual(start, 2.0 + 0.15, places=2)
-        self.assertAlmostEqual(end, 3.2 - 0.10, places=2)
+        self.assertAlmostEqual(end, 3.2 - (0.10 + 0.25 * 3 / 15), places=2)
+
+    def test_the_breath_before_speech_grows_as_the_background_gets_louder(self):
+        def lead(floor):
+            levels = level_track(5.0, [(0.0, 2.0, 20.0), (3.2, 5.0, 20.0)], floor=floor)
+            return 3.2 - self._cuts([(0.0, 2.0), (3.2, 5.0)], levels, 5.0)[0][1]
+
+        self.assertAlmostEqual(lead(-20.0), 0.10, places=2)  # A quiet room.
+        self.assertAlmostEqual(lead(20.0), 0.35, places=2)   # Background as loud as the voice.
+
+    def test_a_pause_of_up_to_six_seconds_in_a_quiet_room_is_tightened(self):
+        levels = level_track(9.0, [(0.0, 2.0, 20.0), (6.5, 9.0, 20.0)], floor=0.0)
+        cuts = self._cuts([(0.0, 2.0), (6.5, 9.0)], levels, 9.0)
+        self.assertAlmostEqual(covered(cuts, 2.0, 6.5), 4.5 - 0.25, places=2)
+
+    def test_a_long_pause_over_loud_background_audio_is_kept(self):
+        # The background is only 6 dB under the voice, so where the next sentence
+        # starts is too uncertain to cut a four-second gap down to a breath.
+        levels = level_track(9.0, [(0.0, 2.0, 20.0), (6.0, 9.0, 20.0)], floor=14.0)
+        self.assertEqual(covered(self._cuts([(0.0, 2.0), (6.0, 9.0)], levels, 9.0), 2.0, 6.0), 0.0)
+
+    def test_a_pause_over_moving_gameplay_is_kept_and_over_a_still_picture_tightened(self):
+        levels = level_track(5.0, [(0.0, 2.0, 20.0), (3.5, 5.0, 20.0)], floor=0.0)
+        frames = int(5.0 * video._STILL_SAMPLE_FPS)
+        busy, calm = np.full(frames, 0.55, dtype=np.float32), np.full(frames, 0.03, dtype=np.float32)
+        self.assertEqual(self._cuts_with([(0.0, 2.0), (3.5, 5.0)], levels, 5.0, motion=busy), [])
+        self.assertGreater(covered(self._cuts_with([(0.0, 2.0), (3.5, 5.0)], levels, 5.0, motion=calm), 2.0, 3.5), 1.2)
+
+    def test_speech_the_detector_missed_but_whisper_heard_is_a_sentence_like_any_other(self):
+        # The detector hears only the first sentence; Whisper also hears one at 4-5 s.
+        levels = level_track(8.0, [(0.0, 2.0, 20.0), (4.0, 5.0, 20.0)], floor=-20.0)
+        words = [CaptionWord("then", 4.0, 4.3), CaptionWord("this", 4.3, 4.6), CaptionWord("one", 4.6, 5.0)]
+        cuts = self._cuts_with([(0.0, 2.0)], levels, 8.0, words=words)
+        self.assertEqual(covered(cuts, 4.0, 5.0), 0.0)
+        # The gap between them is a pause, tightened to a breath.
+        self.assertAlmostEqual(covered(cuts, 2.0, 4.0), 2.0 - 0.25, places=2)
 
     def test_a_long_stretch_of_gameplay_without_talking_is_kept(self):
         levels = level_track(12.0, [(0.0, 1.5, 20.0), (10.0, 12.0, 20.0)], floor=6.0)
@@ -228,20 +271,48 @@ class TranscriptTimingTests(unittest.TestCase):
         self.assertEqual((words[0].start, words[0].end), (0.1, 0.42))
 
     def _commands(
-        self, include_fillers: bool = False, gpu_fails: bool = False, dtw_aborts: bool = False
-    ) -> list[list[str]]:
+        self,
+        include_fillers: bool = False,
+        gpu_fails: bool = False,
+        dtw_aborts_on: tuple[int, ...] = (),
+        seconds: float = 5.0,
+        words_in: dict[int, list[tuple[str, int, int]]] | None = None,
+    ) -> tuple[list[list[str]], list[CaptionWord]]:
+        """Run `transcribe_words` against a stand-in engine; return its runs and the words.
+
+        The stand-in decodes `seconds` of a tone with a quiet moment every 25 s,
+        and writes each piece's JSON in order, stopping at a piece listed in
+        `dtw_aborts_on` when DTW is on, as whisper.cpp does.
+        """
         seen: list[list[str]] = []
+        rate = captions._WHISPER_RATE
 
         def fake_run(command, **kwargs):
-            seen.append([str(part) for part in command])
-            if "-of" in command:
-                if gpu_fails and "-ng" not in command:
-                    return subprocess.CompletedProcess(command, 1, b"", b"ggml_metal_init: error")
-                if dtw_aborts and "-dtw" in command:
-                    return subprocess.CompletedProcess(command, -6, b"", b"read_audio_data: trying to decode with miniaudio\n")
-                Path(str(command[command.index("-of") + 1]) + ".json").write_text('{"transcription": []}')
-            else:
-                Path(str(command[-1])).write_bytes(b"\0" * 256)
+            command = [str(part) for part in command]
+            if "-m" not in command:
+                times = np.arange(int(seconds * rate)) / rate
+                tone = (8000 * np.sin(2 * np.pi * 220 * times)).astype("<i2")
+                tone[(times % 25.0 > 24.5)] = 0  # A quiet moment near each 25-second mark.
+                import wave
+                with wave.open(command[-1], "wb") as handle:
+                    handle.setnchannels(1)
+                    handle.setsampwidth(2)
+                    handle.setframerate(rate)
+                    handle.writeframes(tone.tobytes())
+                return subprocess.CompletedProcess(command, 0, b"", b"")
+            seen.append(command)
+            if gpu_fails and "-ng" not in command:
+                return subprocess.CompletedProcess(command, 1, b"", b"ggml_metal_init: error")
+            pieces = [command[i + 1] for i, part in enumerate(command) if part == "-f"]
+            for piece in pieces:
+                index = int(Path(piece).stem.removeprefix("piece"))
+                if "-dtw" in command and index in dtw_aborts_on:
+                    return subprocess.CompletedProcess(command, -6, b"", b"whisper_exp_compute_token_level_timestamps_dtw")
+                segments = [
+                    {"text": f" {text}", "offsets": {"from": start, "to": end}}
+                    for text, start, end in (words_in or {}).get(index, [])
+                ]
+                Path(piece + ".json").write_text(json.dumps({"transcription": segments}))
             return subprocess.CompletedProcess(command, 0, b"", b"")
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -250,25 +321,27 @@ class TranscriptTimingTests(unittest.TestCase):
             model.write_text("")
             with patch.object(captions, "caption_runtime_paths", return_value=(cli, model)), \
                     patch.object(captions.subprocess, "run", side_effect=fake_run):
-                captions.transcribe_words(Path("clip.mp4"), 0.0, 5.0, "ffmpeg", include_fillers=include_fillers)
-        return [command for command in seen if "-of" in command]
+                words = captions.transcribe_words(
+                    Path("clip.mp4"), 0.0, seconds, "ffmpeg", include_fillers=include_fillers
+                )
+        return seen, words
 
     def _command(self, include_fillers: bool) -> list[str]:
-        return self._commands(include_fillers)[0]
+        return self._commands(include_fillers)[0][0]
 
     def test_a_mac_transcribes_on_the_gpu_and_falls_back_to_the_cpu(self):
         with patch.object(captions.sys, "platform", "darwin"):
-            self.assertEqual(len(self._commands()), 1)
-            self.assertNotIn("-ng", self._commands()[0])
-            retried = self._commands(gpu_fails=True)
+            self.assertEqual(len(self._commands()[0]), 1)
+            self.assertNotIn("-ng", self._commands()[0][0])
+            retried = self._commands(gpu_fails=True)[0]
         # The GPU with and without DTW, then the CPU, which keeps DTW.
         self.assertEqual([("-ng" in c, "-dtw" in c) for c in retried], [(False, True), (False, False), (True, True)])
         with patch.object(captions.sys, "platform", "win32"):
-            self.assertIn("-ng", self._commands()[0])
+            self.assertIn("-ng", self._commands()[0][0])
 
     def test_a_dtw_abort_on_a_short_segment_is_transcribed_again_without_dtw(self):
         with patch.object(captions.sys, "platform", "darwin"):
-            commands = self._commands(include_fillers=True, dtw_aborts=True)
+            commands = self._commands(include_fillers=True, dtw_aborts_on=(0,))[0]
         self.assertEqual(len(commands), 2)
         self.assertIn("-dtw", commands[0])
         self.assertNotIn("-dtw", commands[1])
@@ -276,6 +349,34 @@ class TranscriptTimingTests(unittest.TestCase):
         # Still on the GPU, and still with the filler prompt.
         self.assertNotIn("-ng", commands[1])
         self.assertIn("--prompt", commands[1])
+
+    def test_a_long_recording_is_heard_in_pieces_of_about_25_seconds_by_one_run(self):
+        words_in = {0: [("Hello", 1000, 1300)], 2: [("again", 2000, 2400)]}
+        commands, words = self._commands(seconds=70.0, words_in=words_in)
+
+        self.assertEqual(len(commands), 1)
+        pieces = [part for part in commands[0] if part.endswith(".wav")]
+        self.assertEqual(len(pieces), 3)
+        # Each piece starts where the one before ends, at the quiet moment near 25 s
+        # and 50 s, so the word in the third piece lands about 52 s in.
+        self.assertEqual([word.text for word in words], ["Hello", "again"])
+        self.assertAlmostEqual(words[0].start, 1.0, places=2)
+        self.assertAlmostEqual(words[1].start, 52.0, delta=0.6)
+
+    def test_a_piece_that_stops_the_engine_is_retried_alone_and_the_rest_keep_dtw(self):
+        with patch.object(captions.sys, "platform", "darwin"):
+            commands, _ = self._commands(seconds=70.0, dtw_aborts_on=(1,))
+        pieces = lambda command: [Path(part).stem for part in command if part.endswith(".wav")]
+        # All three with DTW; the second stops it, so it goes alone without DTW and
+        # the third carries on with DTW on the same device.
+        self.assertEqual(
+            [(pieces(c), "-dtw" in c, "-ng" in c) for c in commands],
+            [
+                (["piece00000", "piece00001", "piece00002"], True, False),
+                (["piece00001"], False, False),
+                (["piece00002"], True, False),
+            ],
+        )
 
     def test_transcription_uses_dtw_timing(self):
         command = self._command(include_fillers=False)
@@ -301,6 +402,92 @@ class TranscriptTimingTests(unittest.TestCase):
                 self.assertEqual(video._transcribe_words_cached(source, 0.0, 1.0), plain)
             self.assertEqual(transcribe.call_count, 2)
             self.assertTrue(transcribe.call_args_list[1].kwargs.get("include_fillers"))
+
+
+
+class SpeechMapTests(unittest.TestCase):
+    def test_words_whisper_heard_join_the_detector_speech_and_silent_or_tagged_ones_do_not(self):
+        levels = level_track(8.0, [(0.0, 1.0, 20.0), (3.0, 3.6, 20.0)], floor=-20.0)
+        words = [
+            CaptionWord("then", 3.0, 3.6),            # Heard, and loud: speech.
+            CaptionWord("(music)", 5.0, 5.5),         # A sound tag.
+            CaptionWord("okay", 6.5, 6.9),            # Silent: Whisper imagined it.
+        ]
+        self.assertEqual(_speech_map([(0.0, 1.0)], words, levels, 8.0), [(0.0, 1.0), (3.0, 3.6)])
+
+    def test_a_word_end_that_runs_long_is_trimmed_to_where_the_voice_stops(self):
+        # Whisper says the word lasts to 3.9 s; the voice stops at 3.4 s.
+        levels = level_track(8.0, [(0.0, 1.0, 20.0), (3.0, 3.4, 20.0)], floor=-20.0)
+        (_, _), (start, end) = _speech_map([(0.0, 1.0)], [CaptionWord("there", 3.0, 3.9)], levels, 8.0)
+        self.assertAlmostEqual(start, 3.0, delta=0.02)
+        self.assertLess(end, 3.5)
+
+
+class HallucinationTests(unittest.TestCase):
+    @staticmethod
+    def _said(text: str, start: float = 0.0, step: float = 0.3) -> list[CaptionWord]:
+        return [
+            CaptionWord(word, round(start + index * step, 2), round(start + index * step + 0.25, 2))
+            for index, word in enumerate(text.split())
+        ]
+
+    def _kept(self, words: list[CaptionWord]) -> str:
+        return " ".join(word.text for word in captions.without_hallucinations(words))
+
+    def test_a_sentence_repeated_through_a_stream_is_kept_once(self):
+        self.assertEqual(self._kept(self._said("I don't want to get out of here. " * 6)), "I don't want to get out of here.")
+
+    def test_a_word_repeated_over_silence_is_dropped_but_quick_real_repeats_stay(self):
+        spaced = [CaptionWord("yeah,", 5.0 + 4.2 * n, 5.3 + 4.2 * n) for n in range(5)]
+        self.assertEqual(self._kept(spaced), "")
+        self.assertEqual(self._kept(self._said("let's go let's go let's go nice")), "let's go let's go let's go nice")
+        self.assertEqual(self._kept(self._said("go go go")), "go go go")
+        self.assertEqual(self._kept(self._said("Okay. " * 12, step=0.6)), "Okay.")
+
+    def test_a_hesitation_counts_only_beside_real_speech(self):
+        lone = [CaptionWord("uh,", 10.0, 10.3)] + self._said("what's up chat", 20.0)
+        self.assertEqual(self._kept(lone), "what's up chat")
+        self.assertEqual(self._kept(self._said("uh, what's up chat")), "uh, what's up chat")
+
+    def test_repeated_swear_words_all_stay_so_every_one_is_muted(self):
+        self.assertEqual(self._kept(self._said("fuck fuck fuck fuck fuck")), "fuck fuck fuck fuck fuck")
+        raging = [CaptionWord("shit!", 3.0 + 4.0 * n, 3.3 + 4.0 * n) for n in range(4)]
+        self.assertEqual(self._kept(raging), "shit! shit! shit! shit!")
+
+    def test_sound_tags_are_kept_for_the_steps_that_read_them(self):
+        tags = [CaptionWord("(music)", float(n), n + 0.5) for n in range(6)]
+        self.assertEqual(self._kept(tags), " ".join(["(music)"] * 6))
+
+
+class StutterTests(unittest.TestCase):
+    def test_the_first_of_a_stumbled_short_word_is_cut(self):
+        words = [CaptionWord("I", 1.0, 1.15), CaptionWord("I", 1.3, 1.45), CaptionWord("think", 1.45, 1.8)]
+        cuts, count = _filler_word_cut_intervals(words, 3.0)
+        self.assertEqual(count, 1)
+        self.assertEqual(len(cuts), 1)
+        start, end = cuts[0]
+        self.assertLessEqual(start, 1.0)
+        self.assertAlmostEqual(end, 1.27, places=2)
+
+    def test_emphatic_repeats_and_far_apart_words_stay(self):
+        for words in (
+            [CaptionWord("no", 1.0, 1.2), CaptionWord("no", 1.25, 1.45), CaptionWord("no", 1.5, 1.7)],
+            [CaptionWord("the", 1.0, 1.1), CaptionWord("the", 2.0, 2.1)],
+        ):
+            self.assertEqual(_filler_word_cut_intervals(words, 3.0), ([], 0))
+
+
+class MisplacedFillerTests(unittest.TestCase):
+    def test_a_filler_stuck_to_the_word_before_a_long_silence_is_left(self):
+        # Whisper put "uh" right on the end of "game", but it was said in the silence.
+        levels = level_track(4.0, [(0.0, 1.0, 20.0), (1.7, 2.0, 20.0), (2.6, 4.0, 20.0)], floor=-20.0)
+        words = [CaptionWord("game", 0.6, 1.0), CaptionWord("uh", 1.0, 1.3), CaptionWord("watch", 2.6, 3.0)]
+        self.assertEqual(_filler_word_cut_intervals(words, 4.0, levels, [(0.0, 1.0), (1.7, 2.0), (2.6, 4.0)]), ([], 0))
+
+    def test_a_filler_whose_timing_collapsed_is_left(self):
+        levels = level_track(3.0, [(0.0, 1.0, 20.0), (1.2, 3.0, 20.0)], floor=-20.0)
+        words = [CaptionWord("map", 0.5, 0.9), CaptionWord("uh", 1.10, 1.14), CaptionWord("chat", 1.14, 1.5)]
+        self.assertEqual(_filler_word_cut_intervals(words, 3.0, levels, [(0.0, 3.0)]), ([], 0))
 
 
 class SpeechDetectorTests(unittest.TestCase):
