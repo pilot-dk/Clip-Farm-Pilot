@@ -655,6 +655,20 @@ def group_caption_words(words: list[CaptionWord]) -> list[list[CaptionWord]]:
     return groups
 
 
+def spoken_words(words: list[CaptionWord] | tuple[CaptionWord, ...]) -> list[CaptionWord]:
+    """The words actually said: without Whisper's sound tags such as "(music)" or
+    "[sounds of running]", which would otherwise be shown as captions."""
+    spoken: list[CaptionWord] = []
+    tag_words = 0  # Words so far in an open tag; an unclosed tag ends after eight.
+    for word in words:
+        text = word.text.strip()
+        tag = 0 < tag_words < 8 or text[:1] in {"[", "(", "*", "♪"}
+        tag_words = tag_words + 1 if tag and text[-1:] not in {"]", ")", "*", "♪"} else 0
+        if not tag and _plain(word):
+            spoken.append(word)
+    return spoken
+
+
 def write_live_caption_ass(
     words: list[CaptionWord],
     destination: Path,
@@ -693,7 +707,7 @@ def write_live_caption_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     events: list[str] = []
-    for group in group_caption_words(words):
+    for group in group_caption_words(spoken_words(words)):
         for index, word in enumerate(group):
             event_start = word.start
             event_end = word.end

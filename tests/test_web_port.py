@@ -78,6 +78,8 @@ class WebPortTests(unittest.TestCase):
         self.assertTrue(request.subscribe_animation)
         self.assertTrue(request.twitch_follow_animation)
         self.assertFalse(main.ExportRequest(start=0, end=600).twitch_follow_animation)
+        self.assertTrue(main.ExportRequest(start=0, end=600, edit_mode="full-length", keep_only_action=True).keep_only_action)
+        self.assertFalse(main.ExportRequest(start=0, end=600).keep_only_action)
 
     def test_full_length_square_request_is_allowed(self):
         request = main.ExportRequest(start=0, end=600, edit_mode="full-length", aspect="1:1")

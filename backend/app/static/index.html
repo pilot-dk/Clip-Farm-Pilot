@@ -1704,6 +1704,10 @@
               <div class="full-length-card">
                 <p class="full-length-intro">Each option runs locally and keeps the video in chronological order. Speech is analyzed once, then everything is combined into one high-quality final render.</p>
                 <div class="full-edit-option">
+                  <span class="full-edit-copy"><strong>Keep only the action</strong><small>For shooters: keeps your kills (or your fights, in games without kill cards) and everything you say, and cuts the rest, such as running around, deaths, killcams, waiting, and menus. Turns a stream into a highlights video.</small></span>
+                  <label class="switch"><input id="keepOnlyActionToggle" type="checkbox" /><span class="switch-track"></span></label>
+                </div>
+                <div class="full-edit-option">
                   <span class="full-edit-copy"><strong>Remove silent pauses</strong><small>Tightens the pauses between your sentences to a natural breath and cuts dead air. Pauses over moving gameplay stay, so action is never jump-cut.</small></span>
                   <label class="switch"><input id="removeSilenceToggle" type="checkbox" checked /><span class="switch-track"></span></label>
                 </div>
@@ -3399,6 +3403,7 @@
         live_caption_scale: Math.max(50, Math.min(175, Number($("liveCaptionSize").value) || 100)) / 100,
         resolution: state.resolution,
         viral_title: $("viralTitleToggle").checked,
+        keep_only_action: isFullLength && $("keepOnlyActionToggle").checked,
         remove_silence: isFullLength && $("removeSilenceToggle").checked,
         remove_still_scenes: isFullLength && $("removeStillScenesToggle").checked,
         mute_profanity: $("muteProfanityToggle").checked,
@@ -3481,6 +3486,13 @@
           if (silenceCount) improvements.push(`${silenceCount} silent pause${silenceCount === 1 ? "" : "s"}`);
           if (fillerCount) improvements.push(`${fillerCount} filler word${fillerCount === 1 ? "" : "s"}`);
           if (stillCount) improvements.push(`${stillCount} still scene${stillCount === 1 ? "" : "s"}`);
+          if (summary.keep_only_action) {
+            const kills = Number(summary.kills_found) || 0;
+            const fights = Number(summary.fights_found) || 0;
+            if (kills) improvements.push(`${kills} kill${kills === 1 ? "" : "s"} kept`);
+            else if (fights) improvements.push(`${fights} fight${fights === 1 ? "" : "s"} kept`);
+            else if (!(Number(summary.talking_kept) > 0)) improvements.push("no kills, fights, or talking found to keep");
+          }
           if (summary.twitch_follow_animation) improvements.push("Twitch follow animation added at 00:00");
           if (summary.subscribe_animation) {
             improvements.push(summary.twitch_follow_animation ? "subscribe animation right after it" : "subscribe animation added at 00:00");
@@ -3572,6 +3584,7 @@
       $("videoFilter").value = "none";
       $("vineBoomToggle").checked = false;
       $("checkSoundToggle").checked = false;
+      $("keepOnlyActionToggle").checked = false;
       $("removeSilenceToggle").checked = true;
       $("removeStillScenesToggle").checked = false;
       $("muteProfanityToggle").checked = false;

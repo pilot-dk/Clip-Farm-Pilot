@@ -377,7 +377,14 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         live_caption_font_size,
         live_caption_margin,
     )
-    from backend.app.video import analyze_viral_candidates, export_clip, generate_viral_title, probe_video
+    from backend.app.highlights import SHOT_FPS, hud_readings
+    from backend.app.video import (
+        analyze_viral_candidates,
+        export_clip,
+        ffmpeg_executable,
+        generate_viral_title,
+        probe_video,
+    )
 
     if not source_path.is_file():
         raise FileNotFoundError("The direct bundle test source is missing.")
@@ -511,6 +518,11 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         subscribe_animation=True,
         export_metadata=full_square_metadata,
     )
+    # Keep only the action reads the game's HUD through an FFmpeg filter graph; a
+    # failure there would only leave the edit without kills, so it is checked here.
+    hud = hud_readings(cached_source, 0, info.duration, ffmpeg_executable())
+    if abs(len(hud["killed"]) - info.duration * SHOT_FPS) > 3:
+        raise RuntimeError("The bundled FFmpeg did not read the game HUD for Keep only the action.")
     # Pause and filler removal run the bundled Silero detector and Whisper with DTW
     # timing and the filler prompt, and still-scene removal decodes the picture, so
     # each platform's own binaries are exercised. The Twitch follow animation is
@@ -528,6 +540,7 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         remove_silence=True,
         remove_filler_words=True,
         remove_still_scenes=True,
+        keep_only_action=True,
         mute_profanity=True,
         twitch_follow_animation=True,
         export_metadata=cleaned_metadata,
@@ -538,13 +551,14 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         not cleaned_summary.get("remove_silence")
         or not cleaned_summary.get("remove_filler_words")
         or not cleaned_summary.get("remove_still_scenes")
+        or not cleaned_summary.get("keep_only_action")
         or not cleaned_summary.get("mute_profanity")
         or not cleaned_summary.get("twitch_follow_animation")
         or cleaned_info.duration <= 0.5
         or cleaned_info.frame_rate != info.frame_rate
     ):
         raise RuntimeError(
-            "The bundled pause, filler, still-scene cleanup and Twitch follow animation did not produce the expected video."
+            "The bundled highlights, pause, filler, still-scene cleanup and Twitch follow animation did not produce the expected video."
         )
     expected_manual_time = [0.6]
     if (

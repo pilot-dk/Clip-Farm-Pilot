@@ -52,10 +52,12 @@ class SpeechPauseTests(unittest.TestCase):
                 patch.object(video, "_analysis_cache_key", side_effect=lambda *a, **k: object()):
             return _speech_pause_cut_intervals(Path("unused.mp4"), 0.0, duration)
 
-    def _cuts_with(self, segments, levels, duration, words=None, motion=None):
+    def _cuts_with(self, segments, levels, duration, words=None, motion=None, fights=None):
         with patch.object(video, "_speech_segments", return_value=segments), \
                 patch.object(video, "_speech_band_levels", return_value=levels):
-            return _speech_pause_cut_intervals(Path("unused.mp4"), 0.0, duration, words=words, motion=motion)
+            return _speech_pause_cut_intervals(
+                Path("unused.mp4"), 0.0, duration, words=words, motion=motion, fights=fights,
+            )
 
     def test_a_pause_between_sentences_is_tightened_even_over_game_audio(self):
         # Speech 0-2 s and 3.2-5 s; the game audio in between is only 12 dB quieter.
@@ -93,6 +95,15 @@ class SpeechPauseTests(unittest.TestCase):
         busy, calm = np.full(frames, 0.55, dtype=np.float32), np.full(frames, 0.03, dtype=np.float32)
         self.assertEqual(self._cuts_with([(0.0, 2.0), (3.5, 5.0)], levels, 5.0, motion=busy), [])
         self.assertGreater(covered(self._cuts_with([(0.0, 2.0), (3.5, 5.0)], levels, 5.0, motion=calm), 2.0, 3.5), 1.2)
+
+    def test_with_the_fights_known_only_a_pause_during_one_is_kept(self):
+        # Running between fights moves the picture as much as a fight does.
+        levels = level_track(5.0, [(0.0, 2.0, 20.0), (3.5, 5.0, 20.0)], floor=0.0)
+        busy = np.full(int(5.0 * video._STILL_SAMPLE_FPS), 0.55, dtype=np.float32)
+        segments = [(0.0, 2.0), (3.5, 5.0)]
+        self.assertEqual(self._cuts_with(segments, levels, 5.0, motion=busy, fights=[(1.5, 4.0)]), [])
+        self.assertGreater(covered(self._cuts_with(segments, levels, 5.0, motion=busy, fights=[]), 2.0, 3.5), 1.2)
+        self.assertGreater(covered(self._cuts_with(segments, levels, 5.0, motion=busy, fights=[(4.5, 9.0)]), 2.0, 3.5), 1.2)
 
     def test_speech_the_detector_missed_but_whisper_heard_is_a_sentence_like_any_other(self):
         # The detector hears only the first sentence; Whisper also hears one at 4-5 s.

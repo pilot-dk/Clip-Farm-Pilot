@@ -157,6 +157,7 @@ class ExportRequest(BaseModel):
     remove_still_scenes: bool = False
     mute_profanity: bool = False
     remove_filler_words: bool = False
+    keep_only_action: bool = False
     twitch_follow_animation: bool = False
     subscribe_animation: bool = False
 
@@ -431,6 +432,7 @@ def export(video_id: str, req: ExportRequest):
             remove_filler_words=req.remove_filler_words,
             subscribe_animation=req.subscribe_animation,
             twitch_follow_animation=req.twitch_follow_animation,
+            keep_only_action=req.keep_only_action,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))

@@ -14,6 +14,7 @@ from backend.app.captions import (
     live_caption_font_size,
     live_caption_margin,
     parse_whisper_words,
+    spoken_words,
     write_live_caption_ass,
 )
 from backend.app.video import VideoInfo, _apply_effects, _run, export_clip, ffmpeg_executable
@@ -67,6 +68,25 @@ class LiveCaptionTests(unittest.TestCase):
         self.assertIn(r"{\c&H00FFFFFF&}word", content)
         self.assertIn(r"{\c&H00FFFFFF&}Every", content)
         self.assertIn(r"{\c&H004AF3B9&}word", content)
+
+    def test_sound_tags_are_not_shown_as_captions(self):
+        words = [
+            CaptionWord("(music)", 0.0, 0.8),
+            CaptionWord("Hello", 1.0, 1.3),
+            CaptionWord("[sounds", 1.4, 1.6),
+            CaptionWord("of", 1.6, 1.7),
+            CaptionWord("running]", 1.7, 2.0),
+            CaptionWord("world!", 2.1, 2.5),
+            CaptionWord("*gunshots*", 2.6, 3.0),
+        ]
+        self.assertEqual([word.text for word in spoken_words(words)], ["Hello", "world!"])
+        with tempfile.TemporaryDirectory() as temporary_name:
+            target = Path(temporary_name) / "captions.ass"
+            write_live_caption_ass(words, target, 1920, 1080, "pilot-lime")
+            content = target.read_text(encoding="utf-8")
+        self.assertIn("Hello", content)
+        for tag in ("music", "sounds", "running", "gunshots"):
+            self.assertNotIn(tag, content)
 
     def test_live_caption_overlay_renders_and_changes_with_the_spoken_word(self):
         with tempfile.TemporaryDirectory() as temporary_name:

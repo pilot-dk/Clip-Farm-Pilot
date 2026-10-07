@@ -32,9 +32,11 @@ from .captions import (
     live_caption_font_size,
     detect_speech_segments,
     live_caption_margin,
+    spoken_words,
     transcribe_words,
     write_live_caption_ass,
 )
+from .highlights import GameEvents, action_keep_spans, fight_spans, hud_events, kill_spans, talking_spans
 from .profanity import masked as _masked_swear_word, profane_indexes
 
 Aspect = Literal["16:9", "9:16", "1:1"]
@@ -3061,13 +3063,7 @@ def _heard_words(
         _speech_reference_level(levels, speech_segments or []) - _DEAD_AIR_DB if index_at else None
     )
     heard: list[CaptionWord] = []
-    tag_words = 0  # Words so far in an open tag; an unclosed tag ends after eight.
-    for word in words or ():
-        text = word.text.strip()
-        tag = 0 < tag_words < 8 or text[:1] in {"[", "(", "*", "♪"}
-        tag_words = tag_words + 1 if tag and text[-1:] not in {"]", ")", "*", "♪"} else 0
-        if tag or not _normalized_caption_word(word):
-            continue
+    for word in spoken_words(words or ()):
         if index_at is not None:
             window = levels[index_at(word.start):max(index_at(word.start) + 1, index_at(word.end))]
             if window.size and float(np.max(window)) < silent_below:
@@ -3138,12 +3134,15 @@ def _speech_pause_cut_intervals(
     lead_keep: float = 0.10,
     words: list[CaptionWord] | tuple[CaptionWord, ...] | None = None,
     motion: np.ndarray | None = None,
+    fights: list[tuple[float, float]] | None = None,
 ) -> list[tuple[float, float]]:
     """Find removable pauses in speech, keeping a short natural breath at each edge.
 
     Speech is where the detector or Whisper hears it (see `_speech_map`). Gaps
-    between sentences up to six seconds are tightened unless the picture is busy
-    through them (`motion`, the frame-to-frame change, shows gameplay going on).
+    between sentences up to six seconds are tightened unless something is happening
+    through them: a fight or a kill, when the game's HUD shows them (`fights`), or
+    else a busy picture (`motion`, the frame-to-frame change). Running between
+    fights is not action, so with fights known a pause over it is tightened too.
     Longer gaps, and the stretches before the first word and after the last, keep
     their audible content and lose only dead air.
     `tail_keep` is left after speech ends and `lead_keep` before it resumes, so a
@@ -3182,7 +3181,11 @@ def _speech_pause_cut_intervals(
             and (gap_end - gap_start <= _SHORT_SPEECH_PAUSE or margin >= _QUIET_PAUSE_DB)
         )
         if pause:
-            stretches = [] if _is_action(motion, gap_start, gap_end) else [(gap_start, gap_end)]
+            busy = (
+                any(fight_start < gap_end and fight_end > gap_start for fight_start, fight_end in fights)
+                if fights is not None else _is_action(motion, gap_start, gap_end)
+            )
+            stretches = [] if busy else [(gap_start, gap_end)]
         else:
             stretches = _dead_air(levels, segments, gap_start, gap_end, minimum_pause)
         noise = min(1.0, max(0.0, (_NOISY_BACKGROUND_DB - margin) / _NOISY_BACKGROUND_DB))
@@ -3944,6 +3947,7 @@ def _export_full_length_single_pass(
     remove_still_scenes: bool = False,
     mute_profanity: bool = False,
     twitch_follow_animation: bool = False,
+    keep_only_action: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     """Analyze once and render a complete landscape or square edit in one generation."""
     if aspect not in {"16:9", "1:1"}:
@@ -3971,6 +3975,7 @@ def _export_full_length_single_pass(
         remove_silence
         or remove_filler_words
         or remove_still_scenes
+        or keep_only_action
         or mute_profanity
         or live_captions
         or title_transcript
@@ -3978,19 +3983,23 @@ def _export_full_length_single_pass(
     )
 
     def analyze_speech() -> tuple[np.ndarray | None, list | None]:
-        if remove_silence or remove_filler_words or remove_still_scenes:
+        if remove_silence or remove_filler_words or remove_still_scenes or keep_only_action:
             return _speech_context(source, selection_start, selection_end)
         return None, None
 
-    # The transcript, the speech analysis, and the picture analysis don't depend on
-    # each other, so they run side by side. Pause removal reads the picture too:
-    # a pause is not tightened while gameplay is moving.
+    # The transcript, the speech analysis, the picture analysis and the game's HUD
+    # don't depend on each other, so they run side by side. Pause removal reads the
+    # picture and the HUD too: a pause is not tightened during a fight.
     transcript_words: list[CaptionWord] = []
-    with ThreadPoolExecutor(max_workers=3, thread_name_prefix=f"{APP_SLUG}-analysis") as pool:
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"{APP_SLUG}-analysis") as pool:
         speech_job = pool.submit(analyze_speech)
         picture_job = (
             pool.submit(_picture_analysis, source, selection_start, selection_end)
-            if remove_silence or remove_still_scenes else None
+            if remove_silence or remove_still_scenes or keep_only_action else None
+        )
+        hud_job = (
+            pool.submit(hud_events, source, selection_start, selection_end, ffmpeg_executable())
+            if remove_silence or keep_only_action else None
         )
         if needs_transcript:
             transcript_job = pool.submit(
@@ -4008,8 +4017,19 @@ def _export_full_length_single_pass(
                     raise
         speech_context = speech_job.result()
         motion, still_stretches = picture_job.result() if picture_job is not None else (None, [])
+        try:
+            game = hud_job.result() if hud_job is not None else GameEvents()
+        except (OSError, subprocess.SubprocessError, ValueError):
+            game = GameEvents()
 
     levels, detected_speech = speech_context
+    # Fights, where the game's ammo counter shows the player firing, and kills, where
+    # a kill card shows, within live play. Scenery behind the counter can hide a
+    # fight's shots, but a kill at the end of it still shows its card, so a pause
+    # is left alone during either.
+    fights = fight_spans(game.shots, selection_duration, motion, hud_gone=game.hud_gone) if game.shots else None
+    kills = kill_spans(game.kills, game.shots, selection_duration, game.hud_gone) if game.kills else []
+    action = [*(fights or []), *kills] if fights is not None or kills else None
     # Speech is where the detector or Whisper hears it.
     speech_segments = (
         _speech_map(detected_speech, transcript_words, levels, selection_duration)
@@ -4017,7 +4037,7 @@ def _export_full_length_single_pass(
     )
     silence_cuts = (
         _speech_pause_cut_intervals(
-            source, selection_start, selection_end, words=transcript_words, motion=motion,
+            source, selection_start, selection_end, words=transcript_words, motion=motion, fights=action,
         )
         if remove_silence else []
     )
@@ -4036,7 +4056,16 @@ def _export_full_length_single_pass(
         still_stretches if remove_still_scenes else [], speech_segments, transcript_words, levels,
         selection_duration,
     )
-    cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts, *still_cuts], selection_duration)
+    action_cuts: list[tuple[float, float]] = []
+    talking: list[tuple[float, float]] = []
+    if keep_only_action:
+        # A highlights edit keeps only the kills, or the fights in a game without
+        # kill cards, and what the creator says.
+        talking = talking_spans(_heard_words(transcript_words, levels, detected_speech), selection_duration)
+        kept_action = action_keep_spans(kills or fights or [], talking, selection_duration)
+        if kept_action:
+            action_cuts = _gaps_between(kept_action, selection_duration)
+    cuts = _merge_cut_intervals([*silence_cuts, *filler_cuts, *still_cuts, *action_cuts], selection_duration)
     segments = _kept_segments(cuts, selection_duration)
     output_duration = sum(segment_end - segment_start for segment_start, segment_end in segments)
     if output_duration < min(0.5, selection_duration * 0.10):
@@ -4044,6 +4073,7 @@ def _export_full_length_single_pass(
         output_duration = selection_duration
         silence_cuts = []
         still_cuts = []
+        action_cuts = []
         filler_count = 0
     # Everything downstream follows the segments actually kept, so a sliver too
     # short to keep counts as removed for captions and sound placement too.
@@ -4379,6 +4409,13 @@ def _export_full_length_single_pass(
                 "filler_words_removed": filler_count,
                 "still_scenes_removed": len(still_cuts),
                 "still_seconds_removed": round(sum(end - start for start, end in still_cuts), 3),
+                "keep_only_action": bool(keep_only_action),
+                # Kills and fights found from the game's HUD, and what a highlights
+                # edit removed around them and the creator's talking.
+                "kills_found": len(game.kills),
+                "fights_found": len(fights or []),
+                "talking_kept": len(talking),
+                "action_seconds_removed": round(sum(end - start for start, end in action_cuts), 3),
                 "cut_count": len(cuts),
                 "remove_silence": bool(remove_silence),
                 "remove_filler_words": bool(remove_filler_words),
@@ -4488,6 +4525,7 @@ def export_clip(
     remove_still_scenes: bool = False,
     mute_profanity: bool = False,
     twitch_follow_animation: bool = False,
+    keep_only_action: bool = False,
 ) -> dict[SelectedSoundEffect, list[float]]:
     if edit_mode not in {"clip", "full-length"}:
         raise ValueError("Unknown edit mode.")
@@ -4525,6 +4563,7 @@ def export_clip(
             remove_still_scenes=remove_still_scenes,
             mute_profanity=mute_profanity,
             twitch_follow_animation=twitch_follow_animation,
+            keep_only_action=keep_only_action,
         )
 
     info = probe_video(source)

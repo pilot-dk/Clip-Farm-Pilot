@@ -123,6 +123,14 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn('$("twitchFollowToggle").checked = false;', self.html)
         self.assertLess(self.html.index('id="twitchFollowToggle"'), self.html.index('id="subscribeAnimationToggle"'))
 
+    def test_keep_only_the_action_is_the_first_full_length_option(self):
+        self.assertIn('id="keepOnlyActionToggle" type="checkbox" />', self.html)
+        self.assertIn('keep_only_action: isFullLength && $("keepOnlyActionToggle").checked', self.html)
+        self.assertIn('$("keepOnlyActionToggle").checked = false;', self.html)
+        self.assertLess(self.html.index('id="keepOnlyActionToggle"'), self.html.index('id="removeSilenceToggle"'))
+        self.assertIn("summary.kills_found", self.html)
+        self.assertIn("summary.fights_found", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
