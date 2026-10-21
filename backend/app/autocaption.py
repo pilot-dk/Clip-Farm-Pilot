@@ -127,6 +127,18 @@ def engine_available() -> bool:
     return llama_server_path().is_file()
 
 
+def _engine_environment(executable: Path) -> dict[str, str]:
+    """The environment llama-server runs in: its own folder first on the library path.
+
+    A packaged app puts its own libraries on the path too, and some carry the
+    same names as llama.cpp's, from Whisper.
+    """
+    environment = os.environ.copy()
+    variable = "PATH" if os.name == "nt" else "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+    environment[variable] = str(executable.parent) + os.pathsep + environment.get(variable, "")
+    return environment
+
+
 def engine_self_test() -> str:
     """Start the bundled llama-server just far enough to print its version, proving its libraries load."""
     executable = llama_server_path()
@@ -135,7 +147,7 @@ def engine_self_test() -> str:
     try:
         result = subprocess.run(
             [str(executable), "--version"], capture_output=True, text=True, timeout=60, check=False,
-            creationflags=0x08000000 if os.name == "nt" else 0,
+            env=_engine_environment(executable), creationflags=0x08000000 if os.name == "nt" else 0,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise CaptionModelError(f"The bundled caption engine could not start: {exc}") from exc
@@ -377,10 +389,7 @@ class LlamaServer:
         self._key = secrets.token_urlsafe(24)
         model_file, projector = (self.model.path(item) for item in self.model.files)
         log_path = self.model.directory / "llama-server.log"
-        environment = os.environ.copy()
-        library_dir = str(executable.parent)
-        variable = "PATH" if os.name == "nt" else "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
-        environment[variable] = library_dir + os.pathsep + environment.get(variable, "")
+        environment = _engine_environment(executable)
         command = [
             str(executable), "-m", str(model_file), "--mmproj", str(projector),
             "--host", "127.0.0.1", "--port", str(self._port), "--api-key", self._key,

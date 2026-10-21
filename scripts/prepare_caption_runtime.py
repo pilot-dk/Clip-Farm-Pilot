@@ -214,6 +214,41 @@ def prepare_llama_runtime(target_platform: str, architecture: str, cache: Path, 
                 shutil.copy2(item, llm_dir / item.name, follow_symlinks=False)
     executable = llm_dir / ("llama-server.exe" if target_platform == "windows" else "llama-server")
     executable.chmod(executable.stat().st_mode | 0o111)
+    if target_platform == "macos":
+        rename_macos_llama_libraries(llm_dir)
+
+
+def rename_macos_llama_libraries(llm_dir: Path) -> None:
+    """Give llama.cpp's libraries names of their own on macOS.
+
+    PyInstaller gathers every bundled library into the app's one Frameworks
+    folder and points each tool there. Whisper ships ggml libraries with the
+    same names as llama.cpp's but an older version, so one engine would load
+    the other's. Each library's "lib" prefix becomes "llm" -- the same length,
+    so the new names always fit in the headers -- and every reference to it
+    is updated, then each file is signed again.
+    """
+    renames: dict[str, str] = {}
+    for item in sorted(llm_dir.iterdir()):
+        if item.suffix != ".dylib" or item.is_symlink():
+            continue
+        identity = subprocess.run(["otool", "-D", str(item)], capture_output=True, text=True, check=True)
+        old_name = identity.stdout.strip().splitlines()[-1].rsplit("/", 1)[-1]
+        if not old_name.startswith("lib"):
+            raise RuntimeError(f"Unexpected llama.cpp library name: {old_name}")
+        new_name = "llm" + old_name[3:]
+        renames[old_name] = new_name
+        item.rename(llm_dir / new_name)
+    for item in list(llm_dir.iterdir()):
+        if item.is_symlink():
+            item.unlink()
+    changes = [argument for old_name, new_name in renames.items() for argument in ("-change", f"@rpath/{old_name}", f"@rpath/{new_name}")]
+    for binary in [llm_dir / "llama-server", *(llm_dir / new_name for new_name in renames.values())]:
+        command = ["install_name_tool", *changes]
+        if binary.name != "llama-server":
+            command += ["-id", f"@rpath/{binary.name}"]
+        subprocess.run([*command, str(binary)], check=True, capture_output=True)
+        subprocess.run(["codesign", "--force", "--sign", "-", str(binary)], check=True, capture_output=True)
 
 
 def windows_runtime_dir(architecture: str) -> Path:

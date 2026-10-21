@@ -355,6 +355,26 @@ class AutoCaptionerTests(unittest.TestCase):
             AutoCaptioner(self.model).server.chat({})
 
 
+class EngineSelfTestTests(unittest.TestCase):
+    def test_the_engine_starts_with_its_own_folder_first_on_the_library_path(self):
+        # A packaged app's own libraries can share names with llama.cpp's.
+        with tempfile.TemporaryDirectory() as temporary:
+            server = Path(temporary) / "llm" / "llama-server"
+            server.parent.mkdir()
+            server.write_text("")
+            finished = subprocess.CompletedProcess([], 0, stdout="version: 0.7.0-dev (build 11799)\n", stderr="")
+            with patch.dict(os.environ, {"CLIPFARMPILOT_LLAMA_SERVER": str(server)}), \
+                    patch.object(autocaption.subprocess, "run", return_value=finished) as run:
+                self.assertEqual(autocaption.engine_self_test(), "version: 0.7.0-dev (build 11799)")
+            variable = "PATH" if os.name == "nt" else "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+            self.assertTrue(run.call_args.kwargs["env"][variable].startswith(str(server.parent) + os.pathsep))
+            failed = subprocess.CompletedProcess([], 1, stdout="", stderr="dyld: Symbol not found")
+            with patch.dict(os.environ, {"CLIPFARMPILOT_LLAMA_SERVER": str(server)}), \
+                    patch.object(autocaption.subprocess, "run", return_value=failed), \
+                    self.assertRaisesRegex(CaptionModelError, "startup test"):
+                autocaption.engine_self_test()
+
+
 class ClipFrameTests(unittest.TestCase):
     def test_four_frames_come_from_across_the_clip_fitted_to_448_pixels(self):
         with tempfile.TemporaryDirectory() as temporary:
