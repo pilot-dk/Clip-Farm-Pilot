@@ -273,11 +273,24 @@ def windows_runtime_dir(architecture: str) -> Path:
     raise RuntimeError("The Visual C++ runtime DLLs for the caption engines were not found.")
 
 
+def find_linux_openmp() -> Path | None:
+    """libgomp.so.1 on the build machine: from the compiler if there is one, else the library cache."""
+    for command in (["gcc", "-print-file-name=libgomp.so.1"], ["ldconfig", "-p"]):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError:
+            continue  # A slim image, such as the web app's, has neither tool.
+        for line in result.stdout.splitlines():
+            candidate = Path(line.split("=>")[-1].strip())
+            if candidate.name == "libgomp.so.1" and candidate.is_absolute() and candidate.exists():
+                return candidate
+    return None
+
+
 def bundle_linux_openmp(*destinations: Path) -> None:
     """Ship libgomp beside the engines: they are built with OpenMP, and a minimal system may lack it."""
-    result = subprocess.run(["gcc", "-print-file-name=libgomp.so.1"], capture_output=True, text=True, check=False)
-    found = Path(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else None
-    if found is None or not found.is_absolute() or not found.exists():
+    found = find_linux_openmp()
+    if found is None:
         print("libgomp.so.1 was not found; the caption engines will use the system's copy.")
         return
     for destination in destinations:

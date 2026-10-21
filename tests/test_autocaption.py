@@ -450,5 +450,35 @@ class EngineBundleTests(unittest.TestCase):
         )
 
 
+    def test_openmp_is_found_by_the_compiler_or_the_library_cache_or_skipped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library = Path(temporary) / "libgomp.so.1"
+            library.write_bytes(b"elf")
+            destination = Path(temporary) / "llm"
+            destination.mkdir()
+
+            def compiler(command, **kwargs):
+                return subprocess.CompletedProcess(command, 0, stdout=f"{library}\n", stderr="")
+
+            def no_compiler(command, **kwargs):
+                if command[0] == "gcc":
+                    raise FileNotFoundError("gcc")
+                cache = f"\tlibgomp.so.1 (libc6,x86-64) => {library}\n\tlibm.so.6 (libc6,x86-64) => /lib/libm.so.6\n"
+                return subprocess.CompletedProcess(command, 0, stdout=cache, stderr="")
+
+            def nothing(command, **kwargs):
+                raise FileNotFoundError(command[0])
+
+            with patch.object(prepare_caption_runtime.subprocess, "run", side_effect=compiler):
+                self.assertEqual(prepare_caption_runtime.find_linux_openmp(), library)
+            with patch.object(prepare_caption_runtime.subprocess, "run", side_effect=no_compiler):
+                self.assertEqual(prepare_caption_runtime.find_linux_openmp(), library)
+                prepare_caption_runtime.bundle_linux_openmp(destination)
+            self.assertEqual((destination / "libgomp.so.1").read_bytes(), b"elf")
+            with patch.object(prepare_caption_runtime.subprocess, "run", side_effect=nothing):
+                self.assertIsNone(prepare_caption_runtime.find_linux_openmp())
+                prepare_caption_runtime.bundle_linux_openmp(destination)  # Skipped, not an error.
+
+
 if __name__ == "__main__":
     unittest.main()
