@@ -2511,9 +2511,14 @@ def _apply_effects(
                         "eval=frame[ducked]"
                     )
                     base_audio = "ducked"
+                # The mix runs to its longest input and is then trimmed to the clip.
+                # Ending it with the first input instead cut the last tenth of a
+                # second, and any sound placed there, on FFmpeg 6.1 and older when
+                # the picture is copied rather than encoded.
                 filters.append(
                     f"[{base_audio}]{effect_inputs}amix=inputs={len(effect_labels) + 1}:"
-                    f"duration=first:dropout_transition=0:normalize=0,{_PEAK_LIMITER}[aout]"
+                    f"duration=longest:dropout_transition=0:normalize=0,"
+                    f"atrim=0:{duration:.3f},{_PEAK_LIMITER}[aout]"
                 )
             else:
                 if len(effect_labels) > 1:
