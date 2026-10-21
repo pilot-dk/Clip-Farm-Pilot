@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .brand import APP_SLUG, env
 from .captions import (
@@ -43,6 +43,9 @@ Aspect = Literal["16:9", "9:16", "1:1"]
 Resolution = Literal["720p", "1080p", "2160p"]
 FaceCorner = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 CaptionPosition = Literal["top", "center", "bottom"]
+# Clean is white text with a soft shadow, as fan pages caption clips; bold is
+# heavy white text with a black outline.
+CaptionStyle = Literal["clean", "bold"]
 SoundEffect = Literal["none", "vine-boom", "check-sound"]
 SelectedSoundEffect = Literal["vine-boom", "check-sound"]
 VisualEffect = Literal["none", "lens-flare", "punch-zoom", "white-flash"]
@@ -1416,6 +1419,33 @@ def _face_crop(
     return fw, fh, x, y
 
 
+# The clean caption look, measured from fan-page clips: medium-weight white text
+# about 6% of the frame tall, wrapped at 80% of its width, with a soft shadow
+# just below it. Sizes are for the 1080 pixel reference square.
+_CLEAN_CAPTION_SIZE = 68
+_CLEAN_CAPTION_WIDTH = 860
+_CLEAN_CAPTION_LINE = 1.24
+_CLEAN_SHADOW_ALPHA = 0.55
+_CLEAN_SHADOW_BLUR = 0.22
+_CLEAN_SHADOW_DROP = 0.05
+
+
+def _clean_caption_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = [
+        (Path("/System/Library/Fonts/HelveticaNeue.ttc"), 10),  # Helvetica Neue Medium.
+        (Path("C:/Windows/Fonts/seguisb.ttf"), 0),               # Segoe UI Semibold.
+        (Path("C:/Windows/Fonts/segoeui.ttf"), 0),
+        (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), 0),
+    ]
+    for candidate, index in candidates:
+        if candidate.exists():
+            try:
+                return ImageFont.truetype(str(candidate), size, index=index)
+            except OSError:
+                continue
+    return _caption_font(size)
+
+
 def _caption_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     candidates = [
         Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
@@ -1487,7 +1517,9 @@ def _center_caption_file(destination: Path, vertical_position: CaptionPosition) 
     centered.save(destination, format="PNG")
 
 
-def _render_square_caption_macos(text: str, destination: Path, font_scale: float) -> bool:
+def _render_square_caption_macos(
+    text: str, destination: Path, font_scale: float, caption_style: CaptionStyle = "bold",
+) -> bool:
     """Render caption text through Core Text so full emoji sequences stay intact.
 
     Pillow can draw simple color emoji glyphs, but without a complex-text
@@ -1511,14 +1543,22 @@ def _render_square_caption_macos(text: str, destination: Path, font_scale: float
         return True
 
     scale = min(1.75, max(0.50, float(font_scale)))
+    clean_style = caption_style == "clean"
     # Core Text font sizes are typographic points; 106pt closely matches the
     # visible cap height of Pillow's existing 86px caption preset.
-    font_size = round(106 * scale)
+    font_size = round((_CLEAN_CAPTION_SIZE if clean_style else 106) * scale)
+    max_width = _CLEAN_CAPTION_WIDTH if clean_style else 960
+    line_ratio = _CLEAN_CAPTION_LINE if clean_style else 1.18
 
     white = Quartz.CGColorCreateGenericRGB(1, 1, 1, 1)
     black = Quartz.CGColorCreateGenericRGB(0, 0, 0, 1)
 
     def attributes(size: int) -> dict:
+        if clean_style:
+            return {
+                CoreText.kCTFontAttributeName: CoreText.CTFontCreateWithName("HelveticaNeue-Medium", size, None),
+                CoreText.kCTForegroundColorAttributeName: white,
+            }
         return {
             CoreText.kCTFontAttributeName: CoreText.CTFontCreateWithName("Arial-BoldMT", size, None),
             CoreText.kCTForegroundColorAttributeName: white,
@@ -1547,7 +1587,7 @@ def _render_square_caption_macos(text: str, destination: Path, font_scale: float
             current = words[0]
             for word in words[1:]:
                 candidate = f"{current} {word}"
-                if line_width(candidate, style) <= 960:
+                if line_width(candidate, style) <= max_width:
                     current = candidate
                 else:
                     lines.append(current)
@@ -1568,7 +1608,7 @@ def _render_square_caption_macos(text: str, destination: Path, font_scale: float
         lines = wrap_lines(clean, style)
 
     lines = lines[:3]
-    line_height = font_size * 1.18
+    line_height = font_size * line_ratio
     block_height = min(960, max(line_height, line_height * len(lines)))
     color_space = Quartz.CGColorSpaceCreateDeviceRGB()
     context = Quartz.CGBitmapContextCreate(
@@ -1584,6 +1624,15 @@ def _render_square_caption_macos(text: str, destination: Path, font_scale: float
         return False
     Quartz.CGContextClearRect(context, Quartz.CGRectMake(0, 0, 1080, 1080))
     Quartz.CGContextSetTextMatrix(context, Quartz.CGAffineTransformIdentity)
+    if clean_style:
+        # Core Graphics measures upwards, so a negative offset drops the shadow.
+        shadow = Quartz.CGColorCreateGenericRGB(0, 0, 0, _CLEAN_SHADOW_ALPHA)
+        Quartz.CGContextSetShadowWithColor(
+            context,
+            Quartz.CGSizeMake(0, -font_size * _CLEAN_SHADOW_DROP),
+            font_size * _CLEAN_SHADOW_BLUR,
+            shadow,
+        )
 
     block_bottom = (1080 - block_height) / 2
     for index, value in enumerate(lines):
@@ -1665,29 +1714,35 @@ def _render_square_caption(
     destination: Path,
     font_scale: float = 1.0,
     caption_position: CaptionPosition = "center",
+    caption_style: CaptionStyle = "bold",
 ) -> None:
-    if _render_square_caption_macos(text, destination, font_scale):
+    if caption_style not in {"clean", "bold"}:
+        raise ValueError("Unsupported square-caption style.")
+    if _render_square_caption_macos(text, destination, font_scale, caption_style):
         _center_caption_file(destination, caption_position)
         return
 
+    clean_style = caption_style == "clean"
+    pick_font = _clean_caption_font if clean_style else _caption_font
+    max_width = _CLEAN_CAPTION_WIDTH if clean_style else 960
     canvas = Image.new("RGBA", (1080, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     clean = text.strip()[:160]
     scale = min(1.75, max(0.50, float(font_scale)))
-    font_size = round(86 * scale)
-    font = _caption_font(font_size)
+    font_size = round((_CLEAN_CAPTION_SIZE if clean_style else 86) * scale)
+    font = pick_font(font_size)
     emoji_font = _emoji_font(font_size)
-    lines = _wrap_caption(draw, clean, font, emoji_font, 960)
-    while lines and max((_caption_length(draw, line, font, emoji_font) for line in lines), default=0) > 960 and font_size > 32:
+    lines = _wrap_caption(draw, clean, font, emoji_font, max_width)
+    while lines and max((_caption_length(draw, line, font, emoji_font) for line in lines), default=0) > max_width and font_size > 32:
         font_size -= 4
-        font = _caption_font(font_size)
+        font = pick_font(font_size)
         emoji_font = _emoji_font(font_size)
-        lines = _wrap_caption(draw, clean, font, emoji_font, 960)
+        lines = _wrap_caption(draw, clean, font, emoji_font, max_width)
 
-    line_height = int(font_size * 1.18)
+    line_height = int(font_size * (_CLEAN_CAPTION_LINE if clean_style else 1.18))
     block_height = line_height * len(lines)
     y = (1080 - block_height) / 2
-    stroke = max(4, round(font_size * 0.065))
+    stroke = 0 if clean_style else max(4, round(font_size * 0.065))
     for line in lines:
         tokens = _caption_tokens(line)
         widths = [
@@ -1710,6 +1765,15 @@ def _render_square_caption(
                 )
             x += token_width
         y += line_height
+    if clean_style:
+        # The shadow is the text's own shape, blurred and dropped a little.
+        alpha = canvas.getchannel("A").filter(ImageFilter.GaussianBlur(font_size * _CLEAN_SHADOW_BLUR / 2))
+        shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        shadow.putalpha(alpha.point(lambda value: round(value * _CLEAN_SHADOW_ALPHA)))
+        shadowed = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        shadowed.alpha_composite(shadow, (0, round(font_size * _CLEAN_SHADOW_DROP)))
+        shadowed.alpha_composite(canvas)
+        canvas = shadowed
     center_caption_overlay(canvas, caption_position).save(destination)
 
 
@@ -3953,6 +4017,7 @@ def _export_full_length_single_pass(
     mute_profanity: bool = False,
     twitch_follow_animation: bool = False,
     keep_only_action: bool = False,
+    caption_style: CaptionStyle = "bold",
 ) -> dict[SelectedSoundEffect, list[float]]:
     """Analyze once and render a complete landscape or square edit in one generation."""
     if aspect not in {"16:9", "1:1"}:
@@ -4306,6 +4371,7 @@ def _export_full_length_single_pass(
                     rendered_caption_overlay,
                     caption_font_scale,
                     caption_position,
+                    caption_style,
                 )
                 temporary_paths.append(rendered_caption_overlay)
             else:
@@ -4531,6 +4597,7 @@ def export_clip(
     mute_profanity: bool = False,
     twitch_follow_animation: bool = False,
     keep_only_action: bool = False,
+    caption_style: CaptionStyle = "bold",
 ) -> dict[SelectedSoundEffect, list[float]]:
     if edit_mode not in {"clip", "full-length"}:
         raise ValueError("Unknown edit mode.")
@@ -4569,6 +4636,7 @@ def export_clip(
             mute_profanity=mute_profanity,
             twitch_follow_animation=twitch_follow_animation,
             keep_only_action=keep_only_action,
+            caption_style=caption_style,
         )
 
     info = probe_video(source)
@@ -4732,7 +4800,7 @@ def export_clip(
                 overlay_path = caption_overlay_path
             try:
                 if owns_overlay:
-                    _render_square_caption(caption_text, overlay_path, caption_font_scale, caption_position)
+                    _render_square_caption(caption_text, overlay_path, caption_font_scale, caption_position, caption_style)
                 base_filters = (
                     f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={width}:{height}"

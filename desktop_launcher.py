@@ -374,9 +374,11 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
     from backend.app.captions import (
         caption_engine_self_test,
         caption_engine_status,
+        caption_runtime_paths,
         live_caption_font_size,
         live_caption_margin,
     )
+    from backend.app.autocaption import engine_self_test, llama_server_path
     from backend.app.highlights import SHOT_FPS, hud_readings
     from backend.app.video import (
         analyze_viral_candidates,
@@ -401,8 +403,18 @@ def _test_direct_bundle(source_path: Path, uploads_dir: Path, exports_dir: Path,
         or 'id="autoSoundEffectToggle"' not in html
         or 'id="liveCaptionsToggle"' not in html
         or 'id="liveCaptionScheme"' not in html
+        or 'name="captionMode" value="auto"' not in html
+        or 'name="captionStyle" value="clean"' not in html
     ):
         raise RuntimeError("The bundled Clip Farm Pilot interface is missing an expected feature.")
+    # Auto captions run the bundled llama-server; its model downloads on first
+    # use, so here the engine only has to start and report its version.
+    engine_self_test()
+    if sys.platform == "win32":
+        for dll in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+            for engine_dir in (llama_server_path().parent, caption_runtime_paths()[0].parent):
+                if not (engine_dir / dll).is_file():
+                    raise RuntimeError(f"The bundled caption engines are missing {dll}.")
     if not caption_engine_status()["available"]:
         raise RuntimeError("The bundled offline live-caption engine is missing.")
     caption_engine_self_test()

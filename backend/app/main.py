@@ -26,14 +26,17 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
+from .autocaption import AutoCaptioner, CaptionModel, CaptionModelError, clip_frames, engine_available
 from .brand import APP_NAME, APP_SLUG, APP_VERSION, env
-from .captions import caption_engine_status
+from .captions import caption_engine_status, spoken_words
 from .social import SocialPublishError, SocialPublisher
 from .video import (
     MAX_CLIP_CANDIDATES,
+    _transcribe_words_cached,
     analyze_viral_candidates,
     center_caption_overlay,
     export_clip,
+    ffmpeg_executable,
     format_frame_rate,
     generate_viral_title,
     probe_video,
@@ -56,6 +59,11 @@ SESSION_SECRET = str(env("SESSION_SECRET") or secrets.token_urlsafe(32))
 SESSION_COOKIE = f"{APP_SLUG}_session"
 SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 30
 TITLE_HISTORY_PATH = STORAGE / "viral-title-history.json"
+# Auto captions run a 4 GB model on the computer itself, so a hosted web
+# deployment leaves them off.
+CAPTION_MODEL = CaptionModel(STORAGE / "models" / "qwen3.5-4b")
+AUTO_CAPTIONER = AutoCaptioner(CAPTION_MODEL)
+AUTO_CAPTIONS_ENABLED = not WEB_PASSWORD and str(env("AUTO_CAPTIONS", "1")) != "0"
 _TITLE_HISTORY_LOCK = threading.RLock()
 
 app = FastAPI(title=f"{APP_NAME} API", version=APP_VERSION)
@@ -129,6 +137,7 @@ class ExportRequest(BaseModel):
     caption_text: str = Field("", max_length=160)
     caption_font_scale: float = Field(1.0, ge=0.50, le=1.75)
     caption_position: Literal["top", "center", "bottom"] = "center"
+    caption_style: Literal["clean", "bold"] = "bold"
     caption_overlay_data_url: str = Field("", max_length=11_000_000)
     video_filter: Literal[
         "none",
@@ -380,6 +389,70 @@ def analyze(video_id: str, req: AnalyzeRequest):
     return {"video_id": video_id, "candidates": candidates}
 
 
+class AutoCaptionRequest(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    # Each further variation asks the model for a fresh set of captions.
+    variation: int = Field(0, ge=0, le=1000)
+
+
+def _auto_caption_status() -> dict:
+    available = AUTO_CAPTIONS_ENABLED and engine_available()
+    status = CAPTION_MODEL.status()
+    return {
+        **status,
+        "available": available,
+        "reason": "" if available else (
+            "Auto captions run on the desktop app." if not AUTO_CAPTIONS_ENABLED
+            else "The caption engine is missing. Reinstall the latest Clip Farm Pilot release."
+        ),
+    }
+
+
+@app.get("/api/auto-caption")
+def auto_caption_status():
+    return _auto_caption_status()
+
+
+@app.post("/api/auto-caption/download")
+def download_caption_model():
+    if not _auto_caption_status()["available"]:
+        raise HTTPException(409, _auto_caption_status()["reason"])
+    CAPTION_MODEL.start_download()
+    return _auto_caption_status()
+
+
+@app.post("/api/auto-caption/cancel")
+def cancel_caption_model_download():
+    CAPTION_MODEL.cancel()
+    return _auto_caption_status()
+
+
+@app.post("/api/videos/{video_id}/auto-caption")
+def write_auto_caption(video_id: str, req: AutoCaptionRequest):
+    source = get_video(video_id)
+    status = _auto_caption_status()
+    if not status["available"]:
+        raise HTTPException(409, status["reason"])
+    if status["state"] != "ready":
+        raise HTTPException(409, "Download the caption model first.")
+    duration = probe_video(source).duration
+    start = max(0.0, min(req.start, duration))
+    end = min(req.end, duration)
+    if end - start < 0.2:
+        raise HTTPException(400, "Choose a longer clip to caption.")
+    try:
+        words = spoken_words(_transcribe_words_cached(source, start, end))
+    except (OSError, RuntimeError, ValueError):
+        # A clip with no readable speech is still captioned from its frames.
+        words = []
+    try:
+        frames = clip_frames(source, start, end, ffmpeg_executable())
+        return AUTO_CAPTIONER.write(frames, " ".join(word.text for word in words), req.variation)
+    except CaptionModelError as exc:
+        raise HTTPException(503, str(exc))
+
+
 @app.post("/api/videos/{video_id}/export")
 def export(video_id: str, req: ExportRequest):
     source = get_video(video_id)
@@ -409,6 +482,7 @@ def export(video_id: str, req: ExportRequest):
             caption_text=req.caption_text,
             caption_font_scale=req.caption_font_scale,
             caption_position=req.caption_position,
+            caption_style=req.caption_style,
             caption_overlay_path=caption_overlay,
             video_filter=req.video_filter,
             sound_effect=req.sound_effect,

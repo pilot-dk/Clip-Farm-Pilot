@@ -126,11 +126,12 @@ The editor now includes:
 - **720p**, **1080p**, and **4K** export resolution for clips and full-length edits, always at the source video's own frame rate.
 - A **Gaming overlay** switch with a live vertical layout preview.
 - Face-cam source position, crop width/height, and horizontal/vertical inset controls with an accurate zoom preview.
-- Optional centered text for 1:1 clips, styled as bold white type with a black outline (and native color emoji).
+- Optional text for 1:1 clips in two styles: **Clean**, white type with a soft shadow like fan-page clips (the default), or **Bold**, heavy white type with a black outline (both with native color emoji).
+- **Auto caption** for 1:1 viral clips: an AI model running on your computer watches the clip and listens to what is said, then writes a fan-page caption such as “Bro shows off his rescued puppy 🥹❤️‍🩹”. Switch to **Manual** to type your own.
 - Device-rendered color emoji for square captions in the browser, avoiding Linux-server missing-glyph boxes.
 - Native macOS emoji shaping for square captions, including hearts, flags, skin tones, keycaps, and joined family/profession emoji without missing-glyph boxes.
 - Pixel-based optical centering that keeps the complete text-and-emoji caption centered consistently on macOS, Windows, Linux, and the web app.
-- Top, centre, and bottom placement choices for square captions, with the selected placement reflected in the preview and exported MP4.
+- Top, centre, and bottom placement choices for square captions (bottom by default), with the selected placement reflected in the preview and exported MP4.
 - A live **Caption size** slider for 1:1 clips, adjustable from 50% to 175% with the selected size carried into the rendered MP4.
 - Optional **Live captions** that transcribe English speech locally and keep a readable group of words on screen while highlighting the word currently being spoken. Sound tags the speech engine writes, such as “(music)”, are left out of the captions.
 - Five live-caption colour schemes: **Pilot Lime**, **Ocean Blue**, **Sunset Gold**, **Neon Pink**, and **Electric Violet**.
@@ -207,7 +208,22 @@ The analysis runs locally and does not upload VOD audio or frames to an AI provi
 
 Set the clip count next to the length picker to **5**, **10** (the default), **20**, or **30**, then press **Auto-Find Clips**. Twenty clips from an hour-long VOD take about 18 seconds to find; a short video simply yields fewer, because clips never repeat each other.
 
-Every found clip has a tick box, and all are ticked to start with. Untick the ones you do not want (or use the box beside the count to tick or untick them all), then press **Export N clips**. Clip Farm Pilot renders them one at a time with the settings you have chosen — aspect, resolution, captions, sounds, Mute swear words, and so on — and marks each card as it finishes. Press the button again to stop after the clip in progress.
+Every found clip has a tick box, and all are ticked to start with. Untick the ones you do not want (or use the box beside the count to tick or untick them all), then press **Export N clips**. Clip Farm Pilot renders them one at a time with the settings you have chosen — aspect, resolution, captions, sounds, Mute swear words, and so on — and marks each card as it finishes. With **Auto caption** on for 1:1 clips, each clip gets its own caption, written just before it renders. Press the button again to stop after the clip in progress.
+
+### Auto captions for square clips
+
+Choose **1:1**, and the caption controls offer **Auto caption** or **Manual**. In Auto, picking a clip — from Auto-Find Clips or by typing its start and end — writes its caption: one short line that names the moment the way a fan page would, ending in emojis that match its mood (🥹❤️‍🩹 for wholesome, 😭💔🥀 for funny, 🔥 for hype, 🏆🔥 for a win, 😳 for shocking). The caption appears in the editable caption box and on the preview. Edit it if you like, or press **New caption** for the next suggestion. Each clip keeps its own caption, and your edits to it, while you move between clips.
+
+Captions are written by Qwen3.5 4B, a vision-language model, run by llama.cpp's `llama-server`, which ships with the app. The model is a one-time 3.4 GB download from Hugging Face, made the first time you use Auto, pinned to one exact version and checked against its checksums; a download that is cancelled or interrupted resumes where it stopped. After that, captions are written entirely on your computer. On an M2 Max each caption takes 5 to 7 seconds, and the first about 10 while the model loads. On Windows and Linux the model runs on the processor, which takes roughly 20 seconds to a minute per caption depending on the computer. While it is loaded the model uses about 5 GB of memory, and it closes after five idle minutes. The hosted web version leaves Auto captions off.
+
+For each clip, the model:
+
+1. describes four frames from across the clip, together with the words spoken in it (transcribed by the same offline Whisper engine as live captions), without naming anyone from how they look;
+2. writes six candidate captions from that description at once — with no example captions to copy, a small model's most common mistake;
+3. keeps the ones that read like a fan page: 2 to 10 words, no swearing, not in the creator's own voice (“I got the puppy”), no names that were not spoken in the clip, and no quoting the clip back; and
+4. picks the caption whose meaning the other candidates agree with most, so a one-off misreading — “that's it tomorrow, dog” taken as a dog — loses to the consensus, and gives it the mood most candidates chose.
+
+Streamers' “chat” is often transcribed as the name Chad; the captioner reads it as chat. Auto captions are clip captions: in **Full YouTube video**, the caption box is always typed by hand.
 
 When the last clip is done, the desktop app asks once for a folder and saves every clip there under its title. A clip is never written over a file that is already there; it is numbered instead, as in `Big Finish (2).mp4`. If you cancel, press **Save exported clips** to choose a folder later. In a browser, the clips download as one ZIP, `Clip Farm Pilot clips.zip`.
 
@@ -336,7 +352,7 @@ From the project root, install CMake and Ninja when building on macOS, then run:
 python3 scripts/prepare_caption_runtime.py
 ```
 
-This downloads a checksum-verified Whisper.cpp runtime and the `base.en` model into the ignored `.caption-runtime/` build folder. Packaged and Docker builds run this preparation automatically.
+This downloads a checksum-verified Whisper.cpp runtime and the `base.en` model into the ignored `.caption-runtime/` build folder, and llama.cpp's `llama-server` for Auto captions into `.caption-runtime/llm/` (`--no-llm` leaves it out, as the Docker image does). On Windows it also places the Visual C++ runtime DLLs beside both engines, and on Linux the OpenMP runtime, so they run on computers without them installed. Packaged and Docker builds run this preparation automatically.
 
 ### 3. Start the backend
 
@@ -364,7 +380,7 @@ The browser version supports VOD links too. Its Python dependencies now include 
 2. Enter a clip start/end manually, or press **Auto-Find Clips** and choose a candidate.
 3. Choose **16:9**, **9:16**, or **1:1**, then a **Resolution** of 720p, 1080p, or 4K.
 4. Optionally enable **Gaming overlay** and identify the source face-cam corner, crop size, and inward offset.
-5. For **1:1**, optionally enter center text and adjust **Caption size** from 50% to 175%.
+5. For **1:1**, keep **Auto caption** to have the clip captioned for you, or switch to **Manual** and type your own; choose the **Clean** or **Bold** style, the placement, and a **Caption size** from 50% to 175%.
 6. Optionally select a sound and visual effect, place the preview on the payoff, and press **Use playhead**.
 7. Press **Export Clip**, choose a location in the desktop **Save As** window, and press **Save**. If you cancel, use **Save exported MP4** in the status panel.
 

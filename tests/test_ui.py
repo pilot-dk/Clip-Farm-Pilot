@@ -131,6 +131,28 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("summary.kills_found", self.html)
         self.assertIn("summary.fights_found", self.html)
 
+    def test_square_captions_can_be_written_automatically_or_typed(self):
+        self.assertIn('name="captionMode" value="auto" checked', self.html)
+        self.assertIn('name="captionMode" value="manual"', self.html)
+        for identifier in ("autoCaptionPanel", "autoCaptionDownload", "autoCaptionCancel", "autoCaptionNew", "autoCaptionProgress"):
+            self.assertIn(f'id="{identifier}"', self.html)
+        self.assertIn('fetch("/api/auto-caption")', self.html)
+        self.assertIn("/api/auto-caption/${action}", self.html)
+        self.assertIn("/api/videos/${state.videoId}/auto-caption", self.html)
+        # Each clip of a bulk export gets its own caption.
+        self.assertIn("captionText = await autoCaptionFor(range, { show: false });", self.html)
+        self.assertIn("body: JSON.stringify(exportRequestBody(range, captionText)),", self.html)
+        # Choosing a clip, typing a range or changing format writes the caption.
+        self.assertGreaterEqual(self.html.count("scheduleAutoCaption("), 6)
+
+    def test_square_captions_have_a_clean_and_a_bold_style(self):
+        self.assertIn('name="captionStyle" value="clean" checked', self.html)
+        self.assertIn('name="captionStyle" value="bold"', self.html)
+        self.assertIn("caption_style: captionStyle(),", self.html)
+        self.assertIn('name="captionPosition" value="bottom" checked', self.html)
+        self.assertIn('.square-caption-preview[data-caption-style="clean"]', self.html)
+        self.assertIn("caption_overlay_data_url: renderSquareCaptionOverlay(captionText),", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

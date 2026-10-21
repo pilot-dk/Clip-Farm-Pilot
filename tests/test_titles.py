@@ -118,6 +118,45 @@ class ViralTitleTests(unittest.TestCase):
         )
 
 
+class SquareCaptionStyleTests(unittest.TestCase):
+    """Clean is white text with a soft shadow; bold is white text with a black outline."""
+
+    def render(self, style: str, native: bool) -> np.ndarray:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / f"{style}.png"
+            if native:
+                _render_square_caption("Bro shows off his rescued puppy", target, 1.0, "bottom", style)
+            else:
+                with patch("backend.app.video._render_square_caption_macos", return_value=False):
+                    _render_square_caption("Bro shows off his rescued puppy", target, 1.0, "bottom", style)
+            return np.asarray(Image.open(target).convert("RGBA")).astype(int)
+
+    def check_styles(self, native: bool):
+        clean, bold = self.render("clean", native), self.render("bold", native)
+        dark = lambda pixels: (pixels[..., :3].max(axis=2) < 60)
+        # Bold draws a solid black outline; clean has none.
+        self.assertGreater(int(np.count_nonzero(dark(bold) & (bold[..., 3] > 240))), 2_000)
+        self.assertLess(int(np.count_nonzero(dark(clean) & (clean[..., 3] > 240))), 50)
+        # Clean's shadow is soft: dark pixels that are only partly opaque.
+        self.assertGreater(int(np.count_nonzero(dark(clean) & (clean[..., 3] > 10) & (clean[..., 3] < 160))), 2_000)
+        self.assertGreater(int(np.count_nonzero((clean[..., :3].min(axis=2) > 230) & (clean[..., 3] > 240))), 2_000)
+        # Both sit at the bottom of the square, shadow and all.
+        for pixels in (clean, bold):
+            rows = np.flatnonzero(pixels[..., 3].max(axis=1) > 0)
+            self.assertEqual(int(rows[-1]) + 1, 984)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Uses the native macOS text renderer")
+    def test_the_native_renderer_draws_both_styles(self):
+        self.check_styles(native=True)
+
+    def test_the_portable_renderer_draws_both_styles(self):
+        self.check_styles(native=False)
+
+    def test_an_unknown_style_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaises(ValueError):
+            _render_square_caption("Caption", Path(temporary) / "x.png", 1.0, "center", "neon")
+
+
 class SquareCaptionSizeTests(unittest.TestCase):
     def test_text_and_emoji_caption_is_optically_centered(self):
         with tempfile.TemporaryDirectory() as temporary:

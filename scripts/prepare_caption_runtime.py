@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -35,6 +37,20 @@ PLATFORM_ARCHIVES = {
         "f4cfc1f969a13805908fb72043ce7cc896eb42e0b8afbe841dc8e7298923b061",
     ),
 }
+
+# llama.cpp's llama-server runs the auto-caption model. Its own release builds
+# are used on every platform, pinned to one build and checked by checksum.
+LLAMA_RELEASE = "b11799"
+LLAMA_ARCHIVES = {
+    ("macos", "arm64"): ("llama-b11799-bin-macos-arm64.tar.gz", "51c3471c9212b41e51a6696c0b966628fa45d625385fdb024c4483e8d3154dca"),
+    ("linux", "x64"): ("llama-b11799-bin-ubuntu-x64.tar.gz", "4920c65448350c28f8ce7b35eec91566807e0f111c25a0df2d5fc12a1ed1716a"),
+    ("linux", "arm64"): ("llama-b11799-bin-ubuntu-arm64.tar.gz", "d53caf55e76e56f1718e08ab7c3c3fb9746a7c817c81f6a3fc5e2f15e601d82b"),
+    ("windows", "x64"): ("llama-b11799-bin-win-cpu-x64.zip", "e77aee2c06504a5821d2127b98e71c9228507292ee1cb72b120280bdcb616291"),
+    ("windows", "arm64"): ("llama-b11799-bin-win-cpu-arm64.zip", "5efeb456bbade9d777b178afefdb059bde75ade9254f64e7679a4869dff518a0"),
+}
+# The Windows engines are built against the Visual C++ runtime, which not every
+# PC has installed, so its three DLLs travel with them.
+WINDOWS_RUNTIME_DLLS = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 
 
 def sha256(path: Path) -> str:
@@ -166,21 +182,91 @@ def prepare_archive_runtime(target_platform: str, cache: Path, binary_dir: Path)
         shutil.copytree(source, binary_dir, dirs_exist_ok=True, symlinks=True)
 
 
+def keep_llama_file(name: str) -> bool:
+    """Whether a file from a llama.cpp release is needed to run llama-server.
+
+    The release carries every llama.cpp tool. Only the server, the shared
+    libraries it loads and the licences are kept; each other tool's own
+    "-impl" library is left out.
+    """
+    lowered = name.lower()
+    if lowered in {"llama-server", "llama-server.exe"} or lowered.startswith("license"):
+        return True
+    library = lowered.endswith((".dylib", ".dll")) or ".so" in lowered
+    return library and ("-impl." not in lowered or "server-impl." in lowered)
+
+
+def prepare_llama_runtime(target_platform: str, architecture: str, cache: Path, llm_dir: Path) -> None:
+    name, expected_sha256 = LLAMA_ARCHIVES[(target_platform, architecture)]
+    archive = cache / name
+    download(f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_RELEASE}/{name}", archive, expected_sha256)
+    with tempfile.TemporaryDirectory(prefix="clipfarmpilot-llama-") as temporary_name:
+        temporary = Path(temporary_name)
+        if name.endswith(".zip"):
+            with zipfile.ZipFile(archive) as package:
+                package.extractall(temporary)
+        else:
+            with tarfile.open(archive, "r:gz") as package:
+                package.extractall(temporary, filter="data")
+        server = next(temporary.rglob("llama-server.exe" if target_platform == "windows" else "llama-server"))
+        for item in server.parent.iterdir():
+            if item.is_file() and keep_llama_file(item.name):
+                shutil.copy2(item, llm_dir / item.name, follow_symlinks=False)
+    executable = llm_dir / ("llama-server.exe" if target_platform == "windows" else "llama-server")
+    executable.chmod(executable.stat().st_mode | 0o111)
+
+
+def windows_runtime_dir(architecture: str) -> Path:
+    """The Visual C++ runtime DLLs for the target, from Visual Studio's redistributable folder."""
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    installations: list[str] = []
+    if vswhere.is_file():
+        result = subprocess.run(
+            [str(vswhere), "-all", "-products", "*", "-property", "installationPath"],
+            capture_output=True, text=True, check=False,
+        )
+        installations = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    for installation in installations:
+        pattern = os.path.join(installation, "VC", "Redist", "MSVC", "*", architecture, "Microsoft.VC14*.CRT")
+        for folder in sorted(glob.glob(pattern), reverse=True):
+            if all((Path(folder) / dll).is_file() for dll in WINDOWS_RUNTIME_DLLS):
+                return Path(folder)
+    # The build machine runs the target architecture, so its own copies match.
+    system = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+    if all((system / dll).is_file() for dll in WINDOWS_RUNTIME_DLLS):
+        return system
+    raise RuntimeError("The Visual C++ runtime DLLs for the caption engines were not found.")
+
+
+def bundle_linux_openmp(*destinations: Path) -> None:
+    """Ship libgomp beside the engines: they are built with OpenMP, and a minimal system may lack it."""
+    result = subprocess.run(["gcc", "-print-file-name=libgomp.so.1"], capture_output=True, text=True, check=False)
+    found = Path(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else None
+    if found is None or not found.is_absolute() or not found.exists():
+        print("libgomp.so.1 was not found; the caption engines will use the system's copy.")
+        return
+    for destination in destinations:
+        shutil.copy2(found.resolve(), destination / "libgomp.so.1")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare Clip Farm Pilot's offline live-caption runtime.")
     parser.add_argument("--platform", choices=("macos", "windows", "linux"), default=detected_platform())
     parser.add_argument("--architecture", choices=("x64", "arm64"), default=detected_architecture())
     parser.add_argument("--output", type=Path, default=Path(".caption-runtime"))
     parser.add_argument("--cache", type=Path, default=Path(".caption-runtime-cache"))
+    parser.add_argument("--no-llm", action="store_true", help="Leave out the auto-caption engine (web deployments).")
     args = parser.parse_args()
 
     output = args.output.resolve()
     cache = args.cache.resolve()
     binary_dir = output / "bin"
+    llm_dir = output / "llm"
     model_dir = output / "models"
     # Runtime archives contain versioned-library symlinks. Recreate the binary
-    # tree so repeated builds never collide with stale links or another target.
+    # trees so repeated builds never collide with stale links or another target.
     shutil.rmtree(binary_dir, ignore_errors=True)
+    shutil.rmtree(llm_dir, ignore_errors=True)
     binary_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)
@@ -191,6 +277,20 @@ def main() -> None:
         prepare_source_runtime(args.platform, args.architecture, cache, binary_dir)
     else:
         prepare_archive_runtime(args.platform, cache, binary_dir)
+    engine_dirs = [binary_dir]
+    if not args.no_llm:
+        # A folder of its own: llama.cpp ships ggml libraries with the same
+        # names as Whisper's but a different version.
+        llm_dir.mkdir(parents=True, exist_ok=True)
+        prepare_llama_runtime(args.platform, args.architecture, cache, llm_dir)
+        engine_dirs.append(llm_dir)
+    if args.platform == "windows":
+        runtime = windows_runtime_dir(args.architecture)
+        for engine_dir in engine_dirs:
+            for dll in WINDOWS_RUNTIME_DLLS:
+                shutil.copy2(runtime / dll, engine_dir / dll)
+    elif args.platform == "linux":
+        bundle_linux_openmp(*engine_dirs)
     model_path = model_dir / MODEL_NAME
     download(MODEL_URL, model_path, MODEL_SHA256)
     download(VAD_MODEL_URL, model_dir / VAD_MODEL_NAME, VAD_MODEL_SHA256)
@@ -207,6 +307,7 @@ def main() -> None:
             "model": MODEL_NAME,
             "vad_model": VAD_MODEL_NAME,
             "architecture": args.architecture,
+            "llama_release": None if args.no_llm else LLAMA_RELEASE,
         }) + "\n",
         encoding="utf-8",
     )

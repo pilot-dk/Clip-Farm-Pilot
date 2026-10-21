@@ -404,6 +404,15 @@
       text-shadow: 0 1px 1px rgba(0,0,0,.9);
       pointer-events: none;
     }
+    .square-caption-preview[data-caption-style="clean"] {
+      left: 10%;
+      right: 10%;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-weight: 600;
+      line-height: 1.24;
+      -webkit-text-stroke: 0;
+      text-shadow: 0 2px 8px rgba(0,0,0,.6);
+    }
     .square-caption-preview[data-caption-position="top"] { top: 9%; transform: none; }
     .square-caption-preview[data-caption-position="bottom"] { top: auto; bottom: 9%; transform: none; }
     .stage[data-aspect="1:1"]:not(.gaming) .square-caption-preview.has-text { display: block; }
@@ -861,6 +870,21 @@
     .caption-position-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
     .caption-position-option input:checked + span { border-color: #68763d; color: #eaffbd; background: rgba(185,243,74,.09); }
     .field-hint { display: block; margin-top: 6px; color: var(--muted-2); font-size: 9px; line-height: 1.45; }
+    .caption-mode-grid,
+    .caption-style-grid { grid-template-columns: repeat(2, 1fr); }
+    .caption-mode-grid { margin: 0 0 10px; }
+    .auto-caption-panel { margin: 0 0 12px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    /* These blocks set their own display, which would otherwise override hidden. */
+    .auto-caption-panel[hidden],
+    .caption-mode-grid[hidden],
+    .auto-caption-progress[hidden],
+    .auto-caption-actions .button[hidden] { display: none; }
+    .auto-caption-copy { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .auto-caption-copy.error { color: #ff9a8b; }
+    .auto-caption-progress { height: 6px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.07); }
+    .auto-caption-progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .4s ease; }
+    .auto-caption-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .auto-caption-actions:empty { display: none; }
 
     .effects-card {
       padding: 13px;
@@ -1760,21 +1784,41 @@
                 <small class="field-hint" id="resolutionHint">Frame rate always matches the source video.</small>
               </div>
               <div class="square-caption-controls" id="squareCaptionControls">
-                <div class="caption-head"><label for="captionText">Caption text (optional)</label><span id="captionCount">0 / 160</span></div>
+                <div class="caption-position-grid caption-mode-grid" id="captionModeControl" role="radiogroup" aria-label="Caption source">
+                  <label class="caption-position-option"><input type="radio" name="captionMode" value="auto" checked /><span>Auto caption</span></label>
+                  <label class="caption-position-option"><input type="radio" name="captionMode" value="manual" /><span>Manual</span></label>
+                </div>
+                <div class="auto-caption-panel" id="autoCaptionPanel" aria-live="polite">
+                  <p class="auto-caption-copy" id="autoCaptionMessage">Auto caption watches the clip and writes a caption for it.</p>
+                  <div class="auto-caption-progress" id="autoCaptionProgress" hidden><span id="autoCaptionBar"></span></div>
+                  <div class="auto-caption-actions">
+                    <button class="button secondary small" type="button" id="autoCaptionDownload" hidden>Download caption model</button>
+                    <button class="button secondary small" type="button" id="autoCaptionCancel" hidden>Cancel download</button>
+                    <button class="button secondary small" type="button" id="autoCaptionNew" hidden>New caption</button>
+                  </div>
+                </div>
+                <div class="caption-head"><label for="captionText" id="captionTextLabel">Caption text</label><span id="captionCount">0 / 160</span></div>
                 <textarea class="caption-input" id="captionText" maxlength="160" rows="2" placeholder="W shave ❤️"></textarea>
+                <fieldset class="caption-position-control">
+                  <legend>Caption style</legend>
+                  <div class="caption-position-grid caption-style-grid">
+                    <label class="caption-position-option"><input type="radio" name="captionStyle" value="clean" checked /><span>Clean</span></label>
+                    <label class="caption-position-option"><input type="radio" name="captionStyle" value="bold" /><span>Bold</span></label>
+                  </div>
+                </fieldset>
                 <fieldset class="caption-position-control">
                   <legend>Caption placement</legend>
                   <div class="caption-position-grid">
                     <label class="caption-position-option"><input type="radio" name="captionPosition" value="top" /><span>Top</span></label>
-                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="center" checked /><span>Centre</span></label>
-                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="bottom" /><span>Bottom</span></label>
+                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="center" /><span>Centre</span></label>
+                    <label class="caption-position-option"><input type="radio" name="captionPosition" value="bottom" checked /><span>Bottom</span></label>
                   </div>
                 </fieldset>
                 <div class="caption-size-control">
                   <div class="range-head"><span>Caption size</span><output id="captionSizeValue">100%</output></div>
                   <input id="captionSize" type="range" min="50" max="175" value="100" step="5" aria-label="Square caption text size" />
                 </div>
-                <small class="field-hint">Bold white text with a black outline, placed at the top, centre, or bottom of the square clip.</small>
+                <small class="field-hint">Clean is white text with a soft shadow, like fan-page clips; Bold is heavy white text with a black outline.</small>
               </div>
             </div>
 
@@ -2097,6 +2141,8 @@
       socialAccounts: [],
       deletionMode: "trash",
       appStarted: false,
+      // Auto captions written so far, by clip, and the caption model's status.
+      autoCaption: { status: null, cache: new Map(), inflight: new Map(), errors: new Map(), currentKey: "", timer: null, poll: null },
     };
 
     const videoFilterPreviewStyles = {
@@ -2430,21 +2476,27 @@
       $("faceInsetY").style.setProperty("--progress", `${$("faceInsetY").value / 25 * 100}%`);
     }
 
+    function captionStyle() {
+      return document.querySelector('input[name="captionStyle"]:checked')?.value === "bold" ? "bold" : "clean";
+    }
+
     function updateSquareCaption() {
       const text = $("captionText").value;
       const sizePercent = Number($("captionSize").value) || 100;
       const captionPosition = document.querySelector('input[name="captionPosition"]:checked')?.value || "center";
+      const clean = captionStyle() === "clean";
       const preview = $("squareCaptionPreview");
       preview.textContent = text;
       preview.dataset.captionPosition = captionPosition;
+      preview.dataset.captionStyle = captionStyle();
       preview.classList.toggle("has-text", Boolean(text.trim()));
       $("captionCount").textContent = `${text.length} / 160`;
       $("captionSizeValue").value = `${sizePercent}%`;
       $("captionSize").style.setProperty("--progress", `${(sizePercent - 50) / 125 * 100}%`);
-      const baseFontSize = Math.max(22, Math.min(60, $("stage").clientWidth * .08));
+      const baseFontSize = Math.max(22, Math.min(60, $("stage").clientWidth * .08)) * (clean ? 68 / 86 : 1);
       const fontSize = Math.max(11, baseFontSize * sizePercent / 100);
       preview.style.fontSize = `${fontSize}px`;
-      preview.style.webkitTextStrokeWidth = `${Math.max(1.4, fontSize * .045)}px`;
+      preview.style.webkitTextStrokeWidth = clean ? "0px" : `${Math.max(1.4, fontSize * .045)}px`;
     }
 
     function wrapCanvasCaption(context, text, maxWidth) {
@@ -2527,8 +2579,8 @@
       return canvas;
     }
 
-    function renderSquareCaptionOverlay() {
-      const text = $("captionText").value.trim();
+    function renderSquareCaptionOverlay(caption = $("captionText").value) {
+      const text = String(caption || "").trim();
       if (state.ratio !== "1:1" || state.layout === "gaming" || !text) return "";
       // Lay the caption out on the 1080 reference square, but draw it at the
       // export's real size so 4K captions are sharp instead of upscaled.
@@ -2539,32 +2591,262 @@
       const context = canvas.getContext("2d");
       context.scale(squareSize / 1080, squareSize / 1080);
       const scale = Math.max(.5, Math.min(1.75, Number($("captionSize").value) / 100));
-      let fontSize = Math.round(86 * scale);
+      // Clean matches fan-page captions: medium-weight white text wrapped at
+      // 80% of the width with a soft shadow; Bold is the outlined meme look.
+      const clean = captionStyle() === "clean";
+      const maxWidth = clean ? 860 : 960;
+      const lineRatio = clean ? 1.24 : 1.18;
+      let fontSize = Math.round((clean ? 68 : 86) * scale);
       let lines = [];
       do {
-        context.font = `900 ${fontSize}px "Arial Black", Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
-        lines = wrapCanvasCaption(context, text, 960);
-        if (lines.length * fontSize * 1.18 <= 900) break;
+        context.font = clean
+          ? `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`
+          : `900 ${fontSize}px "Arial Black", Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+        lines = wrapCanvasCaption(context, text, maxWidth);
+        if (lines.length * fontSize * lineRatio <= 900) break;
         fontSize -= 4;
       } while (fontSize > 30);
 
-      const lineHeight = fontSize * 1.18;
+      const lineHeight = fontSize * lineRatio;
       const firstY = 540 - ((lines.length - 1) * lineHeight) / 2;
       context.textAlign = "center";
       context.textBaseline = "middle";
-      context.lineJoin = "round";
-      context.strokeStyle = "rgba(5,5,5,.98)";
-      context.lineWidth = Math.max(7, fontSize * .12);
       context.fillStyle = "white";
-      lines.forEach((line, index) => {
-        const y = firstY + index * lineHeight;
-        context.strokeText(line, 540, y, 960);
-        context.fillText(line, 540, y, 960);
-      });
+      if (clean) {
+        // Shadows are drawn in real pixels, outside the layout scale.
+        const pixels = squareSize / 1080;
+        context.shadowColor = "rgba(0,0,0,.55)";
+        context.shadowBlur = fontSize * .22 * pixels;
+        context.shadowOffsetY = fontSize * .05 * pixels;
+        lines.forEach((line, index) => context.fillText(line, 540, firstY + index * lineHeight, maxWidth));
+        context.shadowColor = "transparent";
+      } else {
+        context.lineJoin = "round";
+        context.strokeStyle = "rgba(5,5,5,.98)";
+        context.lineWidth = Math.max(7, fontSize * .12);
+        lines.forEach((line, index) => {
+          const y = firstY + index * lineHeight;
+          context.strokeText(line, 540, y, maxWidth);
+          context.fillText(line, 540, y, maxWidth);
+        });
+      }
       const captionPosition = document.querySelector('input[name="captionPosition"]:checked')?.value || "center";
       // Centring works in real pixels, so drop the layout scale first.
       context.setTransform(1, 0, 0, 1, 0, 0);
       return opticallyCenterCanvas(canvas, captionPosition).toDataURL("image/png");
+    }
+
+    // Auto captions: a model on the computer watches each square clip and
+    // writes its caption. Each clip's caption is written once and remembered,
+    // with any edit made to it, and is shown only while that clip is chosen.
+    function autoCaptionActive() {
+      return state.editMode === "clip" && state.ratio === "1:1" && state.layout !== "gaming"
+        && document.querySelector('input[name="captionMode"]:checked')?.value === "auto";
+    }
+
+    function autoCaptionReady() {
+      const status = state.autoCaption.status;
+      return Boolean(status && status.available && status.state === "ready");
+    }
+
+    function captionKey(range) {
+      return `${state.videoId}:${Number(range.start).toFixed(1)}:${Number(range.end).toFixed(1)}`;
+    }
+
+    function autoCaptionText(entry) {
+      return entry.edited ?? entry.options[entry.index] ?? "";
+    }
+
+    function autoCaptionWriting(key) {
+      return [...state.autoCaption.inflight.keys()].some((inflight) => inflight.startsWith(`${key}#`));
+    }
+
+    function formatGigabytes(bytes) {
+      return `${(Number(bytes) / 1e9).toFixed(1)} GB`;
+    }
+
+    function renderAutoCaptionPanel() {
+      const auto = state.editMode === "clip" && document.querySelector('input[name="captionMode"]:checked')?.value === "auto";
+      $("captionModeControl").hidden = state.editMode !== "clip";
+      $("autoCaptionPanel").hidden = !auto;
+      $("captionTextLabel").textContent = auto ? "Caption (you can edit it)" : "Caption text (optional)";
+      $("captionText").placeholder = auto ? "The caption for this clip appears here" : "W shave ❤️";
+      if (!auto) return;
+      const status = state.autoCaption.status;
+      const message = $("autoCaptionMessage");
+      message.classList.remove("error");
+      $("autoCaptionProgress").hidden = true;
+      ["autoCaptionDownload", "autoCaptionCancel", "autoCaptionNew"].forEach((id) => { $(id).hidden = true; });
+      if (!status) {
+        message.textContent = "Checking the caption model…";
+        return;
+      }
+      if (!status.available) {
+        message.textContent = status.reason || "Auto captions are not available here.";
+        return;
+      }
+      if (status.state === "downloading") {
+        const done = Number(status.downloaded_bytes) || 0;
+        const total = Number(status.total_bytes) || 1;
+        message.textContent = `Downloading the caption model… ${formatGigabytes(done)} of ${formatGigabytes(total)}. This happens only once.`;
+        $("autoCaptionProgress").hidden = false;
+        $("autoCaptionBar").style.width = `${Math.min(100, done / total * 100)}%`;
+        $("autoCaptionCancel").hidden = false;
+        return;
+      }
+      if (status.state !== "ready") {
+        const partial = Number(status.downloaded_bytes) > 0;
+        if (status.state === "error") {
+          message.textContent = status.error;
+          message.classList.add("error");
+        } else {
+          message.textContent = `Auto caption watches the clip and listens to what is said, then writes a caption for it with an AI model that runs on your computer. The model is a one-time ${formatGigabytes(status.total_bytes)} download.`
+            + (partial ? ` ${formatGigabytes(status.downloaded_bytes)} of it is downloaded already.` : "");
+        }
+        $("autoCaptionDownload").textContent = partial ? "Resume download" : status.state === "error" ? "Try again" : `Download caption model (${formatGigabytes(status.total_bytes)})`;
+        $("autoCaptionDownload").hidden = false;
+        return;
+      }
+      if (state.ratio !== "1:1" || state.layout === "gaming") {
+        message.textContent = "Choose the 1:1 square format to caption a clip.";
+        return;
+      }
+      if (!state.videoId) {
+        message.textContent = "Add a video, then choose a clip to caption.";
+        return;
+      }
+      const key = state.autoCaption.currentKey;
+      const entry = state.autoCaption.cache.get(key);
+      const error = state.autoCaption.errors?.get(key);
+      if (autoCaptionWriting(key)) {
+        message.textContent = "Watching the clip and writing its caption…";
+      } else if (error) {
+        message.textContent = error;
+        message.classList.add("error");
+      } else if (entry) {
+        message.textContent = "Written for this clip. Edit it, or press New caption for another.";
+      } else {
+        message.textContent = "Choose a clip and its caption is written automatically.";
+      }
+      $("autoCaptionNew").hidden = !(entry || error) || autoCaptionWriting(key);
+    }
+
+    async function refreshAutoCaptionStatus() {
+      try {
+        const response = await fetch("/api/auto-caption");
+        state.autoCaption.status = await response.json();
+      } catch (error) {
+        state.autoCaption.status = { available: false, reason: "The caption model could not be checked." };
+      }
+      clearTimeout(state.autoCaption.poll);
+      if (state.autoCaption.status?.state === "downloading") {
+        state.autoCaption.poll = setTimeout(refreshAutoCaptionStatus, 1000);
+      } else if (state.autoCaption.status?.state === "ready") {
+        scheduleAutoCaption(0);
+      }
+      renderAutoCaptionPanel();
+    }
+
+    async function postCaptionModel(action) {
+      try {
+        const response = await fetch(`/api/auto-caption/${action}`, { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(apiError(data, "The caption model could not be downloaded."));
+        state.autoCaption.status = data;
+      } catch (error) {
+        toast(error.message);
+      }
+      refreshAutoCaptionStatus();
+    }
+
+    function applyAutoCaption(entry) {
+      $("captionText").value = autoCaptionText(entry);
+      updateSquareCaption();
+    }
+
+    // The caption for one clip. Shown in the editor only if that clip is
+    // still the one chosen when the caption arrives.
+    async function autoCaptionFor(range, { variation = 0, show = true } = {}) {
+      const key = captionKey(range);
+      const cached = state.autoCaption.cache.get(key);
+      if (cached && !variation) return autoCaptionText(cached);
+      const inflightKey = `${key}#${variation}`;
+      let job = state.autoCaption.inflight.get(inflightKey);
+      if (!job) {
+        job = fetch(`/api/videos/${state.videoId}/auto-caption`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ start: range.start, end: range.end, variation }),
+        })
+          .then(async (response) => {
+            const data = await response.json();
+            if (!response.ok) throw new Error(apiError(data, "The caption could not be written."));
+            const entry = { options: [data.caption, ...(data.alternatives || [])].filter(Boolean), index: 0, variation };
+            state.autoCaption.cache.set(key, entry);
+            state.autoCaption.errors.delete(key);
+            return entry;
+          })
+          .catch((error) => {
+            state.autoCaption.errors.set(key, error.message || "The caption could not be written.");
+            throw error;
+          })
+          .finally(() => {
+            state.autoCaption.inflight.delete(inflightKey);
+            renderAutoCaptionPanel();
+          });
+        state.autoCaption.inflight.set(inflightKey, job);
+      }
+      renderAutoCaptionPanel();
+      const entry = await job;
+      if (show && key === state.autoCaption.currentKey) applyAutoCaption(entry);
+      return autoCaptionText(entry);
+    }
+
+    function scheduleAutoCaption(delay = 700) {
+      clearTimeout(state.autoCaption.timer);
+      if (!state.videoId || !autoCaptionActive()) {
+        // A clip's auto caption does not follow into a full-length video.
+        const shown = state.autoCaption.cache.get(state.autoCaption.currentKey);
+        if (state.editMode === "full-length" && shown && $("captionText").value === autoCaptionText(shown)) {
+          $("captionText").value = "";
+          updateSquareCaption();
+        }
+        if (state.editMode === "full-length") state.autoCaption.currentKey = "";
+        renderAutoCaptionPanel();
+        return;
+      }
+      const range = validateRange();
+      const key = captionKey(range);
+      const changed = key !== state.autoCaption.currentKey;
+      state.autoCaption.currentKey = key;
+      const cached = state.autoCaption.cache.get(key);
+      if (cached) {
+        applyAutoCaption(cached);
+      } else if (changed) {
+        // The last clip's caption is not this one's.
+        $("captionText").value = "";
+        updateSquareCaption();
+      }
+      renderAutoCaptionPanel();
+      if (cached || !autoCaptionReady()) return;
+      state.autoCaption.timer = setTimeout(() => autoCaptionFor(range).catch(() => {}), delay);
+    }
+
+    async function nextAutoCaption() {
+      const key = state.autoCaption.currentKey;
+      const entry = state.autoCaption.cache.get(key);
+      if (entry && entry.index + 1 < entry.options.length) {
+        entry.index += 1;
+        entry.edited = undefined;
+        applyAutoCaption(entry);
+        renderAutoCaptionPanel();
+        return;
+      }
+      try {
+        await autoCaptionFor(validateRange(), { variation: entry ? entry.variation + 1 : 1 });
+      } catch (error) {
+        // Shown in the caption panel.
+      }
     }
 
     function selectedSoundEffects() {
@@ -2717,6 +2999,7 @@
         updateFacePreview();
         updateSquareCaption();
         updateLiveCaptionControls();
+        scheduleAutoCaption();
       });
     }
 
@@ -2862,6 +3145,7 @@
       $("uploadPercent").textContent = "100%";
       enableEditor(true);
       requestAnimationFrame(updateFacePreview);
+      scheduleAutoCaption(0);
       setStatus(
         "success",
         "Video ready",
@@ -3206,6 +3490,7 @@
           $("startTime").value = Number(candidate.start).toFixed(1);
           $("endTime").value = Number(candidate.end).toFixed(1);
           setVideoTime(candidate.start);
+          scheduleAutoCaption(0);
           setStatus("success", `${candidate.label || `Moment ${index + 1}`} selected`, `${Math.round(candidate.score)}/100 clip score · ${candidate.reason || "Strong combined signal"} · ${formatTime(candidate.end - candidate.start, true)} clip.`);
         });
         item.querySelector(".candidate-pick").addEventListener("change", updateBulkSelection);
@@ -3249,6 +3534,7 @@
       candidatePicks().forEach((box) => { box.disabled = true; });
       $("bulkExportButton").textContent = "Stop after this clip";
       const failed = [];
+      let uncaptioned = 0;
       try {
         for (const [position, index] of chosen.entries()) {
           if (state.bulkStop) break;
@@ -3263,10 +3549,29 @@
             `${candidate.label || `Moment ${index + 1}`} · ${formatTime(candidate.start)} – ${formatTime(candidate.end)} · ${state.ratio} with your current settings.`,
           );
           try {
+            const range = { start: Number(candidate.start), end: Number(candidate.end) };
+            let captionText = $("captionText").value;
+            if (autoCaptionActive()) {
+              // In Auto, the caption box belongs to the clip on screen; every
+              // other clip gets its own caption.
+              const key = captionKey(range);
+              captionText = "";
+              if (key === state.autoCaption.currentKey && state.autoCaption.cache.has(key)) {
+                captionText = $("captionText").value;
+              } else if (autoCaptionReady()) {
+                card.querySelector(".candidate-status").textContent = "Writing caption…";
+                try {
+                  captionText = await autoCaptionFor(range, { show: false });
+                } catch (error) {
+                  uncaptioned += 1;
+                }
+                card.querySelector(".candidate-status").textContent = "Exporting…";
+              }
+            }
             const response = await fetch(`/api/videos/${state.videoId}/export`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(exportRequestBody({ start: Number(candidate.start), end: Number(candidate.end) })),
+              body: JSON.stringify(exportRequestBody(range, captionText)),
             });
             const data = await response.json();
             if (!response.ok) throw new Error(apiError(data, "Export failed."));
@@ -3291,6 +3596,7 @@
       const stopped = state.bulkStop && state.bulkExports.length + failed.length < chosen.length;
       const notes = [
         failed.length ? `${failed.length} could not be exported` : "",
+        uncaptioned ? `${uncaptioned} exported without a caption` : "",
         stopped ? "stopped early" : "",
       ].filter(Boolean).join(" · ");
       if (!state.bulkExports.length) {
@@ -3373,7 +3679,7 @@
       }
     }
 
-    function exportRequestBody(range) {
+    function exportRequestBody(range, captionText = $("captionText").value) {
       const isFullLength = state.editMode === "full-length";
       return {
         start: range.start,
@@ -3386,10 +3692,11 @@
         face_height_fraction: Number($("faceHeight").value) / 100,
         face_inset_x_fraction: Number($("faceInsetX").value) / 100,
         face_inset_y_fraction: Number($("faceInsetY").value) / 100,
-        caption_text: state.ratio === "1:1" ? $("captionText").value : "",
+        caption_text: state.ratio === "1:1" ? captionText : "",
         caption_font_scale: Number($("captionSize").value) / 100,
         caption_position: document.querySelector('input[name="captionPosition"]:checked')?.value || "center",
-        caption_overlay_data_url: renderSquareCaptionOverlay(),
+        caption_style: captionStyle(),
+        caption_overlay_data_url: renderSquareCaptionOverlay(captionText),
         video_filter: $("videoFilter").value,
         sound_effects: selectedSoundEffects(),
         visual_effect: $("visualEffect").value,
@@ -3429,15 +3736,26 @@
       $("viralTitleResult").classList.remove("visible");
       $("smartPlacementResult").textContent = "";
       $("smartPlacementResult").classList.remove("visible");
-      setStatus(
+      const showExportStatus = () => setStatus(
         "working",
         isFullLength ? "Editing the full YouTube video" : wantsLiveCaptions ? "Transcribing and exporting" : wantsViralTitle ? "Creating a fresh viral title" : "Exporting clip",
         isFullLength
           ? `${formatTime(range.end - range.start, true)} selected · analyzing speech once, then creating one high-quality final render locally.`
           : `${state.ratio} ${state.layout === "gaming" ? "gaming layout" : "social crop"} · ${formatTime(range.end - range.start, true)}${wantsViralTitle ? " · listening for the strongest hook" : ""}.`,
       );
+      showExportStatus();
 
       try {
+        if (autoCaptionActive() && autoCaptionReady() && !state.autoCaption.cache.has(captionKey(range))) {
+          state.autoCaption.currentKey = captionKey(range);
+          setStatus("working", "Writing the caption", "Watching the clip and listening to what is said…");
+          try {
+            await autoCaptionFor(range);
+          } catch (error) {
+            toast(`Exporting without a caption: ${error.message}`);
+          }
+          showExportStatus();
+        }
         const requestBody = exportRequestBody(range);
         const response = await fetch(`/api/videos/${state.videoId}/export`, {
           method: "POST",
@@ -3576,7 +3894,11 @@
       $("vodUrl").value = "";
       $("captionText").value = "";
       $("captionSize").value = "100";
-      document.querySelector('input[name="captionPosition"][value="center"]').checked = true;
+      document.querySelector('input[name="captionPosition"][value="bottom"]').checked = true;
+      document.querySelector('input[name="captionStyle"][value="clean"]').checked = true;
+      document.querySelector('input[name="captionMode"][value="auto"]').checked = true;
+      state.autoCaption.currentKey = "";
+      renderAutoCaptionPanel();
       $("liveCaptionsToggle").checked = false;
       $("liveCaptionScheme").value = "pilot-lime";
       $("liveCaptionHeight").value = "0";
@@ -3629,6 +3951,7 @@
       state.appStarted = true;
       loadVideoLibrary({ quiet: true });
       loadSocialAccounts({ quiet: true });
+      refreshAutoCaptionStatus();
     }
 
     let deferredInstallPrompt = null;
@@ -3752,7 +4075,16 @@
 
     ["faceCorner", "faceWidth", "faceHeight", "faceInsetX", "faceInsetY"].forEach((id) => $(id).addEventListener("input", updateFacePreview));
     ["captionText", "captionSize"].forEach((id) => $(id).addEventListener("input", updateSquareCaption));
-    document.querySelectorAll('input[name="captionPosition"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
+    document.querySelectorAll('input[name="captionPosition"], input[name="captionStyle"]').forEach((input) => input.addEventListener("change", updateSquareCaption));
+    document.querySelectorAll('input[name="captionMode"]').forEach((input) => input.addEventListener("change", () => scheduleAutoCaption(0)));
+    $("captionText").addEventListener("input", () => {
+      // An edit to an auto caption stays with its clip.
+      const entry = autoCaptionActive() ? state.autoCaption.cache.get(state.autoCaption.currentKey) : null;
+      if (entry) entry.edited = $("captionText").value;
+    });
+    $("autoCaptionDownload").addEventListener("click", () => postCaptionModel("download"));
+    $("autoCaptionCancel").addEventListener("click", () => postCaptionModel("cancel"));
+    $("autoCaptionNew").addEventListener("click", nextAutoCaption);
     ["liveCaptionsToggle", "liveCaptionScheme", "liveCaptionHeight", "liveCaptionSize"].forEach((id) => $(id).addEventListener("input", updateLiveCaptionControls));
     document.querySelectorAll('input[name="resolution"]').forEach((input) => input.addEventListener("change", () => {
       state.resolution = input.value;
@@ -3771,7 +4103,10 @@
     });
 
     $("playhead").addEventListener("input", (event) => setVideoTime(Number(event.target.value)));
-    ["startTime", "endTime"].forEach((id) => $(id).addEventListener("change", () => validateRange(true)));
+    ["startTime", "endTime"].forEach((id) => $(id).addEventListener("change", () => {
+      validateRange(true);
+      scheduleAutoCaption();
+    }));
 
     $("playClipButton").addEventListener("click", () => {
       const range = validateRange();
