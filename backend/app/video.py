@@ -1420,11 +1420,14 @@ def _face_crop(
 
 
 # The clean caption look, measured from fan-page clips: medium-weight white text
-# about 6% of the frame tall, wrapped at 80% of its width, with a soft shadow
-# just below it. Sizes are for the 1080 pixel reference square.
+# about 6% of the frame tall, wrapped at 80% of its width, with a crisp black
+# outline so it reads on bright video and a soft shadow just below it. Sizes
+# are for the 1080 pixel reference square.
 _CLEAN_CAPTION_SIZE = 68
 _CLEAN_CAPTION_WIDTH = 860
 _CLEAN_CAPTION_LINE = 1.24
+# The outline's thickness outside the letters, as a share of the font size.
+_CLEAN_OUTLINE = 0.07
 _CLEAN_SHADOW_ALPHA = 0.55
 _CLEAN_SHADOW_BLUR = 0.22
 _CLEAN_SHADOW_DROP = 0.05
@@ -1568,6 +1571,17 @@ def _render_square_caption_macos(
             CoreText.kCTStrokeWidthAttributeName: -5.0,
         }
 
+    def outline_attributes(style: dict) -> dict:
+        # A positive width strokes without filling. Core Text centres the
+        # stroke on the letters' edges and the fill covers the inner half,
+        # so this is twice the outline's visible thickness, as a percentage
+        # of the font size.
+        return {
+            **style,
+            CoreText.kCTStrokeColorAttributeName: black,
+            CoreText.kCTStrokeWidthAttributeName: _CLEAN_OUTLINE * 200,
+        }
+
     def make_line(value: str, style: dict):
         attributed = NSAttributedString.alloc().initWithString_attributes_(value, style)
         return CoreText.CTLineCreateWithAttributedString(attributed)
@@ -1624,28 +1638,38 @@ def _render_square_caption_macos(
         return False
     Quartz.CGContextClearRect(context, Quartz.CGRectMake(0, 0, 1080, 1080))
     Quartz.CGContextSetTextMatrix(context, Quartz.CGAffineTransformIdentity)
+
+    block_bottom = (1080 - block_height) / 2
+
+    def draw_lines(line_style: dict) -> None:
+        for index, value in enumerate(lines):
+            line = make_line(value, line_style)
+            width, ascent, descent, _ = CoreText.CTLineGetTypographicBounds(line, None, None, None)
+            slot_bottom = block_bottom + (len(lines) - index - 1) * line_height
+            baseline = slot_bottom + (line_height - ascent - descent) / 2 + descent
+            Quartz.CGContextSetTextPosition(
+                context,
+                (1080 - float(width)) / 2,
+                baseline,
+            )
+            CoreText.CTLineDraw(line, context)
+
     if clean_style:
-        # Core Graphics measures upwards, so a negative offset drops the shadow.
+        # Every outline goes down first, with the shadow behind it, then the
+        # white on top. Core Graphics measures upwards, so a negative offset
+        # drops the shadow.
         shadow = Quartz.CGColorCreateGenericRGB(0, 0, 0, _CLEAN_SHADOW_ALPHA)
+        Quartz.CGContextSaveGState(context)
+        Quartz.CGContextSetLineJoin(context, Quartz.kCGLineJoinRound)
         Quartz.CGContextSetShadowWithColor(
             context,
             Quartz.CGSizeMake(0, -font_size * _CLEAN_SHADOW_DROP),
             font_size * _CLEAN_SHADOW_BLUR,
             shadow,
         )
-
-    block_bottom = (1080 - block_height) / 2
-    for index, value in enumerate(lines):
-        line = make_line(value, style)
-        width, ascent, descent, _ = CoreText.CTLineGetTypographicBounds(line, None, None, None)
-        slot_bottom = block_bottom + (len(lines) - index - 1) * line_height
-        baseline = slot_bottom + (line_height - ascent - descent) / 2 + descent
-        Quartz.CGContextSetTextPosition(
-            context,
-            (1080 - float(width)) / 2,
-            baseline,
-        )
-        CoreText.CTLineDraw(line, context)
+        draw_lines(outline_attributes(style))
+        Quartz.CGContextRestoreGState(context)
+    draw_lines(style)
 
     image = Quartz.CGBitmapContextCreateImage(context)
     destination_url = NSURL.fileURLWithPath_(str(destination))
@@ -1742,7 +1766,8 @@ def _render_square_caption(
     line_height = int(font_size * (_CLEAN_CAPTION_LINE if clean_style else 1.18))
     block_height = line_height * len(lines)
     y = (1080 - block_height) / 2
-    stroke = 0 if clean_style else max(4, round(font_size * 0.065))
+    stroke = max(3, round(font_size * _CLEAN_OUTLINE)) if clean_style else max(4, round(font_size * 0.065))
+    placed: list[tuple[float, float, str]] = []
     for line in lines:
         tokens = _caption_tokens(line)
         widths = [
@@ -1751,20 +1776,20 @@ def _render_square_caption(
         ]
         x = (1080 - sum(widths)) / 2
         for token, token_width in zip(tokens, widths):
-            if emoji_font and _is_emoji(token):
-                draw.text((x, y + round(font_size * 0.16)), token, font=emoji_font, embedded_color=True)
-            else:
-                fill = (244, 42, 54, 255) if _is_emoji(token) else (255, 255, 255, 255)
-                draw.text(
-                    (x, y),
-                    token,
-                    font=font,
-                    fill=fill,
-                    stroke_width=stroke,
-                    stroke_fill=(5, 5, 5, 255),
-                )
+            placed.append((x, y, token))
             x += token_width
         y += line_height
+    # Letters are drawn one at a time, so every outline goes down before any
+    # white; otherwise each letter's outline would cut into the one before it.
+    for x, y, token in placed:
+        if not (emoji_font and _is_emoji(token)):
+            draw.text((x, y), token, font=font, fill=(5, 5, 5, 255), stroke_width=stroke, stroke_fill=(5, 5, 5, 255))
+    for x, y, token in placed:
+        if emoji_font and _is_emoji(token):
+            draw.text((x, y + round(font_size * 0.16)), token, font=emoji_font, embedded_color=True)
+        else:
+            fill = (244, 42, 54, 255) if _is_emoji(token) else (255, 255, 255, 255)
+            draw.text((x, y), token, font=font, fill=fill)
     if clean_style:
         # The shadow is the text's own shape, blurred and dropped a little.
         alpha = canvas.getchannel("A").filter(ImageFilter.GaussianBlur(font_size * _CLEAN_SHADOW_BLUR / 2))

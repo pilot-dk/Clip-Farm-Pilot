@@ -119,7 +119,7 @@ class ViralTitleTests(unittest.TestCase):
 
 
 class SquareCaptionStyleTests(unittest.TestCase):
-    """Clean is white text with a soft shadow; bold is white text with a black outline."""
+    """Clean is white text with a black outline and a soft shadow; bold is heavy white text with a black outline."""
 
     def render(self, style: str, native: bool) -> np.ndarray:
         with tempfile.TemporaryDirectory() as temporary:
@@ -134,12 +134,21 @@ class SquareCaptionStyleTests(unittest.TestCase):
     def check_styles(self, native: bool):
         clean, bold = self.render("clean", native), self.render("bold", native)
         dark = lambda pixels: (pixels[..., :3].max(axis=2) < 60)
-        # Bold draws a solid black outline; clean has none.
-        self.assertGreater(int(np.count_nonzero(dark(bold) & (bold[..., 3] > 240))), 2_000)
-        self.assertLess(int(np.count_nonzero(dark(clean) & (clean[..., 3] > 240))), 50)
+        white = lambda pixels: (pixels[..., :3].min(axis=2) > 230) & (pixels[..., 3] > 240)
+        for pixels in (clean, bold):
+            # Both draw a solid black outline...
+            self.assertGreater(int(np.count_nonzero(dark(pixels) & (pixels[..., 3] > 240))), 2_000)
+            # ...all the way round, so no white letter meets the video directly.
+            clear = pixels[..., 3] < 40
+            beside_clear = np.zeros_like(clear)
+            beside_clear[1:] |= clear[:-1]
+            beside_clear[:-1] |= clear[1:]
+            beside_clear[:, 1:] |= clear[:, :-1]
+            beside_clear[:, :-1] |= clear[:, 1:]
+            self.assertEqual(int(np.count_nonzero(white(pixels) & beside_clear)), 0)
         # Clean's shadow is soft: dark pixels that are only partly opaque.
         self.assertGreater(int(np.count_nonzero(dark(clean) & (clean[..., 3] > 10) & (clean[..., 3] < 160))), 2_000)
-        self.assertGreater(int(np.count_nonzero((clean[..., :3].min(axis=2) > 230) & (clean[..., 3] > 240))), 2_000)
+        self.assertGreater(int(np.count_nonzero(white(clean))), 2_000)
         # Both sit at the bottom of the square, shadow and all.
         for pixels in (clean, bold):
             rows = np.flatnonzero(pixels[..., 3].max(axis=1) > 0)

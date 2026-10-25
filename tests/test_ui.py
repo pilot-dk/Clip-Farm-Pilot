@@ -151,6 +151,9 @@ class SimpleStudioUiTests(unittest.TestCase):
         self.assertIn("caption_style: captionStyle(),", self.html)
         self.assertIn('name="captionPosition" value="bottom" checked', self.html)
         self.assertIn('.square-caption-preview[data-caption-style="clean"]', self.html)
+        # Clean captions are outlined in black so white text reads on bright video.
+        self.assertIn("context.strokeText(line, 540, firstY + index * lineHeight, maxWidth)", self.html)
+        self.assertIn("? `${Math.max(2, fontSize * .14)}px`", self.html)
         self.assertIn("caption_overlay_data_url: renderSquareCaptionOverlay(captionText),", self.html)
 
 

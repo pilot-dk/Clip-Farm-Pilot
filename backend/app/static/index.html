@@ -410,7 +410,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
       font-weight: 600;
       line-height: 1.24;
-      -webkit-text-stroke: 0;
+      -webkit-text-stroke: 2px #000;
       text-shadow: 0 2px 8px rgba(0,0,0,.6);
     }
     .square-caption-preview[data-caption-position="top"] { top: 9%; transform: none; }
@@ -1818,7 +1818,7 @@
                   <div class="range-head"><span>Caption size</span><output id="captionSizeValue">100%</output></div>
                   <input id="captionSize" type="range" min="50" max="175" value="100" step="5" aria-label="Square caption text size" />
                 </div>
-                <small class="field-hint">Clean is white text with a soft shadow, like fan-page clips; Bold is heavy white text with a black outline.</small>
+                <small class="field-hint">Clean is white text with a crisp black outline and a soft shadow, like fan-page clips; Bold is heavy white meme text with a black outline.</small>
               </div>
             </div>
 
@@ -2496,7 +2496,9 @@
       const baseFontSize = Math.max(22, Math.min(60, $("stage").clientWidth * .08)) * (clean ? 68 / 86 : 1);
       const fontSize = Math.max(11, baseFontSize * sizePercent / 100);
       preview.style.fontSize = `${fontSize}px`;
-      preview.style.webkitTextStrokeWidth = clean ? "0px" : `${Math.max(1.4, fontSize * .045)}px`;
+      preview.style.webkitTextStrokeWidth = clean
+        ? `${Math.max(2, fontSize * .14)}px`
+        : `${Math.max(1.4, fontSize * .045)}px`;
     }
 
     function wrapCanvasCaption(context, text, maxWidth) {
@@ -2592,7 +2594,8 @@
       context.scale(squareSize / 1080, squareSize / 1080);
       const scale = Math.max(.5, Math.min(1.75, Number($("captionSize").value) / 100));
       // Clean matches fan-page captions: medium-weight white text wrapped at
-      // 80% of the width with a soft shadow; Bold is the outlined meme look.
+      // 80% of the width with a crisp black outline and a soft shadow; Bold
+      // is the heavy meme look.
       const clean = captionStyle() === "clean";
       const maxWidth = clean ? 860 : 960;
       const lineRatio = clean ? 1.24 : 1.18;
@@ -2613,13 +2616,20 @@
       context.textBaseline = "middle";
       context.fillStyle = "white";
       if (clean) {
-        // Shadows are drawn in real pixels, outside the layout scale.
+        // Every outline goes down first, with the shadow behind it, then the
+        // white on top, so no line's outline cuts into its neighbour. Half
+        // the stroke sits outside the letters. Shadows are drawn in real
+        // pixels, outside the layout scale.
         const pixels = squareSize / 1080;
+        context.lineJoin = "round";
+        context.strokeStyle = "#000";
+        context.lineWidth = Math.max(6, fontSize * .14);
         context.shadowColor = "rgba(0,0,0,.55)";
         context.shadowBlur = fontSize * .22 * pixels;
         context.shadowOffsetY = fontSize * .05 * pixels;
-        lines.forEach((line, index) => context.fillText(line, 540, firstY + index * lineHeight, maxWidth));
+        lines.forEach((line, index) => context.strokeText(line, 540, firstY + index * lineHeight, maxWidth));
         context.shadowColor = "transparent";
+        lines.forEach((line, index) => context.fillText(line, 540, firstY + index * lineHeight, maxWidth));
       } else {
         context.lineJoin = "round";
         context.strokeStyle = "rgba(5,5,5,.98)";

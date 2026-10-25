@@ -126,7 +126,7 @@ The editor now includes:
 - **720p**, **1080p**, and **4K** export resolution for clips and full-length edits, always at the source video's own frame rate.
 - A **Gaming overlay** switch with a live vertical layout preview.
 - Face-cam source position, crop width/height, and horizontal/vertical inset controls with an accurate zoom preview.
-- Optional text for 1:1 clips in two styles: **Clean**, white type with a soft shadow like fan-page clips (the default), or **Bold**, heavy white type with a black outline (both with native color emoji).
+- Optional text for 1:1 clips in two styles: **Clean**, white type with a crisp black outline and a soft shadow like fan-page clips (the default), or **Bold**, heavy white type with a black outline (both with native color emoji).
 - **Auto caption** for 1:1 viral clips: an AI model running on your computer watches the clip and listens to what is said, then writes a fan-page caption such as “Bro shows off his rescued puppy 🥹❤️‍🩹”. Switch to **Manual** to type your own.
 - Device-rendered color emoji for square captions in the browser, avoiding Linux-server missing-glyph boxes.
 - Native macOS emoji shaping for square captions, including hearts, flags, skin tones, keycaps, and joined family/profession emoji without missing-glyph boxes.
